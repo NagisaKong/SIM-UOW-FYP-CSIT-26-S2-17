@@ -18,3 +18,5 @@ out/
 
 # Dependency folders
 vendor/
+
+.gitignore
