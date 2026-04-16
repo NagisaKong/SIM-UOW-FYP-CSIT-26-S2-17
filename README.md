@@ -14,8 +14,6 @@ Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace a
 
 ## Team
 
-12345
-
 | Name | Role |
 |------|------|
 | YU, ZHANGHAO | Project Leader / Producer |
@@ -98,6 +96,7 @@ FYP-26-S2-17/
 |--------|---------|
 | `main` | Production-ready code, auto-deployed via CD |
 | `develop` | Integration branch for completed features |
+| `feature/xxx` | new features, branched from `develop` |
 
 ---
 
