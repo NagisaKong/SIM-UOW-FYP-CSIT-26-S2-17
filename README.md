@@ -22,9 +22,6 @@ Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace a
 | ZHANG, JIQIAN | Computer Vision & Backend Developer |
 | ZHAO, SHIYIN | QA Engineer & Documentation Lead |
 
-**Supervisor:** Mr Tian Sion Hui
-**Assessor:** Mr Japit Sionggo
-
 ---
 
 ## Key Features
@@ -99,7 +96,6 @@ FYP-26-S2-17/
 |--------|---------|
 | `main` | Production-ready code, auto-deployed via CD |
 | `develop` | Integration branch for completed features |
-| `feature/xxx` | Individual feature development per Sprint |
 
 ---
 
@@ -110,17 +106,6 @@ FYP-26-S2-17/
 | Student | View attendance records, submit appeals, register facial image |
 | Teacher | Real-time attendance dashboard, override records, export reports |
 | Admin | Manage users, facial image database, ML model config & retraining, accuracy statistics |
-
----
-
-## Assessment Timeline
-
-| Milestone | Week | Deliverable |
-|-----------|------|-------------|
-| Submission 1 | Week 5 | Project Requirements Document |
-| Submission 2 (Mid-point) | Week 11–12 | Prototype Demo + Technical Document |
-| Final Submission | Week 19 | Complete system + documentation |
-| Final Presentation | Week 20 | Group presentation (~30 mins) |
 
 ---
 
