@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS USER_ACCOUNT (
 CREATE INDEX IF NOT EXISTS idx_user_account_profile ON USER_ACCOUNT(ProfileID);
 
 -- ------------------------------------------------------------
--- 3. PERSONAL_INFO  (PII isolated from auth – PDPC best practice)
+-- 3. PERSONAL_INFO
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
     PersonID    SERIAL          PRIMARY KEY,
