@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     -- Enforce that at least one ID type is present
-    CONSTRAINT chk_personal_id CHECK (student_id IS NOT NULL OR staff_id IS NOT NULL)
+    CONSTRAINT chk_personal_id CHECK ((student_id IS NOT NULL AND staff_id IS NULL) OR (student_id IS NULL AND staff_id IS NOT NULL))
 );
 
 -- ------------------------------------------------------------
@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_APPEAL (
     reviewed_at         TIMESTAMPTZ,
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+
+    CHECK ((status = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL) OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_appeal_record  ON ATTENDANCE_APPEAL(AttendanceRecordID);
