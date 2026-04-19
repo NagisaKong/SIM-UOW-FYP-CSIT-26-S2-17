@@ -14,8 +14,6 @@ Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace a
 
 ## Team
 
-12345
-
 | Name | Role |
 |------|------|
 | YU, ZHANGHAO | Project Leader / Producer |
@@ -124,7 +122,3 @@ FYP-26-S2-17/
 ## License
 
 This project is developed for academic purposes under CSIT321 at the University of Wollongong (SIM campus). All rights reserved by the project team.
-
-
-
-123
