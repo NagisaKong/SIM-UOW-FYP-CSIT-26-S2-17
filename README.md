@@ -69,7 +69,7 @@ Classroom Camera (Browser Fullscreen)
 | Database | PostgreSQL |
 | AI — Detection | SCRFD (InsightFace), MTCNN |
 | AI — Recognition | ArcFace (InsightFace), FaceNet |
-| AI — Enhancement | GAN (Super-Resolution / Image Enhancement) |
+| AI — Enhancement | StyleGAN / StarGAN, GAN (Super-Resolution / Image Enhancement) |
 | Image Processing | OpenCV |
 | Deployment | Docker, Vercel (frontend), Railway (backend) |
 | CI/CD | GitHub Actions |
