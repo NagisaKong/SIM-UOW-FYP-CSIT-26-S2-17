@@ -6,7 +6,10 @@ from insightface.app import FaceAnalysis
 class FaceProcessor:
     def __init__(self, ctx_id=0, det_size=(640, 640)):
         # 初始化模型 (只加载一次)
-        self.app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
+        self.app = FaceAnalysis(
+            name='buffalo_l',
+            providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+        )
         self.app.prepare(ctx_id=ctx_id, det_size=det_size)
 
     def extract_embedding(self, image_path):
