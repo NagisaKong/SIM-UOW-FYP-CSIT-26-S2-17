@@ -89,3 +89,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    #  DATABASE_URL=postgresql://postgres.jbutnqhsgytegjhhftbk:simuowFYPcsit26s217@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres

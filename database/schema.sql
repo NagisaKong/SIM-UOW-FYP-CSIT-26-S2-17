@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
-    embedding_vector vector(512)           NOT NULL,   -- replace with vector(N) after pgvector install
+    embedding_vector VECTOR(512)           NOT NULL,   -- replace with vector(N) after pgvector install
     model_name       VARCHAR(100)    NOT NULL,   -- e.g. 'arcface', 'facenet'
     model_version    VARCHAR(50)     NOT NULL,   -- e.g. 'r100', '20180402-114759'
     dimension        INTEGER         NOT NULL,   -- 512 for ArcFace, 128 for FaceNet
