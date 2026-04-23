@@ -25,3 +25,4 @@ class FaceProcessor:
         # 默认只取画面中最大的一张脸
         # sorted_faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
         return faces[0].normed_embedding
+
