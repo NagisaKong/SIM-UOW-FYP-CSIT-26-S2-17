@@ -92,3 +92,7 @@ if __name__ == "__main__":
 
 
     #  DATABASE_URL=postgresql://postgres.jbutnqhsgytegjhhftbk:simuowFYPcsit26s217@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+    # self.app = FaceAnalysis(
+    #             name='buffalo_l',
+    #             providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+    #         )
