@@ -20,6 +20,7 @@ def main():
     frame_count = 0
     last_identity = "Scanning..."
 
+    cv2.namedWindow('SIM-UOW System', cv2.WINDOW_NORMAL)
     while True:
         ret, frame = cap.read()
         if not ret:
