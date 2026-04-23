@@ -20,7 +20,7 @@ class FaceProcessor:
         faces = self.app.get(img)
         if len(faces) == 0:
             return None
-# 123
+# 12345
         # sorted_faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
         return faces[0].normed_embedding
 
