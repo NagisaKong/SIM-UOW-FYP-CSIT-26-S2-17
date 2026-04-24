@@ -1,1 +1,0 @@
-SELECT count(*) from  personal_info;
