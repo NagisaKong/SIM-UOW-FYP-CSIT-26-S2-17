@@ -5,7 +5,7 @@ REM Always run from the folder where this .bat lives
 cd /d "%~dp0"
 
 REM - Locate Python (absolute path) -
-set "VENV_PY=%~dp0.venv\Scripts\python.exe"
+set "VENV_PY="D:\Anaconda\envs\fyp_vision\python.exe""
 set "PY="
 
 if exist "%VENV_PY%" (
