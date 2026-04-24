@@ -1,0 +1,51 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0; background: #f4f6fa; color: #222;
+}
+body.centered { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+h1, h2, h3 { margin: 0 0 .5rem; }
+.muted { color: #777; }
+.small { font-size: 12px; }
+.error { color: #c0392b; min-height: 1em; margin: .5rem 0 0; }
+code { background: #eee; padding: 1px 4px; border-radius: 3px; }
+
+.card {
+  background: #fff; padding: 2rem; border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 360px; max-width: 95vw;
+}
+.card label { display: block; margin: .75rem 0 .25rem; font-size: 14px; }
+.card input, .card select, .card textarea {
+  width: 100%; padding: .5rem; border: 1px solid #ccc; border-radius: 6px; font-size: 14px;
+}
+button {
+  margin-top: 1rem; padding: .5rem 1rem; background: #2b6cb0; color: #fff;
+  border: 0; border-radius: 6px; cursor: pointer; font-size: 14px;
+}
+button:hover { background: #235a96; }
+button.secondary { background: #6b7280; }
+button.danger { background: #c0392b; }
+
+header.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 1.5rem; background: #fff; border-bottom: 1px solid #e5e7eb;
+}
+header.topbar h1 { font-size: 18px; }
+.tabs { display: flex; gap: .5rem; padding: .5rem 1.5rem; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.tabs button { margin-top: 0; background: transparent; color: #555; }
+.tabs button.active { background: #2b6cb0; color: #fff; }
+
+main { padding: 1.5rem; }
+.panel { background: #fff; padding: 1.25rem; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.05); margin-bottom: 1rem; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: .5rem .75rem; border-bottom: 1px solid #eee; text-align: left; }
+th { background: #fafbfc; font-weight: 600; }
+
+.status-present { color: #16a34a; font-weight: 600; }
+.status-absent  { color: #c0392b; font-weight: 600; }
+.status-late    { color: #d97706; font-weight: 600; }
+.badge { padding: 2px 6px; border-radius: 4px; background: #eef2ff; color: #3730a3; font-size: 12px; }
+
+video, img.preview { max-width: 320px; border-radius: 6px; border: 1px solid #ddd; }
+.row { display: flex; gap: 1rem; flex-wrap: wrap; }

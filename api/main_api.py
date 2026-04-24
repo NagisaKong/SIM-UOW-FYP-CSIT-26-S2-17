@@ -21,16 +21,28 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import contextlib
 from contextlib import asynccontextmanager
+from typing import Any
 
 import cv2
 import numpy as np
+import psycopg2
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from ai.attendance_pipeline import AttendancePipeline
 from ai.config import AIConfig
+
+from api.auth import (
+    CurrentUser,
+    authenticate,
+    create_token,
+    get_current_user,
+    require_role,
+)
 
 
 # ── Lifespan: load the pipeline once at startup ───────────────────────────
@@ -38,14 +50,15 @@ from ai.config import AIConfig
 async def lifespan(app: FastAPI):
     cfg = AIConfig()
     print(cfg.log_summary())
+    app.state.cfg = cfg
     app.state.pipeline = AttendancePipeline.from_env(cfg)
     yield
 
 
 app = FastAPI(
     title="SIM-UOW Face Attendance System API",
-    description="Face enrolment + identification backed by the ai.attendance_pipeline ensemble.",
-    version="2.0.0",
+    description="Face enrolment + identification + role-scoped endpoints for the demo frontend.",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -58,6 +71,25 @@ app.add_middleware(
 )
 
 
+# ── DB helpers ────────────────────────────────────────────────────────────
+@contextlib.contextmanager
+def _db():
+    conn = psycopg2.connect(app.state.cfg.database_url)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _dict_rows(cur) -> list[dict[str, Any]]:
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
@@ -67,6 +99,20 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     return img
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Health + auth
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/")
+def root():
+    return {
+        "service": "SIM-UOW Face Attendance API",
+        "version": app.version,
+        "docs": "/docs",
+        "health": "/health",
+        "frontend": "http://127.0.0.1:5500",
+    }
+
+
 @app.get("/health")
 def health():
     pipeline: AttendancePipeline = app.state.pipeline
@@ -74,31 +120,65 @@ def health():
     return {"success": True, "stores": stores}
 
 
+class LoginBody(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/login")
+def login(body: LoginBody):
+    user = authenticate(app.state.cfg.database_url, body.email, body.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+    token = create_token(user.account_id, user.role, user.email)
+    return {
+        "success": True,
+        "token": token,
+        "user": {
+            "account_id": user.account_id,
+            "role": user.role,
+            "email": user.email,
+            "full_name": user.full_name,
+        },
+    }
+
+
+@app.get("/auth/me")
+def me(user: CurrentUser = Depends(get_current_user)):
+    return {"account_id": user.account_id, "role": user.role, "email": user.email}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Face endpoints (protected: user must be logged in)
+# ──────────────────────────────────────────────────────────────────────────
 @app.post("/register")
 async def register_face(
     account_id: int = Form(...),
     file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
 ):
-    """Extract embeddings from the uploaded photo and write them to Supabase."""
+    """Extract embeddings from the uploaded photo and write them to Supabase.
+
+    Students may only re-register their own face; admins may register anyone.
+    """
+    if user.role != "admin" and user.account_id != account_id:
+        raise HTTPException(status_code=403, detail="只能录入本人人脸")
+
     pipeline: AttendancePipeline = app.state.pipeline
     img = await _bytes_to_cv2(file)
-
     written = pipeline.enrol_student(account_id=account_id, images=[img])
     if not written:
         return {"success": False, "message": "未检测到人脸，请重新拍摄"}
-    return {
-        "success": True,
-        "message": f"学生 {account_id} 录入成功",
-        "written": written,
-    }
+    return {"success": True, "message": f"学生 {account_id} 录入成功", "written": written}
 
 
 @app.post("/identify")
-async def identify_face(file: UploadFile = File(...)):
-    """Run the full ensemble pipeline on the uploaded frame."""
+async def identify_face(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+):
     pipeline: AttendancePipeline = app.state.pipeline
     img = await _bytes_to_cv2(file)
-
     result = pipeline.process_frame(img)
 
     identities = []
@@ -119,12 +199,345 @@ async def identify_face(file: UploadFile = File(...)):
             "det_score": round(float(p.det_score), 4),
             "bbox": list(p.bbox),
         })
+    return {"success": True, "enhanced": result.enhanced, "identities": identities}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Student endpoints
+# ──────────────────────────────────────────────────────────────────────────
+@app.post("/student/checkin")
+async def student_checkin(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_role("student")),
+):
+    """Face-based attendance check-in.
+
+    Flow:
+      1. Run the ensemble pipeline on the uploaded frame.
+      2. Require a recognised face matching the logged-in student
+         (prevents someone else's face from marking you present).
+      3. Find an active session in a course the student is enrolled in
+         (prefers the most recently started one).
+      4. Insert an attendance_record with status='present'. Re-check-ins
+         are silently deduped by the UNIQUE constraint.
+    """
+    pipeline: AttendancePipeline = app.state.pipeline
+    img = await _bytes_to_cv2(file)
+    result = pipeline.process_frame(img)
+
+    matched = next(
+        (p for p in result.predictions if p.recognised and p.account_id == user.account_id),
+        None,
+    )
+    if matched is None:
+        faces = len(result.predictions)
+        return {
+            "success": False,
+            "message": f"未能识别为本人（检测到 {faces} 张人脸，请正对摄像头）",
+            "detections": faces,
+        }
+
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.attendancesessionid, c.course_code, c.course_name
+            FROM attendance_session s
+            JOIN course c ON c.courseid = s.courseid
+            JOIN course_enrollment e
+              ON e.courseid = s.courseid AND e.accountid = %s AND e.status = 'active'
+            WHERE s.status = 'active'
+              AND NOW() BETWEEN s.start_time AND COALESCE(s.end_time, NOW() + INTERVAL '1 day')
+            ORDER BY s.start_time DESC
+            LIMIT 1
+            """,
+            (user.account_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"success": False, "message": "当前没有进行中的课程"}
+        session_id, course_code, course_name = row
+
+        cur.execute(
+            """
+            INSERT INTO attendance_record (attendancesessionid, accountid, status)
+            VALUES (%s, %s, 'present')
+            ON CONFLICT (attendancesessionid, accountid) DO NOTHING
+            RETURNING attendancerecordid
+            """,
+            (session_id, user.account_id),
+        )
+        new_row = cur.fetchone()
+        already = new_row is None
 
     return {
         "success": True,
-        "enhanced": result.enhanced,
-        "identities": identities,
+        "already_checked_in": already,
+        "message": "已签到（重复打卡已忽略）" if already else f"签到成功：{course_code} {course_name}",
+        "session_id": session_id,
+        "course_code": course_code,
+        "course_name": course_name,
+        "confidence": round(float(matched.score), 3),
     }
+
+
+@app.get("/student/attendance")
+def student_attendance(user: CurrentUser = Depends(require_role("student"))):
+    sql = """
+        SELECT r.attendancerecordid AS record_id,
+               r.attendancesessionid AS session_id,
+               s.start_time, s.end_time,
+               c.course_code, c.course_name,
+               r.status, r.marked_at
+        FROM attendance_record r
+        JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+        JOIN course c ON c.courseid = s.courseid
+        WHERE r.accountid = %s
+        ORDER BY s.start_time DESC
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (user.account_id,))
+        return {"success": True, "records": _dict_rows(cur)}
+
+
+@app.get("/student/sessions/{session_id}")
+def student_session_detail(
+    session_id: int, user: CurrentUser = Depends(require_role("student"))
+):
+    sql = """
+        SELECT s.attendancesessionid AS session_id,
+               s.start_time, s.end_time, s.status AS session_status,
+               c.course_code, c.course_name,
+               r.attendancerecordid AS record_id, r.status AS attendance_status, r.marked_at
+        FROM attendance_session s
+        JOIN course c ON c.courseid = s.courseid
+        LEFT JOIN attendance_record r
+          ON r.attendancesessionid = s.attendancesessionid AND r.accountid = %s
+        WHERE s.attendancesessionid = %s
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (user.account_id, session_id))
+        rows = _dict_rows(cur)
+    if not rows:
+        raise HTTPException(404, "Session not found")
+    return {"success": True, "session": rows[0]}
+
+
+class AppealBody(BaseModel):
+    record_id: int
+    reason: str
+
+
+@app.post("/student/appeals")
+def student_create_appeal(
+    body: AppealBody, user: CurrentUser = Depends(require_role("student"))
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT accountid FROM attendance_record WHERE attendancerecordid = %s",
+            (body.record_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Record not found")
+        if row[0] != user.account_id:
+            raise HTTPException(403, "不能对他人记录申诉")
+        cur.execute(
+            """
+            INSERT INTO attendance_appeal (attendancerecordid, accountid, reason)
+            VALUES (%s, %s, %s) RETURNING appealid
+            """,
+            (body.record_id, user.account_id, body.reason),
+        )
+        appeal_id = cur.fetchone()[0]
+    return {"success": True, "appeal_id": appeal_id}
+
+
+@app.get("/student/appeals")
+def student_list_appeals(user: CurrentUser = Depends(require_role("student"))):
+    sql = """
+        SELECT a.appealid, a.attendancerecordid, a.reason, a.status,
+               a.created_at, a.reviewed_at
+        FROM attendance_appeal a
+        WHERE a.accountid = %s
+        ORDER BY a.created_at DESC
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (user.account_id,))
+        return {"success": True, "appeals": _dict_rows(cur)}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Admin endpoints
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/users")
+def admin_list_users(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT ua.accountid, ua.email, up.role, up.status,
+               pi.full_name, pi.student_id, pi.staff_id, ua.created_at
+        FROM user_account ua
+        JOIN user_profiles up ON up.profileid = ua.profileid
+        LEFT JOIN personal_info pi ON pi.accountid = ua.accountid
+        ORDER BY ua.accountid
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "users": _dict_rows(cur)}
+
+
+class CreateUserBody(BaseModel):
+    email: str
+    password: str
+    role: str  # student | admin
+    full_name: str
+    student_id: str | None = None
+    staff_id: str | None = None
+
+
+@app.post("/admin/users")
+def admin_create_user(
+    body: CreateUserBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    from api.auth import hash_password
+
+    if body.role not in ("student", "admin", "teacher"):
+        raise HTTPException(400, "role 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT profileid FROM user_profiles WHERE role = %s LIMIT 1", (body.role,)
+        )
+        prow = cur.fetchone()
+        if not prow:
+            raise HTTPException(500, f"未找到角色 profile: {body.role}")
+        profile_id = prow[0]
+
+        cur.execute(
+            """
+            INSERT INTO user_account (profileid, email, password_hash)
+            VALUES (%s, %s, %s) RETURNING accountid
+            """,
+            (profile_id, body.email, hash_password(body.password)),
+        )
+        account_id = cur.fetchone()[0]
+
+        student_id = body.student_id or (None if body.role != "student" else f"S{account_id:05d}")
+        staff_id = body.staff_id or (None if body.role == "student" else f"A{account_id:05d}")
+        cur.execute(
+            """
+            INSERT INTO personal_info (accountid, full_name, student_id, staff_id)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (account_id, body.full_name, student_id, staff_id),
+        )
+    return {"success": True, "account_id": account_id}
+
+
+class StatusBody(BaseModel):
+    status: str  # active | inactive
+
+
+@app.patch("/admin/users/{account_id}/status")
+def admin_set_user_status(
+    account_id: int,
+    body: StatusBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    if body.status not in ("active", "inactive"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE user_profiles SET status = %s
+            WHERE profileid = (SELECT profileid FROM user_account WHERE accountid = %s)
+            """,
+            (body.status, account_id),
+        )
+    return {"success": True}
+
+
+@app.get("/admin/faces")
+def admin_list_faces(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT f.faceid, f.accountid, pi.full_name, pi.student_id,
+               f.model_name, f.model_version, f.dimension, f.is_active, f.created_at
+        FROM face_embedding f
+        LEFT JOIN personal_info pi ON pi.accountid = f.accountid
+        ORDER BY f.accountid, f.model_name, f.created_at DESC
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "faces": _dict_rows(cur)}
+
+
+@app.delete("/admin/faces/{face_id}")
+def admin_delete_face(face_id: int, user: CurrentUser = Depends(require_role("admin"))):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "UPDATE face_embedding SET is_active = FALSE WHERE faceid = %s", (face_id,)
+        )
+    # Reload pipeline's in-memory store so change takes effect immediately.
+    try:
+        app.state.pipeline.store_manager.reload()
+    except Exception:
+        pass
+    return {"success": True}
+
+
+@app.get("/admin/attendance")
+def admin_list_attendance(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT r.attendancerecordid, r.attendancesessionid,
+               s.start_time, c.course_code, c.course_name,
+               r.accountid, pi.full_name, pi.student_id,
+               r.status, r.marked_at
+        FROM attendance_record r
+        JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+        JOIN course c ON c.courseid = s.courseid
+        LEFT JOIN personal_info pi ON pi.accountid = r.accountid
+        ORDER BY s.start_time DESC, r.marked_at DESC
+        LIMIT 500
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "records": _dict_rows(cur)}
+
+
+@app.get("/admin/appeals")
+def admin_list_appeals(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT a.appealid, a.attendancerecordid, a.accountid,
+               pi.full_name, pi.student_id,
+               a.reason, a.status, a.created_at, a.reviewed_at
+        FROM attendance_appeal a
+        LEFT JOIN personal_info pi ON pi.accountid = a.accountid
+        ORDER BY a.created_at DESC
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "appeals": _dict_rows(cur)}
+
+
+class AppealReviewBody(BaseModel):
+    status: str  # approved | rejected
+
+
+@app.patch("/admin/appeals/{appeal_id}")
+def admin_review_appeal(
+    appeal_id: int,
+    body: AppealReviewBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE attendance_appeal
+            SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+            WHERE appealid = %s
+            """,
+            (body.status, user.account_id, appeal_id),
+        )
+    return {"success": True}
 
 
 if __name__ == "__main__":

@@ -77,11 +77,12 @@ echo    [4]  Video file      -- local file or RTSP stream
 echo    [5]  Ping only       -- verify Supabase + models
 echo    [6]  List cameras    -- probe indices 0-9
 echo    [7]  Start Web API   -- launch FastAPI server on 127.0.0.1:8000
+echo    [8]  Serve frontend  -- static files on 127.0.0.1:5500
 echo    [0]  Exit
 echo.
 
 set "CHOICE="
-set /p "CHOICE=  Select [0-7]: "
+set /p "CHOICE=  Select [0-8]: "
 
 if "!CHOICE!"=="0" goto :END
 if "!CHOICE!"=="1" goto :MODE_IMAGE
@@ -91,6 +92,7 @@ if "!CHOICE!"=="4" goto :MODE_VIDEO
 if "!CHOICE!"=="5" goto :MODE_PING
 if "!CHOICE!"=="6" goto :MODE_LIST
 if "!CHOICE!"=="7" goto :MODE_WEB
+if "!CHOICE!"=="8" goto :MODE_FRONTEND
 echo  Invalid choice, try again.
 timeout /t 1 >nul
 goto :MAIN_MENU
@@ -171,6 +173,15 @@ echo  [demo] Launching FastAPI server at http://127.0.0.1:8000 ...
 echo  (Press Ctrl+C in this window to stop the server)
 echo.
 "%PY%" -m uvicorn api.main_api:app --host 127.0.0.1 --port 8000
+goto :DONE
+
+:MODE_FRONTEND
+echo.
+echo  [demo] Serving frontend at http://127.0.0.1:5500 ...
+echo  (Make sure the Web API (option 7) is also running in another window)
+echo  (Press Ctrl+C in this window to stop)
+echo.
+"%PY%" -m http.server 5500 --directory "%~dp0frontend"
 goto :DONE
 
 REM -
