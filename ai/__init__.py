@@ -32,8 +32,8 @@ if _sys.platform == "win32":
         pass
 
 from .config import AIConfig
-from .pipeline import AttendancePipeline
-from .store import SupabaseEmbeddingStore, EmbeddingStore
+from .attendance_pipeline import AttendancePipeline
+from .embedding_store import SupabaseEmbeddingStore, EmbeddingStore
 
 __all__ = [
     "AIConfig",

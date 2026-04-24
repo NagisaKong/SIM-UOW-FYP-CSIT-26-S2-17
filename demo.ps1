@@ -20,10 +20,10 @@ if (-not (Test-Path ".env")) {
 }
 
 # Install deps on first run
-& $py -c "import insightface, cv2, psycopg2" 2>$null
+& $py -c "import insightface, cv2, psycopg2, fastapi" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[demo] Installing AI dependencies (first run only)..." -ForegroundColor Yellow
-    & $py -m pip install -r ai\requirements.txt
+    & $py -m pip install -r requirements.txt
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[demo] pip install failed." -ForegroundColor Red
         exit 3

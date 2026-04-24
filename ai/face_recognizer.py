@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from .config import AIConfig
-from .detectors import Detection
+from .face_detector import Detection
 
 
 # Surfaced model identifiers so the DB knows which row belongs to which model.

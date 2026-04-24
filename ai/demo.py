@@ -64,7 +64,7 @@ def step_load_config():
 
 
 def step_ping(cfg):
-    from .db import EmbeddingRepo
+    from .database_manager import EmbeddingRepo
 
     banner("Step 1/3  Connect to Supabase")
     repo = EmbeddingRepo(cfg.database_url)
@@ -75,7 +75,7 @@ def step_ping(cfg):
 
 
 def step_warm_models(cfg):
-    from .pipeline import AttendancePipeline
+    from .attendance_pipeline import AttendancePipeline
 
     banner("Step 2/3  Load models + fetch embeddings from DB")
     t0 = time.time()

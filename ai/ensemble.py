@@ -18,9 +18,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .config import AIConfig
-from .detectors import Detection, bbox_iou
-from .recognizers import Embedding
-from .store import EmbeddingStore, StudentInfo
+from .face_detector import Detection, bbox_iou
+from .face_recognizer import Embedding
+from .embedding_store import EmbeddingStore, StudentInfo
 
 
 # ────────────────────────────────────────────────────────────────────────────

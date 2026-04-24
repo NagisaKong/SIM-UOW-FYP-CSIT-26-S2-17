@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .db import EmbeddingRepo, EmbeddingRow
+from .database_manager import EmbeddingRepo, EmbeddingRow
 
 
 @dataclass

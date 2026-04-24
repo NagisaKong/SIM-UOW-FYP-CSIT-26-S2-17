@@ -19,11 +19,11 @@ import cv2
 import numpy as np
 
 from .config import AIConfig
-from .db import EmbeddingRepo
-from .detectors import Detection, MtcnnDetector, ScrfdDetector
-from .enhancers import build_enhancer, maybe_enhance
+from .database_manager import EmbeddingRepo
+from .face_detector import Detection, MtcnnDetector, ScrfdDetector
+from .image_enhancer import build_enhancer, maybe_enhance
 from .ensemble import Prediction, assign_embeddings, fuse_detections, vote
-from .recognizers import (
+from .face_recognizer import (
     ARCFACE_DIM,
     ARCFACE_MODEL_NAME,
     ARCFACE_MODEL_VERSION,
@@ -35,7 +35,7 @@ from .recognizers import (
     FaceNetRecognizer,
     embed_all,
 )
-from .store import EmbeddingStore, SupabaseEmbeddingStore
+from .embedding_store import EmbeddingStore, SupabaseEmbeddingStore
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -229,7 +229,7 @@ class AttendancePipeline:
         groups, detections: list[Detection]
     ) -> list[Detection]:
         """Pick the single best detection per group to feed the recognizers."""
-        from .detectors import bbox_iou  # local to avoid cycles
+        from .face_detector import bbox_iou  # local to avoid cycles
 
         anchors: list[Detection] = []
         for g in groups:

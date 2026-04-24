@@ -29,7 +29,7 @@ from pathlib import Path
 import cv2
 
 from .config import AIConfig
-from .pipeline import AttendancePipeline
+from .attendance_pipeline import AttendancePipeline
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -229,7 +229,7 @@ def main() -> int:
     print(cfg.log_summary())
 
     if args.ping:
-        from .db import EmbeddingRepo
+        from .database_manager import EmbeddingRepo
         repo = EmbeddingRepo(cfg.database_url)
         print("[ping] connecting to Supabase...", end=" ", flush=True)
         repo.ping()

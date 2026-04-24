@@ -49,10 +49,10 @@ if not exist "%~dp0.env" (
 )
 
 REM - Dependency check -
-"%PY%" -c "import insightface, cv2, psycopg2" >nul 2>&1
+"%PY%" -c "import insightface, cv2, psycopg2, fastapi" >nul 2>&1
 if errorlevel 1 (
     echo  [setup] Installing dependencies, please wait...
-    "%PY%" -m pip install -r "%~dp0ai\requirements.txt"
+    "%PY%" -m pip install -r "%~dp0requirements.txt"
     if errorlevel 1 (
         echo.
         echo  ERROR: pip install failed.
@@ -76,11 +76,12 @@ echo    [3]  Virtual camera  -- choose camera index
 echo    [4]  Video file      -- local file or RTSP stream
 echo    [5]  Ping only       -- verify Supabase + models
 echo    [6]  List cameras    -- probe indices 0-9
+echo    [7]  Start Web API   -- launch FastAPI server on 127.0.0.1:8000
 echo    [0]  Exit
 echo.
 
 set "CHOICE="
-set /p "CHOICE=  Select [0-6]: "
+set /p "CHOICE=  Select [0-7]: "
 
 if "!CHOICE!"=="0" goto :END
 if "!CHOICE!"=="1" goto :MODE_IMAGE
@@ -89,6 +90,7 @@ if "!CHOICE!"=="3" goto :MODE_VIRTUAL
 if "!CHOICE!"=="4" goto :MODE_VIDEO
 if "!CHOICE!"=="5" goto :MODE_PING
 if "!CHOICE!"=="6" goto :MODE_LIST
+if "!CHOICE!"=="7" goto :MODE_WEB
 echo  Invalid choice, try again.
 timeout /t 1 >nul
 goto :MAIN_MENU
@@ -161,6 +163,14 @@ echo  [demo] Probing camera indices 0-9...
 "%PY%" -m ai.run_prototype --list-cameras
 echo.
 echo  Start OBS/ManyCam first if your virtual camera is missing.
+goto :DONE
+
+:MODE_WEB
+echo.
+echo  [demo] Launching FastAPI server at http://127.0.0.1:8000 ...
+echo  (Press Ctrl+C in this window to stop the server)
+echo.
+"%PY%" -m uvicorn api.main_api:app --host 127.0.0.1 --port 8000
 goto :DONE
 
 REM -

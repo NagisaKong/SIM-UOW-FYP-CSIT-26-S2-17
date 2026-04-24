@@ -27,8 +27,8 @@ import sys
 import cv2
 
 from .config import AIConfig
-from .db import EmbeddingRepo
-from .pipeline import AttendancePipeline
+from .database_manager import EmbeddingRepo
+from .attendance_pipeline import AttendancePipeline
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
