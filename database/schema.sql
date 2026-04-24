@@ -1,7 +1,7 @@
 -- ============================================================
 -- FYP-26-S2-17: Face Recognition Attendance System
 -- Database Schema (PostgreSQL)
--- Vision 0.1
+-- Vision 0.4
 -- ============================================================
 -- Extension: pgvector for efficient facial embedding storage/search
 -- Run once: CREATE EXTENSION IF NOT EXISTS vector;
