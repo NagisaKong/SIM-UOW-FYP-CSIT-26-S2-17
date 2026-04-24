@@ -1,0 +1,11 @@
+# Ruff configuration for FYP-26-S2-17.
+# CI runs `ruff check ai api` — see .github/workflows/ci.yml
+
+line-length = 120
+target-version = "py311"
+
+[lint.per-file-ignores]
+# api/main_api.py deliberately manipulates sys.path before importing
+# `ai.*` so the file can be run as a script (python api/main_api.py)
+# as well as a module. The imports after that block trigger E402.
+"api/main_api.py" = ["E402"]

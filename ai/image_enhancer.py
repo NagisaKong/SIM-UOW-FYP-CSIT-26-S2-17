@@ -67,9 +67,9 @@ class ClaheEnhancer(_BaseEnhancer):
 
     def enhance(self, frame: np.ndarray) -> np.ndarray:
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        l = self._clahe.apply(l)
-        lab = cv2.merge((l, a, b))
+        l_ch, a_ch, b_ch = cv2.split(lab)
+        l_ch = self._clahe.apply(l_ch)
+        lab = cv2.merge((l_ch, a_ch, b_ch))
         out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
         # Mild unsharp mask to recover micro-contrast lost to CLAHE.
