@@ -18,5 +18,4 @@ out/
 
 # Dependency folders
 vendor/
-
-.gitignore
+demo.bat
