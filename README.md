@@ -96,7 +96,7 @@ FYP-26-S2-17/
 |--------|---------|
 | `main` | Production-ready code, auto-deployed via CD |
 | `develop` | Integration branch for completed features |
-
+| `feature/XXX` | new features, branched from `develop` |
 ---
 
 ## User Roles
