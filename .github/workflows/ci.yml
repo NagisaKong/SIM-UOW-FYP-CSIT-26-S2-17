@@ -6,32 +6,40 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  frontend:
-    name: Frontend (React)
+  # ────────────────────────────────────────────────────────────────
+  # 1. Lint — fast, no ML deps required
+  # ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          python-version: '3.11'
+          cache: 'pip'
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+      - name: Install ruff
+        run: pip install ruff
 
-  backend:
-    name: Backend (FastAPI)
+      - name: Ruff check
+        run: ruff check ai api
+
+  # ────────────────────────────────────────────────────────────────
+  # 2. Database schema — verify schema.sql applies cleanly
+  # ────────────────────────────────────────────────────────────────
+  schema:
+    name: Database schema
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: fyp_database
           POSTGRES_USER: fyp_user
@@ -43,11 +51,52 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    defaults:
-      run:
-        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pgvector extension
+        env:
+          PGPASSWORD: fyp_user
+        run: |
+          psql -h localhost -U fyp_user -d fyp_database \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Apply schema.sql
+        env:
+          PGPASSWORD: fyp_user
+        run: |
+          psql -h localhost -U fyp_user -d fyp_database \
+            -v ON_ERROR_STOP=1 -f database/schema.sql
+
+  # ────────────────────────────────────────────────────────────────
+  # 3. Backend smoke — install deps, import the FastAPI app,
+  #    run tests if any exist
+  # ────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend (FastAPI + AI)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: fyp_database
+          POSTGRES_USER: fyp_user
+          POSTGRES_PASSWORD: fyp_user
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql://fyp_user:fyp_user@localhost:5432/fyp_database
+      # Keep the app importable on lightweight CI runners
+      AI_CTX_ID: '-1'
+      AI_DEVICE: cpu
+      AI_USE_MTCNN: 'false'
+      AI_USE_FACENET: 'false'
+      AI_USE_ENHANCER: 'false'
     steps:
       - uses: actions/checkout@v4
 
@@ -55,29 +104,76 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: requirements.txt
 
-      - run: pip install -r requirements.txt
-      - run: pip install ruff pytest pytest-asyncio httpx
-      - run: ruff check .
-      - run: pytest
+      - name: Install system libraries for OpenCV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 postgresql-client
 
-  ai:
-    name: AI Module
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install CPU-only torch first to avoid pulling the CUDA build
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            "torch>=2.1.0" "torchvision>=0.16.0"
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Prepare database
+        env:
+          PGPASSWORD: fyp_user
+        run: |
+          psql -h localhost -U fyp_user -d fyp_database \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U fyp_user -d fyp_database \
+            -v ON_ERROR_STOP=1 -f database/schema.sql
+
+      - name: Import smoke test
+        run: |
+          python -c "from api.main_api import app; print('FastAPI app OK:', app.title)"
+          python -c "from ai.attendance_pipeline import AttendancePipeline; print('pipeline import OK')"
+          python -c "from ai.database_manager import EmbeddingRepo; import os; EmbeddingRepo(os.environ['DATABASE_URL']).ping(); print('DB ping OK')"
+
+      - name: Run tests
+        run: |
+          if [ -d tests ] || git ls-files '*test_*.py' '*_test.py' | grep -q .; then
+            pytest -q
+          else
+            echo "No tests found — skipping pytest."
+          fi
+
+  # ────────────────────────────────────────────────────────────────
+  # 4. Frontend — only runs when the folder has been populated
+  # ────────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (React)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ai
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: ai/requirements.txt
+      - name: Check whether frontend exists
+        id: check
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "frontend/package.json not found — skipping frontend job."
+          fi
 
-      - run: pip install -r requirements.txt
-      - run: pip install ruff pytest
-      - run: ruff check .
-      - run: pytest
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install, lint, build
+        if: steps.check.outputs.exists == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint --if-present
+          npm run build --if-present
