@@ -20,3 +20,6 @@ out/
 vendor/
 
 .gitignore
+
+
+.demo.bat
