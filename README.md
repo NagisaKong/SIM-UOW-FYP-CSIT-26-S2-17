@@ -69,7 +69,7 @@ Classroom Camera (Browser Fullscreen)
 | Database | PostgreSQL |
 | AI — Detection | SCRFD (InsightFace), MTCNN |
 | AI — Recognition | ArcFace (InsightFace), FaceNet |
-| AI — Enhancement | GAN (Super-Resolution / Image Enhancement) |
+| AI — Enhancement | StyleGAN / StarGAN, GAN (Super-Resolution / Image Enhancement) |
 | Image Processing | OpenCV |
 | Deployment | Docker, Vercel (frontend), Railway (backend) |
 | CI/CD | GitHub Actions |
@@ -96,8 +96,7 @@ FYP-26-S2-17/
 |--------|---------|
 | `main` | Production-ready code, auto-deployed via CD |
 | `develop` | Integration branch for completed features |
-| `feature/xxx` | new features, branched from `develop` |
-
+| `feature/XXX` | new features, branched from `develop` |
 ---
 
 ## User Roles

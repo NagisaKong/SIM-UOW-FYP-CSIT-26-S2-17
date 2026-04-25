@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student — FYP Attendance</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Student Dashboard</h1>
+  <div>
+    <span id="who" class="muted"></span>
+    <button class="secondary" onclick="logout()">Logout</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="checkin">Check-in</button>
+  <button class="tab-btn" data-tab="attendance">My Attendance</button>
+  <button class="tab-btn" data-tab="appeals">My Appeals</button>
+  <button class="tab-btn" data-tab="face">My Face</button>
+</div>
+
+<main>
+  <section id="tab-checkin" class="panel">
+    <h2>Face Check-in</h2>
+    <p class="muted">Click <b>Start Camera</b>, face the lens, then <b>Capture & Check-in</b>.</p>
+    <div class="row">
+      <video id="cam" autoplay playsinline muted width="320" height="240"></video>
+      <canvas id="cam-canvas" width="320" height="240" style="display:none"></canvas>
+    </div>
+    <div style="margin-top:.75rem">
+      <button id="btn-start">Start Camera</button>
+      <button id="btn-capture" disabled>Capture & Check-in</button>
+      <button id="btn-stop" class="secondary" disabled>Stop Camera</button>
+    </div>
+    <p id="checkin-msg"></p>
+  </section>
+
+  <section id="tab-attendance" class="panel" style="display:none">
+    <h2>Attendance Records</h2>
+    <table>
+      <thead><tr><th>Course</th><th>Start</th><th>Status</th><th>Marked At</th><th></th></tr></thead>
+      <tbody id="att-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-appeals" class="panel" style="display:none">
+    <h2>Submit Appeal</h2>
+    <form id="appeal-form">
+      <label>Record ID<input type="number" name="record_id" required></label>
+      <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+      <button type="submit">Submit</button>
+      <p id="appeal-msg" class="error"></p>
+    </form>
+    <h3 style="margin-top:1.5rem">My Appeals</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Record</th><th>Reason</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody id="appeal-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-face" class="panel" style="display:none">
+    <h2>Re-register My Face</h2>
+    <p class="muted">Upload a clear, front-facing photo. Previous embeddings will be replaced.</p>
+    <form id="face-form">
+      <label>Photo<input type="file" name="file" accept="image/*" required></label>
+      <button type="submit">Upload</button>
+      <p id="face-msg"></p>
+    </form>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script src="student.js"></script>
+</body>
+</html>

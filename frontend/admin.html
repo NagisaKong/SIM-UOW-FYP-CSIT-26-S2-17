@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — FYP Attendance</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Admin Console</h1>
+  <div>
+    <span id="who" class="muted"></span>
+    <button class="secondary" onclick="logout()">Logout</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="users">Users</button>
+  <button class="tab-btn" data-tab="faces">Face DB</button>
+  <button class="tab-btn" data-tab="attendance">Attendance</button>
+  <button class="tab-btn" data-tab="appeals">Appeals</button>
+</div>
+
+<main>
+  <section id="tab-users" class="panel">
+    <h2>Create User</h2>
+    <form id="user-form" class="row">
+      <label>Email<input name="email" type="email" required></label>
+      <label>Password<input name="password" type="text" value="demo123" required></label>
+      <label>Role
+        <select name="role">
+          <option value="student">student</option>
+          <option value="admin">admin</option>
+        </select>
+      </label>
+      <label>Full name<input name="full_name" required></label>
+      <label>Student ID<input name="student_id" placeholder="S00003"></label>
+      <button type="submit">Create</button>
+    </form>
+    <p id="user-msg" class="error"></p>
+
+    <h2 style="margin-top:1.5rem">All Users</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Name</th><th>Student#</th><th>Profile Status</th><th></th></tr></thead>
+      <tbody id="users-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-faces" class="panel" style="display:none">
+    <h2>Face Embeddings</h2>
+    <table>
+      <thead><tr><th>FaceID</th><th>Account</th><th>Name</th><th>Student#</th><th>Model</th><th>Dim</th><th>Active</th><th>Created</th><th></th></tr></thead>
+      <tbody id="faces-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-attendance" class="panel" style="display:none">
+    <h2>Attendance Overview</h2>
+    <table>
+      <thead><tr><th>Session</th><th>Course</th><th>Start</th><th>Student</th><th>Status</th><th>Marked</th></tr></thead>
+      <tbody id="att-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-appeals" class="panel" style="display:none">
+    <h2>Student Appeals</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Student</th><th>Record</th><th>Reason</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody id="appeals-body"></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="app.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

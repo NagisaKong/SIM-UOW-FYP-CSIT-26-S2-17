@@ -1,7 +1,7 @@
 -- ============================================================
 -- FYP-26-S2-17: Face Recognition Attendance System
 -- Database Schema (PostgreSQL)
--- Vision 0.1
+-- Vision 0.4
 -- ============================================================
 -- Extension: pgvector for efficient facial embedding storage/search
 -- Run once: CREATE EXTENSION IF NOT EXISTS vector;
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
-    embedding_vector BYTEA           NOT NULL,   -- replace with vector(N) after pgvector install
+    embedding_vector VECTOR(512)           NOT NULL,   -- replace with vector(N) after pgvector install
     model_name       VARCHAR(100)    NOT NULL,   -- e.g. 'arcface', 'facenet'
     model_version    VARCHAR(50)     NOT NULL,   -- e.g. 'r100', '20180402-114759'
     dimension        INTEGER         NOT NULL,   -- 512 for ArcFace, 128 for FaceNet
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_APPEAL (
     reviewed_by         INTEGER         REFERENCES USER_ACCOUNT(AccountID),  -- teacher/admin
     reviewed_at         TIMESTAMPTZ,
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
     CHECK ((status = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL) OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
@@ -175,13 +175,13 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        'USER_ACCOUNT', 'PERSONAL_INFO', 'FACE_EMBEDDING', 'ATTENDANCE_APPEAL'
+        'user_account', 'personal_info', 'face_embedding', 'attendance_appeal'
     ] LOOP
         EXECUTE format('
             CREATE OR REPLACE TRIGGER trg_%s_updated_at
             BEFORE UPDATE ON %I
             FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
-        ', lower(t), t);
+        ', t, t);
     END LOOP;
 END;
 $$;
