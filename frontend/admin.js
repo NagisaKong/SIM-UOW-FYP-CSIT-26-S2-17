@@ -6,13 +6,14 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["users", "faces", "attendance", "appeals"].forEach(name => {
+    ["users", "faces", "attendance", "appeals", "ai-config"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
     if (btn.dataset.tab === "faces") loadFaces();
     if (btn.dataset.tab === "attendance") loadAttendance();
     if (btn.dataset.tab === "appeals") loadAppeals();
+    if (btn.dataset.tab === "ai-config") {}
   });
 });
 
@@ -43,6 +44,41 @@ async function loadUsers() {
     ));
   }
 }
+
+document.getElementById('recalibrate-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('recalibrate-btn');
+    const statusText = document.getElementById('recalibrate-status');
+    
+    // Disable button to prevent double-clicking while the heavy GPU loads
+    btn.disabled = true;
+    btn.style.backgroundColor = "gray";
+    btn.textContent = "Running Calibration...";
+    statusText.innerText = "Running StyleGAN... This may take a few minutes. Check your backend terminal!";
+    statusText.style.color = "black";
+
+    try {
+        // Use your existing api() wrapper which automatically handles the auth token
+        const result = await api('/admin/recalibrate', {
+            method: 'POST'
+        });
+
+        if (result.status === 'success') {
+            statusText.innerText = `✅ Success! Threshold automatically updated to: ${result.new_threshold}`;
+            statusText.style.color = "#16a34a"; // Green
+        } else {
+            statusText.innerText = `❌ Error: Something went wrong.`;
+            statusText.style.color = "#c0392b"; // Red
+        }
+    } catch (error) {
+        statusText.innerText = `❌ Connection error: ${error.message}`;
+        statusText.style.color = "#c0392b"; // Red
+    } finally {
+        // Re-enable the button
+        btn.disabled = false;
+        btn.style.backgroundColor = "#4CAF50";
+        btn.textContent = "Run StyleGAN Calibration";
+    }
+});
 
 document.getElementById("user-form").addEventListener("submit", async (e) => {
   e.preventDefault();

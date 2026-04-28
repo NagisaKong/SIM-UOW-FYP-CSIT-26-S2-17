@@ -20,6 +20,7 @@
   <button class="tab-btn" data-tab="faces">Face DB</button>
   <button class="tab-btn" data-tab="attendance">Attendance</button>
   <button class="tab-btn" data-tab="appeals">Appeals</button>
+  <button class="tab-btn" data-tab="ai-config">AI Config</button>
 </div>
 
 <main>
@@ -70,6 +71,18 @@
       <tbody id="appeals-body"></tbody>
     </table>
   </section>
+
+  <section id="tab-ai-config" class="panel" style="display:none">
+    <h2>AI Model Configuration (StyleGAN)</h2>
+    <p>Generate synthetic student variations to calculate the optimal ArcFace threshold.</p>
+    
+    <button id="recalibrate-btn" style="padding: 10px 20px; background-color: #4CAF50; color: white; border: none; cursor: pointer; border-radius: 4px;">
+        Run StyleGAN Calibration
+    </button>
+    
+    <p id="recalibrate-status" style="margin-top: 15px; font-weight: bold;"></p>
+  </section>
+
 </main>
 
 <script src="app.js"></script>

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     model_version    VARCHAR(50)     NOT NULL,   -- e.g. 'r100', '20180402-114759'
     dimension        INTEGER         NOT NULL,   -- 512 for ArcFace, 128 for FaceNet
     is_active        BOOLEAN         NOT NULL DEFAULT TRUE,
+    is_synthetic     BOOLEAN         NOT NULL DEFAULT FALSE,
     -- PDPC biometric consent & retention fields
     consent_given_at TIMESTAMPTZ,
     retention_until  DATE,
@@ -150,6 +151,23 @@ CREATE INDEX IF NOT EXISTS idx_appeal_record  ON ATTENDANCE_APPEAL(AttendanceRec
 CREATE INDEX IF NOT EXISTS idx_appeal_account ON ATTENDANCE_APPEAL(AccountID);
 CREATE INDEX IF NOT EXISTS idx_appeal_status  ON ATTENDANCE_APPEAL(status);
 
+-- ------------------------------------------------------------
+-- 10. MODEL_CONFIGS (Stores fine-tuned AI thresholds)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS MODEL_CONFIGS (
+    ConfigID          SERIAL          PRIMARY KEY,
+    model_name        VARCHAR(100)    NOT NULL, -- e.g., 'arcface_ensemble'
+    similarity_threshold FLOAT        NOT NULL DEFAULT 0.35, -- The tweaked value
+    is_active         BOOLEAN         NOT NULL DEFAULT TRUE,
+    updated_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_by        INTEGER         REFERENCES USER_ACCOUNT(AccountID)
+);
+
+-- Register this table for the auto-updated_at trigger you already have
+CREATE TRIGGER trg_model_configs_updated_at
+BEFORE UPDATE ON MODEL_CONFIGS
+FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
 -- ============================================================
 -- Seed Data: default role profiles
 -- ============================================================
@@ -175,7 +193,7 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        'user_account', 'personal_info', 'face_embedding', 'attendance_appeal'
+        'user_account', 'personal_info', 'face_embedding', 'attendance_appeal', 'model_configs'
     ] LOOP
         EXECUTE format('
             CREATE OR REPLACE TRIGGER trg_%s_updated_at

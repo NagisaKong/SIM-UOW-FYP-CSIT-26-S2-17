@@ -22,3 +22,9 @@ vendor/
 
 demo.bat
 
+# Ignore AI Model Weights
+models/stylegan/
+*.pth
+*.pt
+*.pkl
+

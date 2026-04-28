@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+
 import sys
 from pathlib import Path
 
@@ -20,6 +21,14 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+"StyleGAN portion"
+
+from ai.training.calibrate import calibrate_threshold
+
+"StyleGaN portion"
+
 
 import contextlib
 from contextlib import asynccontextmanager
@@ -539,6 +548,31 @@ def admin_review_appeal(
         )
     return {"success": True}
 
+
+@app.post("/admin/recalibrate")
+async def recalibrate_models():
+    #Initialize StyleGAN generator
+    from ai.training.synthetic_gen import SyntheticDataGenerator
+    generator = SyntheticDataGenerator()
+    
+    #Generate the data
+    synthetic_data, labels = generator.prepare_calibration_set()
+    
+    #Calculate the new threshold
+    new_threshold = calibrate_threshold(synthetic_data, labels) 
+    
+    #Save to Supabase database using EXISTING db helper
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE model_configs 
+            SET similarity_threshold = %s, updated_at = NOW()
+            WHERE model_name = %s
+            """,
+            (float(new_threshold), 'arcface_ensemble')
+        )
+    
+    return {"status": "success", "new_threshold": float(new_threshold)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
