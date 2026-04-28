@@ -19,8 +19,15 @@ out/
 # Dependency folders
 vendor/
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
 
 demo.bat
+demo.sh
 
 # Ignore AI Model Weights
 models/stylegan/
