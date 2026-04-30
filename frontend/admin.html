@@ -21,6 +21,7 @@
   <button class="tab-btn" data-tab="attendance">Attendance</button>
   <button class="tab-btn" data-tab="appeals">Appeals</button>
   <button class="tab-btn" data-tab="ai-config">AI Config</button>
+  <button class="tab-btn" data-tab="live-scanner">Live Scanner</button>
 </div>
 
 <main>
@@ -81,6 +82,31 @@
     </button>
     
     <p id="recalibrate-status" style="margin-top: 15px; font-weight: bold;"></p>
+  </section>
+
+<section id="tab-live-scanner" class="panel" style="display:none">
+    <h2>Live Classroom Scanner</h2>
+    <p>Perform periodic background scans for attendance presence verification via Webcam.</p>
+    
+    <div style="display: flex; gap: 15px; margin-bottom: 10px; align-items: center;">
+      <label style="font-weight: bold; margin: 0;">Total Scans: 
+        <input type="number" id="total-scans" value="5" min="1" style="padding: 5px; width: 60px;">
+      </label>
+      <label style="font-weight: bold; margin: 0;">Interval (Secs): 
+        <input type="number" id="scan-interval" value="10" min="2" style="padding: 5px; width: 60px;">
+      </label>
+    </div>
+
+    <div style="border: 2px dashed #ccc; padding: 10px; text-align: center; margin-bottom: 20px; background-color: #f9fafb;">
+      <video id="webcam-feed" autoplay playsinline style="width: 100%; max-width: 500px; display: none; margin: 0 auto; border-radius: 8px;"></video>
+      <canvas id="snapshot-canvas" style="display: none;"></canvas>
+      <h3 id="camera-placeholder" style="padding: 40px 0;">📷 [ Camera Feed Offline ]</h3>
+    </div>
+
+    <button id="start-webcam-btn" style="padding: 10px 20px; background-color: #2563eb; color: white; border: none; cursor: pointer; border-radius: 4px;">
+      Start Periodic Webcam Scan
+    </button>
+    <p id="scan-status-msg" style="margin-top: 15px; font-weight: bold;"></p>
   </section>
 
 </main>

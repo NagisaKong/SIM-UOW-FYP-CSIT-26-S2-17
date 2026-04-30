@@ -6,7 +6,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["users", "faces", "attendance", "appeals", "ai-config"].forEach(name => {
+    ["users", "faces", "attendance", "appeals", "ai-config", "live-scanner"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
@@ -14,6 +14,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "attendance") loadAttendance();
     if (btn.dataset.tab === "appeals") loadAppeals();
     if (btn.dataset.tab === "ai-config") {}
+    if (btn.dataset.tab === "live-scanner") {}
   });
 });
 
@@ -183,3 +184,85 @@ async function reviewAppeal(id, status) {
 }
 
 loadUsers();
+
+// ── Live Scanner (Webcam) ─────────────────────────────────────────
+document.getElementById("start-webcam-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("start-webcam-btn");
+  const msg = document.getElementById("scan-status-msg");
+  const video = document.getElementById("webcam-feed");
+  const canvas = document.getElementById("snapshot-canvas");
+  const ctx = canvas.getContext("2d");
+  const placeholder = document.getElementById("camera-placeholder");
+
+  const totalScans = parseInt(document.getElementById("total-scans").value);
+  const intervalSeconds = parseInt(document.getElementById("scan-interval").value);
+  
+  btn.disabled = true;
+  btn.style.backgroundColor = "gray";
+  msg.textContent = "Requesting webcam access...";
+  msg.style.color = "#333";
+  
+  try {
+    // 1. Turn on the Webcam
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    video.style.display = "block";
+    placeholder.style.display = "none";
+    
+    // 2. Tell the backend we are starting a new session
+    const initRes = await api("/admin/start-webcam-scan", { method: "POST" });
+    const trackingId = initRes.tracking_id;
+    
+    let scansCompleted = 0;
+    msg.textContent = `Starting ${totalScans} scans, every ${intervalSeconds} seconds...`;
+
+    // 3. Start the looping interval
+    const scanIntervalId = setInterval(async () => {
+      scansCompleted++;
+      msg.textContent = `Performing scan ${scansCompleted} of ${totalScans}...`;
+      
+      // Take a snapshot
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Image = canvas.toDataURL("image/jpeg");
+      
+      // Send the snapshot to FastAPI for recognition
+      await api("/admin/process-webcam-frame", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ image: base64Image, tracking_id: trackingId })
+      });
+      
+      // 4. If all scans are done, calculate the 70% rule and shut down
+      if (scansCompleted >= totalScans) {
+        clearInterval(scanIntervalId);
+        
+        // Turn off the webcam light
+        stream.getTracks().forEach(track => track.stop()); 
+        video.style.display = "none";
+        placeholder.style.display = "block";
+        
+        msg.textContent = "Scans complete! Calculating 70% rule logic...";
+        
+        const finalRes = await api(`/admin/finalize-webcam-scan?tracking_id=${trackingId}&total_scans=${totalScans}`, {
+          method: "POST"
+        });
+        
+        msg.style.color = "#16a34a"; // Green
+        msg.textContent = `Finished! ${finalRes.present_count} retained as present, ${finalRes.absent_count} changed to absent.`;
+        loadAttendance(); // Refresh table
+        
+        btn.disabled = false;
+        btn.style.backgroundColor = "#2563eb";
+        btn.textContent = "Start Periodic Webcam Scan";
+      }
+    }, intervalSeconds * 1000); // Convert seconds to milliseconds
+    
+  } catch (err) {
+    msg.style.color = "#c0392b";
+    msg.textContent = "Camera Error: " + err.message + " (Make sure you allow camera permissions!)";
+    btn.disabled = false;
+    btn.style.backgroundColor = "#2563eb";
+  }
+});

@@ -37,6 +37,8 @@ from typing import Any
 import cv2
 import numpy as np
 import psycopg2
+import base64
+import uuid
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -573,6 +575,90 @@ async def recalibrate_models():
         )
     
     return {"status": "success", "new_threshold": float(new_threshold)}
+
+
+#this is a global memory to keep track of webcam scan sessions. Each session has a unique tracking_id and stores counts of how many times each student was seen during the scan.
+if not hasattr(app.state, "webcam_sessions"):
+    app.state.webcam_sessions = {}
+
+@app.post("/admin/start-webcam-scan")
+def start_webcam_scan(user: CurrentUser = Depends(require_role("admin"))):
+    """Initializes a new tracking dictionary for the incoming photo stream."""
+    tracking_id = str(uuid.uuid4())
+    app.state.webcam_sessions[tracking_id] = {}
+    return {"success": True, "tracking_id": tracking_id}
+
+class FrameBody(BaseModel):
+    image: str
+    tracking_id: str
+
+@app.post("/admin/process-webcam-frame")
+def process_webcam_frame(body: FrameBody, user: CurrentUser = Depends(require_role("admin"))):
+    """Receives a single base64 snapshot from the webcam and counts the identities."""
+    pipeline: AttendancePipeline = app.state.pipeline
+    
+    # 1. Decode the base64 Javascript image into an OpenCV numpy array
+    encoded_data = body.image.split(',')[1]
+    nparr = np.frombuffer(base64.b64decode(encoded_data), np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # 2. Run the image through your AI Pipeline
+    result = pipeline.process_frame(img)
+    
+    # 3. Add +1 to the counter for every recognised student
+    tracking_dict = app.state.webcam_sessions.get(body.tracking_id)
+    if tracking_dict is not None:
+        for p in result.predictions:
+            if p.recognised and p.account_id:
+                tracking_dict[p.account_id] = tracking_dict.get(p.account_id, 0) + 1
+                
+    return {"success": True, "faces_found": len(result.predictions)}
+
+@app.post("/admin/finalize-webcam-scan")
+def finalize_webcam_scan(tracking_id: str, total_scans: int, user: CurrentUser = Depends(require_role("admin"))):
+    """Applies the 70% rule based on the final counts."""
+    # Retrieve and delete the memory dictionary to free up RAM
+    tracking_dict = app.state.webcam_sessions.pop(tracking_id, {})
+    
+    present_count = 0
+    absent_count = 0
+    
+    with _db() as c, c.cursor() as cur:
+        # Get all students currently marked 'present' or 'late' in an active class
+        cur.execute("""
+            SELECT r.attendancerecordid, r.accountid
+            FROM attendance_record r
+            JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+            WHERE s.status = 'active'
+        """)
+        active_records = cur.fetchall()
+        
+        for record in active_records:
+            record_id = record['attendancerecordid'] if isinstance(record, dict) else record[0]
+            account_id = record['accountid'] if isinstance(record, dict) else record[1]
+            
+            # The 70% Logic Math
+            times_seen = tracking_dict.get(account_id, 0)
+            presence_percentage = (times_seen / total_scans) * 100 if total_scans > 0 else 0
+            
+            if presence_percentage >= 70.0:
+                new_status = 'present'
+                present_count += 1
+            else:
+                new_status = 'absent'
+                absent_count += 1
+                
+            cur.execute("""
+                UPDATE attendance_record
+                SET status = %s, marked_at = NOW()
+                WHERE attendancerecordid = %s
+            """, (new_status, record_id))
+            
+    return {
+        "success": True, 
+        "present_count": present_count, 
+        "absent_count": absent_count
+    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
