@@ -18,42 +18,98 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="users">Users</button>
   <button class="tab-btn" data-tab="faces">Face DB</button>
+  <button class="tab-btn" data-tab="courses">Courses</button>
   <button class="tab-btn" data-tab="attendance">Attendance</button>
   <button class="tab-btn" data-tab="appeals">Appeals</button>
-  <button class="tab-btn" data-tab="ai-config">AI Config</button>
+  <button class="tab-btn" data-tab="ai-config">AI Model Governance</button>
   <button class="tab-btn" data-tab="live-scanner">Live Scanner</button>
 </div>
 
 <main>
   <section id="tab-users" class="panel">
-    <h2>Create User</h2>
+    <h2>Register User (U19/U20)</h2>
     <form id="user-form" class="row">
       <label>Email<input name="email" type="email" required></label>
       <label>Password<input name="password" type="text" value="demo123" required></label>
       <label>Role
         <select name="role">
           <option value="student">student</option>
+          <option value="teacher">teacher</option>
           <option value="admin">admin</option>
         </select>
       </label>
       <label>Full name<input name="full_name" required></label>
       <label>Student ID<input name="student_id" placeholder="S00003"></label>
+      <label>Facial image (optional, students only)<input name="face_image" type="file" accept="image/*"></label>
       <button type="submit">Create</button>
     </form>
     <p id="user-msg" class="error"></p>
 
     <h2 style="margin-top:1.5rem">All Users</h2>
     <table>
-      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Name</th><th>Student#</th><th>Profile Status</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Name</th><th>Student#</th><th>Profile Status</th><th>Actions</th></tr></thead>
       <tbody id="users-body"></tbody>
     </table>
   </section>
 
   <section id="tab-faces" class="panel" style="display:none">
-    <h2>Face Embeddings</h2>
+    <h2>Facial Image Database (U21)</h2>
+    <p class="muted small">Add, replace, or remove facial embeddings. Uploaded images are validated for face presence before storage.</p>
+
+    <h3 style="margin-top:1rem">Add / Update Face for Existing Student</h3>
+    <form id="face-upload-form" class="row" enctype="multipart/form-data">
+      <label>Account ID<input name="account_id" type="number" required placeholder="e.g. 3"></label>
+      <label>Facial image<input name="file" type="file" accept="image/*" required></label>
+      <button type="submit">Register / Update Face</button>
+    </form>
+    <p id="face-upload-msg" class="error"></p>
+
+    <h3 style="margin-top:1.5rem">All Embeddings</h3>
     <table>
-      <thead><tr><th>FaceID</th><th>Account</th><th>Name</th><th>Student#</th><th>Model</th><th>Dim</th><th>Active</th><th>Created</th><th></th></tr></thead>
+      <thead><tr><th>FaceID</th><th>Account</th><th>Name</th><th>Student#</th><th>Model</th><th>Dim</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
       <tbody id="faces-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-courses" class="panel" style="display:none">
+    <h2>Manage Courses (U26)</h2>
+    <form id="course-form" class="row">
+      <label>Course code<input name="course_code" required placeholder="CSIT128"></label>
+      <label>Course name<input name="course_name" required placeholder="Programming Fundamentals"></label>
+      <button type="submit">Add Course</button>
+    </form>
+    <p id="course-msg" class="error"></p>
+
+    <h3 style="margin-top:1.5rem">All Courses</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Code</th><th>Name</th><th>Status</th><th>Active Sessions</th><th>Actions</th></tr></thead>
+      <tbody id="courses-body"></tbody>
+    </table>
+
+    <h3 style="margin-top:1.5rem">Schedule Class Session</h3>
+    <p class="muted small">Set the date and time for a course session. Students enrolled in the course can check in during the active window.</p>
+    <form id="session-form" class="row">
+      <label>Course
+        <select name="course_id" id="session-course-select" required></select>
+      </label>
+      <label>Start time<input name="start_time" type="datetime-local" required></label>
+      <label>End time<input name="end_time" type="datetime-local"></label>
+      <label>Status
+        <select name="status">
+          <option value="scheduled">scheduled</option>
+          <option value="active">active</option>
+          <option value="ended">ended</option>
+          <option value="cancelled">cancelled</option>
+        </select>
+      </label>
+      <button type="submit">Schedule Session</button>
+    </form>
+    <p id="session-msg" class="error"></p>
+
+    <h3 style="margin-top:1rem">Scheduled Sessions</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Course</th><th>Start</th><th>End</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="sessions-body"></tbody>
     </table>
   </section>
 
@@ -74,39 +130,69 @@
   </section>
 
   <section id="tab-ai-config" class="panel" style="display:none">
-    <h2>AI Model Configuration (StyleGAN)</h2>
-    <p>Generate synthetic student variations to calculate the optimal ArcFace threshold.</p>
-    
-    <button id="recalibrate-btn" style="padding: 10px 20px; background-color: #4CAF50; color: white; border: none; cursor: pointer; border-radius: 4px;">
-        Run StyleGAN Calibration
-    </button>
-    
-    <p id="recalibrate-status" style="margin-top: 15px; font-weight: bold;"></p>
+    <h2>AI Model Governance</h2>
+
+    <h3 style="margin-top:1rem">U22 — Assign Training & Testing Data</h3>
+    <p class="muted small">Choose which subset of registered facial embeddings is used as the training set vs. the held-out test set for the next model run.</p>
+    <form id="training-data-form" class="row">
+      <label>Train split (%)<input name="train_pct" type="number" min="10" max="95" value="80"></label>
+      <label>Target model
+        <select name="model_name">
+          <option value="arcface_ensemble">arcface_ensemble (SCRFD+ArcFace)</option>
+          <option value="facenet_ensemble">facenet_ensemble (MTCNN+FaceNet)</option>
+        </select>
+      </label>
+      <button type="submit">Save Data Assignment</button>
+    </form>
+    <p id="training-data-msg" class="error"></p>
+
+    <h3 style="margin-top:1.5rem">U23 — Configure & Train ML Model</h3>
+    <p class="muted small">Generates synthetic StyleGAN variations and re-fits the similarity threshold for the selected model. Training progress is reported below.</p>
+    <button id="recalibrate-btn">Start Training</button>
+    <p id="recalibrate-status" class="muted small" style="margin-top:.75rem"></p>
+
+    <h3 style="margin-top:1.5rem">U24 — Ensemble Voting Panel</h3>
+    <p class="muted small">Combine multiple trained models via majority voting. Requires at least two trained models.</p>
+    <form id="ensemble-form" class="row">
+      <label><input type="checkbox" name="use_arcface" checked> SCRFD + ArcFace</label>
+      <label><input type="checkbox" name="use_facenet" checked> MTCNN + FaceNet</label>
+      <label>Voting weights
+        <select name="weighting">
+          <option value="equal">Equal weighting</option>
+          <option value="confidence">Confidence-weighted</option>
+        </select>
+      </label>
+      <button type="submit">Save Ensemble Config</button>
+    </form>
+    <p id="ensemble-msg" class="error"></p>
+
+    <h3 style="margin-top:1.5rem">U25 — Retrain & Redeploy</h3>
+    <p class="muted small">Retrain the active model on the latest data and deploy if performance improves.</p>
+    <button id="retrain-btn">Retrain & Redeploy</button>
+    <p id="retrain-msg" class="error"></p>
   </section>
 
 <section id="tab-live-scanner" class="panel" style="display:none">
     <h2>Live Classroom Scanner</h2>
-    <p>Perform periodic background scans for attendance presence verification via Webcam.</p>
-    
-    <div style="display: flex; gap: 15px; margin-bottom: 10px; align-items: center;">
-      <label style="font-weight: bold; margin: 0;">Total Scans: 
-        <input type="number" id="total-scans" value="5" min="1" style="padding: 5px; width: 60px;">
+    <p class="muted small">Perform periodic background scans for in-class presence verification via webcam.</p>
+
+    <div class="row" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); max-width: 480px;">
+      <label>Total Scans
+        <input type="number" id="total-scans" value="5" min="1">
       </label>
-      <label style="font-weight: bold; margin: 0;">Interval (Secs): 
-        <input type="number" id="scan-interval" value="10" min="2" style="padding: 5px; width: 60px;">
+      <label>Interval (seconds)
+        <input type="number" id="scan-interval" value="10" min="2">
       </label>
     </div>
 
-    <div style="border: 2px dashed #ccc; padding: 10px; text-align: center; margin-bottom: 20px; background-color: #f9fafb;">
-      <video id="webcam-feed" autoplay playsinline style="width: 100%; max-width: 500px; display: none; margin: 0 auto; border-radius: 8px;"></video>
-      <canvas id="snapshot-canvas" style="display: none;"></canvas>
-      <h3 id="camera-placeholder" style="padding: 40px 0;">📷 [ Camera Feed Offline ]</h3>
+    <div class="scanner-box">
+      <video id="webcam-feed" autoplay playsinline style="display:none"></video>
+      <canvas id="snapshot-canvas" style="display:none"></canvas>
+      <h3 id="camera-placeholder">📷 Camera feed offline</h3>
     </div>
 
-    <button id="start-webcam-btn" style="padding: 10px 20px; background-color: #2563eb; color: white; border: none; cursor: pointer; border-radius: 4px;">
-      Start Periodic Webcam Scan
-    </button>
-    <p id="scan-status-msg" style="margin-top: 15px; font-weight: bold;"></p>
+    <button id="start-webcam-btn">Start Periodic Webcam Scan</button>
+    <p id="scan-status-msg" class="muted small" style="margin-top:.75rem"></p>
   </section>
 
 </main>

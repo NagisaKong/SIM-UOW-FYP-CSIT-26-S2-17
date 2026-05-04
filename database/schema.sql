@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 );
 
 -- ------------------------------------------------------------
--- 4. FACE_EMBEDDING  (biometric data – full PDPC compliance)
+-- 4. FACE_EMBEDDING  (biometric data)
 -- ------------------------------------------------------------
 -- embedding_vector stored as BYTEA when pgvector is unavailable.
 -- Switch to: embedding_vector vector(512) for ArcFace,
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
-    embedding_vector VECTOR(512)           NOT NULL,   -- replace with vector(N) after pgvector install
+    embedding_vector VECTOR(512)     NOT NULL,   -- replace with vector(N) after pgvector install
     model_name       VARCHAR(100)    NOT NULL,   -- e.g. 'arcface', 'facenet'
     model_version    VARCHAR(50)     NOT NULL,   -- e.g. 'r100', '20180402-114759'
     dimension        INTEGER         NOT NULL,   -- 512 for ArcFace, 128 for FaceNet
@@ -79,8 +79,12 @@ CREATE INDEX IF NOT EXISTS idx_face_embedding_active  ON FACE_EMBEDDING(AccountI
 CREATE TABLE IF NOT EXISTS COURSE (
     CourseID    SERIAL          PRIMARY KEY,
     course_code VARCHAR(20)     NOT NULL UNIQUE,
-    course_name VARCHAR(255)    NOT NULL
+    course_name VARCHAR(255)    NOT NULL,
+    status      VARCHAR(20)     NOT NULL DEFAULT 'active'
+                                CHECK (status IN ('active', 'inactive'))
 );
+
+ALTER TABLE COURSE ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
 
 -- ------------------------------------------------------------
 -- 6. COURSE_ENROLLMENT  (student ↔ course membership)

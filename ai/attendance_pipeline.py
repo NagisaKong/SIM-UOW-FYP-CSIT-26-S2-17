@@ -5,7 +5,7 @@ Flow, per frame:
     GAN / CLAHE enhance (low-light frames only)
         └► SCRFD detect    ──►┐
         └► MTCNN detect    ──►┤  fuse by IoU
-                              ├►  ArcFace embed  ──►┐
+                              ├►  ArcFace embed ──►┐
                               └►  FaceNet embed ──►┤  weighted vote
                                                    ▼
                                               Prediction list

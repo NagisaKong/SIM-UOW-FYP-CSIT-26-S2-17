@@ -25,17 +25,17 @@
 <main>
   <section id="tab-checkin" class="panel">
     <h2>Face Check-in</h2>
-    <p class="muted">Click <b>Start Camera</b>, face the lens, then <b>Capture & Check-in</b>.</p>
-    <div class="row">
+    <p class="muted small">Click <b>Start Camera</b>, face the lens, then <b>Capture & Check-in</b>.</p>
+    <div style="text-align:center; max-width:360px">
       <video id="cam" autoplay playsinline muted width="320" height="240"></video>
       <canvas id="cam-canvas" width="320" height="240" style="display:none"></canvas>
     </div>
-    <div style="margin-top:.75rem">
+    <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem">
       <button id="btn-start">Start Camera</button>
       <button id="btn-capture" disabled>Capture & Check-in</button>
       <button id="btn-stop" class="secondary" disabled>Stop Camera</button>
     </div>
-    <p id="checkin-msg"></p>
+    <p id="checkin-msg" class="small" style="margin-top:.75rem"></p>
   </section>
 
   <section id="tab-attendance" class="panel" style="display:none">
@@ -63,12 +63,36 @@
 
   <section id="tab-face" class="panel" style="display:none">
     <h2>Re-register My Face</h2>
-    <p class="muted">Upload a clear, front-facing photo. Previous embeddings will be replaced.</p>
-    <form id="face-form">
+    <p class="muted">Choose a clear, front-facing photo — capture from camera or upload a file.
+       Previous embeddings will be replaced.</p>
+
+    <div class="face-mode-tabs">
+      <button type="button" class="face-mode-btn active" data-mode="camera">📷 Camera</button>
+      <button type="button" class="face-mode-btn" data-mode="upload">📁 Upload</button>
+    </div>
+
+    <!-- Camera mode -->
+    <div id="face-mode-camera">
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-start">
+        <video id="face-cam" autoplay playsinline muted width="320" height="240"></video>
+        <canvas id="face-canvas" width="320" height="240" style="display:none"></canvas>
+        <img id="face-preview" class="preview" style="display:none; max-width:320px" alt="preview">
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem">
+        <button type="button" id="face-cam-start">Start Camera</button>
+        <button type="button" id="face-cam-capture" disabled>Capture</button>
+        <button type="button" id="face-cam-retake" class="secondary" style="display:none">Retake</button>
+        <button type="button" id="face-cam-submit" disabled>Submit Photo</button>
+      </div>
+    </div>
+
+    <!-- Upload mode -->
+    <form id="face-upload-form" style="display:none; max-width:420px">
       <label>Photo<input type="file" name="file" accept="image/*" required></label>
-      <button type="submit">Upload</button>
-      <p id="face-msg"></p>
+      <button type="submit" style="margin-top:1rem">Upload</button>
     </form>
+
+    <p id="face-msg" class="small" style="margin-top:1rem"></p>
   </section>
 </main>
 

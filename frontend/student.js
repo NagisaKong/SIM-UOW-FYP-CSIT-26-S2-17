@@ -92,21 +92,122 @@ async function loadAppeals() {
 }
 
 // ── Face re-register ──────────────────────────────────────────
-document.getElementById("face-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
+// ── Face Re-register: shared submit ───────────────────────────
+async function submitFaceBlob(blob, filename) {
   const msg = document.getElementById("face-msg");
+  msg.style.color = "#555";
   msg.textContent = "Uploading...";
-  const fd = new FormData(e.target);
+  const fd = new FormData();
   fd.append("account_id", user.account_id);
+  fd.append("file", blob, filename);
   try {
     const res = await api("/register", {method: "POST", body: fd});
     msg.style.color = res.success ? "#16a34a" : "#c0392b";
     msg.textContent = res.message;
+    return res.success;
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
+    return false;
+  }
+}
+
+// Mode switch (camera vs upload)
+const faceCamPanel = document.getElementById("face-mode-camera");
+const faceUploadForm = document.getElementById("face-upload-form");
+document.querySelectorAll(".face-mode-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".face-mode-btn").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    const mode = b.dataset.mode;
+    faceCamPanel.style.display    = mode === "camera" ? "" : "none";
+    faceUploadForm.style.display  = mode === "upload" ? "" : "none";
+    if (mode !== "camera") stopFaceCam();
+  });
+});
+
+// File-upload handler
+faceUploadForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target.querySelector('input[name="file"]').files[0];
+  if (!f) return;
+  if (await submitFaceBlob(f, f.name)) e.target.reset();
+});
+
+// Camera handler
+const faceVideo   = document.getElementById("face-cam");
+const faceCanvas  = document.getElementById("face-canvas");
+const facePreview = document.getElementById("face-preview");
+const faceStartBtn   = document.getElementById("face-cam-start");
+const faceCaptureBtn = document.getElementById("face-cam-capture");
+const faceRetakeBtn  = document.getElementById("face-cam-retake");
+const faceSubmitBtn  = document.getElementById("face-cam-submit");
+let faceStream = null;
+let faceBlob = null;
+
+function stopFaceCam() {
+  if (faceStream) faceStream.getTracks().forEach(t => t.stop());
+  faceStream = null;
+  faceVideo.srcObject = null;
+  faceStartBtn.disabled = false;
+  faceCaptureBtn.disabled = true;
+}
+
+faceStartBtn.addEventListener("click", async () => {
+  document.getElementById("face-msg").textContent = "";
+  facePreview.style.display = "none";
+  faceVideo.style.display = "";
+  faceRetakeBtn.style.display = "none";
+  faceBlob = null;
+  faceSubmitBtn.disabled = true;
+  try {
+    faceStream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    faceVideo.srcObject = faceStream;
+    faceStartBtn.disabled = true;
+    faceCaptureBtn.disabled = false;
+  } catch (e) {
+    const msg = document.getElementById("face-msg");
+    msg.style.color = "#c0392b";
+    msg.textContent = "无法打开摄像头: " + e.message;
   }
 });
+
+faceCaptureBtn.addEventListener("click", () => {
+  if (!faceStream) return;
+  const w = faceVideo.videoWidth || 640, h = faceVideo.videoHeight || 480;
+  faceCanvas.width = w; faceCanvas.height = h;
+  faceCanvas.getContext("2d").drawImage(faceVideo, 0, 0, w, h);
+  faceCanvas.toBlob((blob) => {
+    faceBlob = blob;
+    facePreview.src = URL.createObjectURL(blob);
+    facePreview.style.display = "";
+    faceVideo.style.display = "none";
+    faceRetakeBtn.style.display = "";
+    faceSubmitBtn.disabled = false;
+    stopFaceCam();
+  }, "image/jpeg", 0.92);
+});
+
+faceRetakeBtn.addEventListener("click", () => {
+  faceBlob = null;
+  faceSubmitBtn.disabled = true;
+  faceStartBtn.click();
+});
+
+faceSubmitBtn.addEventListener("click", async () => {
+  if (!faceBlob) return;
+  faceSubmitBtn.disabled = true;
+  const ok = await submitFaceBlob(faceBlob, "face.jpg");
+  if (ok) {
+    facePreview.style.display = "none";
+    faceRetakeBtn.style.display = "none";
+    faceBlob = null;
+  } else {
+    faceSubmitBtn.disabled = false;
+  }
+});
+
+window.addEventListener("pagehide", stopFaceCam);
 
 // ── Face Check-in ─────────────────────────────────────────────
 const cam = document.getElementById("cam");

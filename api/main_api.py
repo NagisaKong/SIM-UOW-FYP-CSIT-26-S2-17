@@ -551,6 +551,278 @@ def admin_review_appeal(
     return {"success": True}
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Course management (U26)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/courses")
+def admin_list_courses(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT c.courseid, c.course_code, c.course_name,
+               COALESCE(c.status, 'active') AS status,
+               (SELECT COUNT(*) FROM attendance_session s
+                  WHERE s.courseid = c.courseid AND s.status = 'active') AS active_sessions
+        FROM course c
+        ORDER BY c.courseid
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "courses": _dict_rows(cur)}
+
+
+class CourseBody(BaseModel):
+    course_code: str
+    course_name: str
+
+
+@app.post("/admin/courses")
+def admin_create_course(
+    body: CourseBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM course WHERE course_code = %s", (body.course_code,)
+        )
+        if cur.fetchone():
+            raise HTTPException(409, f"课程代码 {body.course_code} 已存在")
+        cur.execute(
+            "INSERT INTO course (course_code, course_name) VALUES (%s, %s) RETURNING courseid",
+            (body.course_code, body.course_name),
+        )
+        course_id = cur.fetchone()[0]
+    return {"success": True, "course_id": course_id}
+
+
+class CourseStatusBody(BaseModel):
+    status: str  # active | inactive
+
+
+@app.patch("/admin/courses/{course_id}/status")
+def admin_set_course_status(
+    course_id: int,
+    body: CourseStatusBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    if body.status not in ("active", "inactive"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "UPDATE course SET status = %s WHERE courseid = %s",
+            (body.status, course_id),
+        )
+    return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Attendance session scheduling (admin)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/sessions")
+def admin_list_sessions(
+    course_id: int | None = None,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    sql = """
+        SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
+               s.start_time, s.end_time, s.status
+        FROM attendance_session s
+        JOIN course c ON c.courseid = s.courseid
+        {where}
+        ORDER BY s.start_time DESC
+        LIMIT 500
+    """
+    where = "WHERE s.courseid = %s" if course_id else ""
+    params = (course_id,) if course_id else ()
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql.format(where=where), params)
+        return {"success": True, "sessions": _dict_rows(cur)}
+
+
+class SessionBody(BaseModel):
+    course_id: int
+    start_time: str  # ISO 8601, e.g. "2026-05-10T09:00:00+08:00"
+    end_time: str | None = None
+    status: str = "scheduled"  # scheduled | active | ended | cancelled
+
+
+@app.post("/admin/sessions")
+def admin_create_session(
+    body: SessionBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    if body.status not in ("scheduled", "active", "ended", "cancelled"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(status,'active') FROM course WHERE courseid = %s",
+            (body.course_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "课程不存在")
+        if row[0] == "inactive":
+            raise HTTPException(400, "课程已停用，无法排课")
+        cur.execute(
+            """
+            INSERT INTO attendance_session (courseid, start_time, end_time, status)
+            VALUES (%s, %s, %s, %s)
+            RETURNING attendancesessionid
+            """,
+            (body.course_id, body.start_time, body.end_time, body.status),
+        )
+        sid = cur.fetchone()[0]
+    return {"success": True, "session_id": sid}
+
+
+class SessionPatchBody(BaseModel):
+    start_time: str | None = None
+    end_time: str | None = None
+    status: str | None = None
+
+
+@app.patch("/admin/sessions/{session_id}")
+def admin_update_session(
+    session_id: int,
+    body: SessionPatchBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    fields, params = [], []
+    if body.start_time is not None:
+        fields.append("start_time = %s")
+        params.append(body.start_time)
+    if body.end_time is not None:
+        fields.append("end_time = %s")
+        params.append(body.end_time)
+    if body.status is not None:
+        if body.status not in ("scheduled", "active", "ended", "cancelled"):
+            raise HTTPException(400, "status 非法")
+        fields.append("status = %s")
+        params.append(body.status)
+    if not fields:
+        raise HTTPException(400, "无可更新字段")
+    params.append(session_id)
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            f"UPDATE attendance_session SET {', '.join(fields)} WHERE attendancesessionid = %s",
+            params,
+        )
+    return {"success": True}
+
+
+@app.delete("/admin/sessions/{session_id}")
+def admin_delete_session(
+    session_id: int, user: CurrentUser = Depends(require_role("admin"))
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM attendance_record WHERE attendancesessionid = %s LIMIT 1",
+            (session_id,),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "该课时已有签到记录，无法删除")
+        cur.execute(
+            "DELETE FROM attendance_session WHERE attendancesessionid = %s",
+            (session_id,),
+        )
+    return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AI Model Governance (U22-U25)
+# ──────────────────────────────────────────────────────────────────────────
+class TrainingDataBody(BaseModel):
+    train_pct: int
+    model_name: str
+
+
+@app.post("/admin/training-data")
+def admin_assign_training_data(
+    body: TrainingDataBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    if not (10 <= body.train_pct <= 95):
+        raise HTTPException(400, "train_pct 必须在 10-95 之间")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM face_embedding WHERE is_active = TRUE AND model_name = %s",
+            (body.model_name,),
+        )
+        total = cur.fetchone()[0]
+    if total == 0:
+        raise HTTPException(400, "训练集为空，无法分配数据")
+    train_count = int(total * body.train_pct / 100)
+    test_count = total - train_count
+    return {
+        "success": True,
+        "model_name": body.model_name,
+        "train_count": train_count,
+        "test_count": test_count,
+    }
+
+
+class EnsembleBody(BaseModel):
+    use_arcface: bool
+    use_facenet: bool
+    weighting: str  # equal | confidence
+
+
+@app.post("/admin/ensemble")
+def admin_configure_ensemble(
+    body: EnsembleBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    selected = sum([body.use_arcface, body.use_facenet])
+    if selected < 2:
+        raise HTTPException(400, "Ensemble 至少需要两个模型 (U24)")
+    if body.weighting not in ("equal", "confidence"):
+        raise HTTPException(400, "weighting 非法")
+    return {
+        "success": True,
+        "models": [
+            m for m, on in [("arcface", body.use_arcface), ("facenet", body.use_facenet)] if on
+        ],
+        "weighting": body.weighting,
+    }
+
+
+@app.post("/admin/retrain")
+async def admin_retrain_model(
+    force: bool = False, user: CurrentUser = Depends(require_role("admin"))
+):
+    """Retrain & redeploy active model. Warns if new threshold deviates strongly
+    from the previous one (U25 alternative flow #2)."""
+    from ai.training.synthetic_gen import SyntheticDataGenerator
+
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT similarity_threshold FROM model_configs WHERE model_name = %s",
+            ("arcface_ensemble",),
+        )
+        row = cur.fetchone()
+        old_threshold = float(row[0]) if row else None
+
+    generator = SyntheticDataGenerator()
+    synthetic_data, labels = generator.prepare_calibration_set()
+    new_threshold = float(calibrate_threshold(synthetic_data, labels))
+
+    if not force and old_threshold is not None and abs(new_threshold - old_threshold) > 0.15:
+        return {
+            "success": False,
+            "warning": (
+                f"New threshold {new_threshold:.3f} differs significantly from "
+                f"current {old_threshold:.3f}; review before deploying."
+            ),
+            "new_threshold": new_threshold,
+            "old_threshold": old_threshold,
+        }
+
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE model_configs
+            SET similarity_threshold = %s, updated_at = NOW(), updated_by = %s
+            WHERE model_name = %s
+            """,
+            (new_threshold, user.account_id, "arcface_ensemble"),
+        )
+    return {"success": True, "new_threshold": new_threshold, "old_threshold": old_threshold}
+
+
 @app.post("/admin/recalibrate")
 async def recalibrate_models():
     #Initialize StyleGAN generator
