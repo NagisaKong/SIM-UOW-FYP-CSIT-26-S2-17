@@ -1,7 +1,6 @@
 import sys
 import os
 import torch
-import numpy as np
 import cv2  # Required to convert tensors to images
 
 # Tell Python to look in THIS specific folder for NVIDIA's libraries

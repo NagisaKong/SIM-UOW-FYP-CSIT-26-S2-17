@@ -167,10 +167,8 @@ CREATE TABLE IF NOT EXISTS MODEL_CONFIGS (
     updated_by        INTEGER         REFERENCES USER_ACCOUNT(AccountID)
 );
 
--- Register this table for the auto-updated_at trigger you already have
-CREATE TRIGGER trg_model_configs_updated_at
-BEFORE UPDATE ON MODEL_CONFIGS
-FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+-- The updated_at trigger for MODEL_CONFIGS is installed by the
+-- DO block further below (model_configs is in its target array).
 
 -- ============================================================
 -- Seed Data: default role profiles
