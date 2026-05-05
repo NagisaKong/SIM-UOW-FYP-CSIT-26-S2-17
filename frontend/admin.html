@@ -242,14 +242,14 @@
       <h2>Live Classroom Scanner</h2>
       <p class="muted small">Perform periodic background scans for in-class presence verification via webcam.</p>
 
-      <div class="row" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); max-width: 480px;">
+      <form class="row row--compact">
         <label>Total Scans
           <input type="number" id="total-scans" value="5" min="1">
         </label>
         <label>Interval (seconds)
           <input type="number" id="scan-interval" value="10" min="2">
         </label>
-      </div>
+      </form>
 
       <div class="scanner-box">
         <video id="webcam-feed" autoplay playsinline style="display:none"></video>
@@ -257,7 +257,9 @@
         <h3 id="camera-placeholder">📷 Camera feed offline</h3>
       </div>
 
-      <button id="start-webcam-btn">Start Periodic Webcam Scan</button>
+      <div class="camera-actions camera-actions--start">
+        <button id="start-webcam-btn">Start Periodic Webcam Scan</button>
+      </div>
       <p id="scan-status-msg" class="muted small" style="margin-top:.75rem"></p>
     </section>
 

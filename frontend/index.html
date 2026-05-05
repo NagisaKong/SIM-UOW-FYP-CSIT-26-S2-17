@@ -1,15 +1,17 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FYP Attendance — Login</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FYP Attendance — Login</title>
+  <link rel="stylesheet" href="style.css">
 </head>
+
 <body class="centered">
   <form id="login-form" class="card">
-    <h1>Attendance System</h1>
-    <p class="muted">FYP-26-S2-17 Demo</p>
+    <h1>Face Recognition Attendance System Demo</h1>
+    <p class="muted">FYP-26-S2-17</p>
     <label>Email<input type="email" name="email" required value="alice@demo.local"></label>
     <label>Password<input type="password" name="password" required value="demo123"></label>
     <button type="submit">Login</button>
@@ -28,8 +30,8 @@
       try {
         const res = await api("/auth/login", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({email: fd.get("email"), password: fd.get("password")}),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
         });
         localStorage.setItem("token", res.token);
         localStorage.setItem("user", JSON.stringify(res.user));
@@ -40,4 +42,5 @@
     });
   </script>
 </body>
+
 </html>

@@ -319,9 +319,52 @@ main {
 .row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1rem;
+  gap: 1rem 1rem;
   align-items: end;
 }
+.row--compact { grid-template-columns: repeat(auto-fit, minmax(180px, 220px)); max-width: 480px; }
+
+/* Uniform control height inside form rows */
+.row label,
+form.row label {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  margin: 0;
+  min-width: 0;
+}
+.row input,
+.row select,
+.row textarea,
+form.row input,
+form.row select,
+form.row textarea {
+  height: 38px;
+  margin-top: 0;
+}
+.row textarea,
+form.row textarea { height: auto; min-height: 76px; }
+.row input[type="file"],
+form.row input[type="file"] { line-height: 1.4; padding: .4rem .55rem; }
+.row input[type="checkbox"],
+form.row input[type="checkbox"] { height: auto; width: auto; }
+/* Inline checkbox-style label keeps checkbox + text on one line */
+.row label:has(> input[type="checkbox"]),
+form.row label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: .5rem;
+  height: 38px;
+}
+
+/* Submit button aligns with input row */
+form.row > button,
+.row > button {
+  height: 38px;
+  align-self: end;
+  white-space: nowrap;
+}
+
 form .row + button,
 form > button {
   margin-top: 1rem;
@@ -394,6 +437,69 @@ video, img.preview, canvas {
 }
 img.preview { background: var(--c-surface-2); }
 
+/* Center the whole Check-in panel content */
+#tab-checkin { text-align: center; }
+#tab-checkin > h2 { justify-content: center; border-bottom-color: transparent; }
+#tab-checkin > p  { max-width: 520px; margin-left: auto; margin-right: auto; }
+
+/* Centered camera stage (check-in & re-register) -------------- */
+.camera-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem auto 0;
+  max-width: 520px;
+}
+.camera-frame {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: .75rem;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border-2);
+  border-radius: var(--radius);
+}
+.camera-frame video,
+.camera-frame canvas,
+.camera-frame img.preview {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+.camera-frame--dual {
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+.camera-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .5rem;
+  width: 100%;
+}
+.camera-actions--start { justify-content: flex-start; }
+.camera-actions button { min-width: 140px; }
+.camera-msg {
+  width: 100%;
+  text-align: center;
+  margin: 0;
+  min-height: 1em;
+}
+
+/* Upload form (re-register face) ------------------------------ */
+.upload-form {
+  max-width: 420px;
+  margin: 1rem auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+}
+.upload-form button { align-self: flex-end; min-width: 140px; }
+
 /* Face-mode segmented control (used inside .panel) ------------ */
 .face-mode-tabs {
   display: inline-flex;
@@ -428,9 +534,10 @@ img.preview { background: var(--c-surface-2); }
   padding: 1rem;
   border-radius: var(--radius);
   text-align: center;
-  margin-bottom: 1rem;
+  margin: 1rem auto;
+  max-width: 640px;
 }
-.scanner-box video { max-width: 520px; margin: 0 auto; display: block; }
+.scanner-box video { max-width: 520px; width: 100%; margin: 0 auto; display: block; }
 .scanner-box h3 { margin: 0; padding: 2.5rem 0; color: var(--c-muted); font-weight: 500; }
 
 /* Responsive --------------------------------------------------- */

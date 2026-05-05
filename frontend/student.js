@@ -27,7 +27,7 @@ async function loadAttendance() {
       body.append(el("tr", {},
         el("td", {}, `${r.course_code} — ${r.course_name}`),
         el("td", {}, fmt(r.start_time)),
-        el("td", {class: "status-" + r.status}, r.status),
+        el("td", {}, el("span", {class: "status-" + r.status}, r.status)),
         el("td", {}, fmt(r.marked_at)),
         el("td", {}, el("button", {
           class: "secondary",

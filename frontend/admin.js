@@ -425,7 +425,7 @@ async function loadAttendance() {
       el("td", {}, `${r.course_code} — ${r.course_name}`),
       el("td", {}, fmt(r.start_time)),
       el("td", {}, `${r.full_name || "-"} (${r.student_id || r.accountid})`),
-      el("td", {class: "status-" + r.status}, r.status),
+      el("td", {}, el("span", {class: "status-" + r.status}, r.status)),
       el("td", {}, fmt(r.marked_at)),
     ));
   }
