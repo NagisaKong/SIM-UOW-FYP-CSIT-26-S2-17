@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 );
 
 -- ------------------------------------------------------------
--- 4. FACE_EMBEDDING  (biometric data – full PDPC compliance)
+-- 4. FACE_EMBEDDING  (biometric data)
 -- ------------------------------------------------------------
 -- embedding_vector stored as BYTEA when pgvector is unavailable.
 -- Switch to: embedding_vector vector(512) for ArcFace,
@@ -57,11 +57,12 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
-    embedding_vector VECTOR(512)           NOT NULL,   -- replace with vector(N) after pgvector install
+    embedding_vector VECTOR(512)     NOT NULL,   -- replace with vector(N) after pgvector install
     model_name       VARCHAR(100)    NOT NULL,   -- e.g. 'arcface', 'facenet'
     model_version    VARCHAR(50)     NOT NULL,   -- e.g. 'r100', '20180402-114759'
     dimension        INTEGER         NOT NULL,   -- 512 for ArcFace, 128 for FaceNet
     is_active        BOOLEAN         NOT NULL DEFAULT TRUE,
+    is_synthetic     BOOLEAN         NOT NULL DEFAULT FALSE,
     -- PDPC biometric consent & retention fields
     consent_given_at TIMESTAMPTZ,
     retention_until  DATE,
@@ -78,8 +79,12 @@ CREATE INDEX IF NOT EXISTS idx_face_embedding_active  ON FACE_EMBEDDING(AccountI
 CREATE TABLE IF NOT EXISTS COURSE (
     CourseID    SERIAL          PRIMARY KEY,
     course_code VARCHAR(20)     NOT NULL UNIQUE,
-    course_name VARCHAR(255)    NOT NULL
+    course_name VARCHAR(255)    NOT NULL,
+    status      VARCHAR(20)     NOT NULL DEFAULT 'active'
+                                CHECK (status IN ('active', 'inactive'))
 );
+
+ALTER TABLE COURSE ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
 
 -- ------------------------------------------------------------
 -- 6. COURSE_ENROLLMENT  (student ↔ course membership)
@@ -150,6 +155,21 @@ CREATE INDEX IF NOT EXISTS idx_appeal_record  ON ATTENDANCE_APPEAL(AttendanceRec
 CREATE INDEX IF NOT EXISTS idx_appeal_account ON ATTENDANCE_APPEAL(AccountID);
 CREATE INDEX IF NOT EXISTS idx_appeal_status  ON ATTENDANCE_APPEAL(status);
 
+-- ------------------------------------------------------------
+-- 10. MODEL_CONFIGS (Stores fine-tuned AI thresholds)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS MODEL_CONFIGS (
+    ConfigID          SERIAL          PRIMARY KEY,
+    model_name        VARCHAR(100)    NOT NULL, -- e.g., 'arcface_ensemble'
+    similarity_threshold FLOAT        NOT NULL DEFAULT 0.35, -- The tweaked value
+    is_active         BOOLEAN         NOT NULL DEFAULT TRUE,
+    updated_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_by        INTEGER         REFERENCES USER_ACCOUNT(AccountID)
+);
+
+-- The updated_at trigger for MODEL_CONFIGS is installed by the
+-- DO block further below (model_configs is in its target array).
+
 -- ============================================================
 -- Seed Data: default role profiles
 -- ============================================================
@@ -175,7 +195,7 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        'user_account', 'personal_info', 'face_embedding', 'attendance_appeal'
+        'user_account', 'personal_info', 'face_embedding', 'attendance_appeal', 'model_configs'
     ] LOOP
         EXECUTE format('
             CREATE OR REPLACE TRIGGER trg_%s_updated_at

@@ -4,8 +4,18 @@
 line-length = 120
 target-version = "py311"
 
+# Vendored upstream code (NVIDIA StyleGAN3) — keep pristine for upstream sync.
+extend-exclude = [
+    "ai/training/dnnlib",
+    "ai/training/legacy.py",
+    "ai/training/torch_utils",
+]
+
 [lint.per-file-ignores]
 # api/main_api.py deliberately manipulates sys.path before importing
 # `ai.*` so the file can be run as a script (python api/main_api.py)
 # as well as a module. The imports after that block trigger E402.
 "api/main_api.py" = ["E402"]
+# synthetic_gen.py manipulates sys.path to import the vendored
+# dnnlib/legacy modules as top-level packages.
+"ai/training/synthetic_gen.py" = ["E402"]

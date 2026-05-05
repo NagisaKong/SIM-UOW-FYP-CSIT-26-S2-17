@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+
 import sys
 from pathlib import Path
 
@@ -21,6 +22,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+
+"StyleGAN portion"
+
+from ai.training.calibrate import calibrate_threshold
+
+"StyleGaN portion"
+
+
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any
@@ -28,6 +37,8 @@ from typing import Any
 import cv2
 import numpy as np
 import psycopg2
+import base64
+import uuid
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -539,6 +550,387 @@ def admin_review_appeal(
         )
     return {"success": True}
 
+
+# ──────────────────────────────────────────────────────────────────────────
+# Course management (U26)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/courses")
+def admin_list_courses(user: CurrentUser = Depends(require_role("admin"))):
+    sql = """
+        SELECT c.courseid, c.course_code, c.course_name,
+               COALESCE(c.status, 'active') AS status,
+               (SELECT COUNT(*) FROM attendance_session s
+                  WHERE s.courseid = c.courseid AND s.status = 'active') AS active_sessions
+        FROM course c
+        ORDER BY c.courseid
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "courses": _dict_rows(cur)}
+
+
+class CourseBody(BaseModel):
+    course_code: str
+    course_name: str
+
+
+@app.post("/admin/courses")
+def admin_create_course(
+    body: CourseBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM course WHERE course_code = %s", (body.course_code,)
+        )
+        if cur.fetchone():
+            raise HTTPException(409, f"课程代码 {body.course_code} 已存在")
+        cur.execute(
+            "INSERT INTO course (course_code, course_name) VALUES (%s, %s) RETURNING courseid",
+            (body.course_code, body.course_name),
+        )
+        course_id = cur.fetchone()[0]
+    return {"success": True, "course_id": course_id}
+
+
+class CourseStatusBody(BaseModel):
+    status: str  # active | inactive
+
+
+@app.patch("/admin/courses/{course_id}/status")
+def admin_set_course_status(
+    course_id: int,
+    body: CourseStatusBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    if body.status not in ("active", "inactive"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "UPDATE course SET status = %s WHERE courseid = %s",
+            (body.status, course_id),
+        )
+    return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Attendance session scheduling (admin)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/sessions")
+def admin_list_sessions(
+    course_id: int | None = None,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    sql = """
+        SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
+               s.start_time, s.end_time, s.status
+        FROM attendance_session s
+        JOIN course c ON c.courseid = s.courseid
+        {where}
+        ORDER BY s.start_time DESC
+        LIMIT 500
+    """
+    where = "WHERE s.courseid = %s" if course_id else ""
+    params = (course_id,) if course_id else ()
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql.format(where=where), params)
+        return {"success": True, "sessions": _dict_rows(cur)}
+
+
+class SessionBody(BaseModel):
+    course_id: int
+    start_time: str  # ISO 8601, e.g. "2026-05-10T09:00:00+08:00"
+    end_time: str | None = None
+    status: str = "scheduled"  # scheduled | active | ended | cancelled
+
+
+@app.post("/admin/sessions")
+def admin_create_session(
+    body: SessionBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    if body.status not in ("scheduled", "active", "ended", "cancelled"):
+        raise HTTPException(400, "status 非法")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(status,'active') FROM course WHERE courseid = %s",
+            (body.course_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "课程不存在")
+        if row[0] == "inactive":
+            raise HTTPException(400, "课程已停用，无法排课")
+        cur.execute(
+            """
+            INSERT INTO attendance_session (courseid, start_time, end_time, status)
+            VALUES (%s, %s, %s, %s)
+            RETURNING attendancesessionid
+            """,
+            (body.course_id, body.start_time, body.end_time, body.status),
+        )
+        sid = cur.fetchone()[0]
+    return {"success": True, "session_id": sid}
+
+
+class SessionPatchBody(BaseModel):
+    start_time: str | None = None
+    end_time: str | None = None
+    status: str | None = None
+
+
+@app.patch("/admin/sessions/{session_id}")
+def admin_update_session(
+    session_id: int,
+    body: SessionPatchBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    fields, params = [], []
+    if body.start_time is not None:
+        fields.append("start_time = %s")
+        params.append(body.start_time)
+    if body.end_time is not None:
+        fields.append("end_time = %s")
+        params.append(body.end_time)
+    if body.status is not None:
+        if body.status not in ("scheduled", "active", "ended", "cancelled"):
+            raise HTTPException(400, "status 非法")
+        fields.append("status = %s")
+        params.append(body.status)
+    if not fields:
+        raise HTTPException(400, "无可更新字段")
+    params.append(session_id)
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            f"UPDATE attendance_session SET {', '.join(fields)} WHERE attendancesessionid = %s",
+            params,
+        )
+    return {"success": True}
+
+
+@app.delete("/admin/sessions/{session_id}")
+def admin_delete_session(
+    session_id: int, user: CurrentUser = Depends(require_role("admin"))
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM attendance_record WHERE attendancesessionid = %s LIMIT 1",
+            (session_id,),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "该课时已有签到记录，无法删除")
+        cur.execute(
+            "DELETE FROM attendance_session WHERE attendancesessionid = %s",
+            (session_id,),
+        )
+    return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AI Model Governance (U22-U25)
+# ──────────────────────────────────────────────────────────────────────────
+class TrainingDataBody(BaseModel):
+    train_pct: int
+    model_name: str
+
+
+@app.post("/admin/training-data")
+def admin_assign_training_data(
+    body: TrainingDataBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    if not (10 <= body.train_pct <= 95):
+        raise HTTPException(400, "train_pct 必须在 10-95 之间")
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM face_embedding WHERE is_active = TRUE AND model_name = %s",
+            (body.model_name,),
+        )
+        total = cur.fetchone()[0]
+    if total == 0:
+        raise HTTPException(400, "训练集为空，无法分配数据")
+    train_count = int(total * body.train_pct / 100)
+    test_count = total - train_count
+    return {
+        "success": True,
+        "model_name": body.model_name,
+        "train_count": train_count,
+        "test_count": test_count,
+    }
+
+
+class EnsembleBody(BaseModel):
+    use_arcface: bool
+    use_facenet: bool
+    weighting: str  # equal | confidence
+
+
+@app.post("/admin/ensemble")
+def admin_configure_ensemble(
+    body: EnsembleBody, user: CurrentUser = Depends(require_role("admin"))
+):
+    selected = sum([body.use_arcface, body.use_facenet])
+    if selected < 2:
+        raise HTTPException(400, "Ensemble 至少需要两个模型 (U24)")
+    if body.weighting not in ("equal", "confidence"):
+        raise HTTPException(400, "weighting 非法")
+    return {
+        "success": True,
+        "models": [
+            m for m, on in [("arcface", body.use_arcface), ("facenet", body.use_facenet)] if on
+        ],
+        "weighting": body.weighting,
+    }
+
+
+@app.post("/admin/retrain")
+async def admin_retrain_model(
+    force: bool = False, user: CurrentUser = Depends(require_role("admin"))
+):
+    """Retrain & redeploy active model. Warns if new threshold deviates strongly
+    from the previous one (U25 alternative flow #2)."""
+    from ai.training.synthetic_gen import SyntheticDataGenerator
+
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT similarity_threshold FROM model_configs WHERE model_name = %s",
+            ("arcface_ensemble",),
+        )
+        row = cur.fetchone()
+        old_threshold = float(row[0]) if row else None
+
+    generator = SyntheticDataGenerator()
+    synthetic_data, labels = generator.prepare_calibration_set()
+    new_threshold = float(calibrate_threshold(synthetic_data, labels))
+
+    if not force and old_threshold is not None and abs(new_threshold - old_threshold) > 0.15:
+        return {
+            "success": False,
+            "warning": (
+                f"New threshold {new_threshold:.3f} differs significantly from "
+                f"current {old_threshold:.3f}; review before deploying."
+            ),
+            "new_threshold": new_threshold,
+            "old_threshold": old_threshold,
+        }
+
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE model_configs
+            SET similarity_threshold = %s, updated_at = NOW(), updated_by = %s
+            WHERE model_name = %s
+            """,
+            (new_threshold, user.account_id, "arcface_ensemble"),
+        )
+    return {"success": True, "new_threshold": new_threshold, "old_threshold": old_threshold}
+
+
+@app.post("/admin/recalibrate")
+async def recalibrate_models():
+    #Initialize StyleGAN generator
+    from ai.training.synthetic_gen import SyntheticDataGenerator
+    generator = SyntheticDataGenerator()
+    
+    #Generate the data
+    synthetic_data, labels = generator.prepare_calibration_set()
+    
+    #Calculate the new threshold
+    new_threshold = calibrate_threshold(synthetic_data, labels) 
+    
+    #Save to Supabase database using EXISTING db helper
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE model_configs 
+            SET similarity_threshold = %s, updated_at = NOW()
+            WHERE model_name = %s
+            """,
+            (float(new_threshold), 'arcface_ensemble')
+        )
+    
+    return {"status": "success", "new_threshold": float(new_threshold)}
+
+
+#this is a global memory to keep track of webcam scan sessions. Each session has a unique tracking_id and stores counts of how many times each student was seen during the scan.
+if not hasattr(app.state, "webcam_sessions"):
+    app.state.webcam_sessions = {}
+
+@app.post("/admin/start-webcam-scan")
+def start_webcam_scan(user: CurrentUser = Depends(require_role("admin"))):
+    """Initializes a new tracking dictionary for the incoming photo stream."""
+    tracking_id = str(uuid.uuid4())
+    app.state.webcam_sessions[tracking_id] = {}
+    return {"success": True, "tracking_id": tracking_id}
+
+class FrameBody(BaseModel):
+    image: str
+    tracking_id: str
+
+@app.post("/admin/process-webcam-frame")
+def process_webcam_frame(body: FrameBody, user: CurrentUser = Depends(require_role("admin"))):
+    """Receives a single base64 snapshot from the webcam and counts the identities."""
+    pipeline: AttendancePipeline = app.state.pipeline
+    
+    # 1. Decode the base64 Javascript image into an OpenCV numpy array
+    encoded_data = body.image.split(',')[1]
+    nparr = np.frombuffer(base64.b64decode(encoded_data), np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # 2. Run the image through your AI Pipeline
+    result = pipeline.process_frame(img)
+    
+    # 3. Add +1 to the counter for every recognised student
+    tracking_dict = app.state.webcam_sessions.get(body.tracking_id)
+    if tracking_dict is not None:
+        for p in result.predictions:
+            if p.recognised and p.account_id:
+                tracking_dict[p.account_id] = tracking_dict.get(p.account_id, 0) + 1
+                
+    return {"success": True, "faces_found": len(result.predictions)}
+
+@app.post("/admin/finalize-webcam-scan")
+def finalize_webcam_scan(tracking_id: str, total_scans: int, user: CurrentUser = Depends(require_role("admin"))):
+    """Applies the 70% rule based on the final counts."""
+    # Retrieve and delete the memory dictionary to free up RAM
+    tracking_dict = app.state.webcam_sessions.pop(tracking_id, {})
+    
+    present_count = 0
+    absent_count = 0
+    
+    with _db() as c, c.cursor() as cur:
+        # Get all students currently marked 'present' or 'late' in an active class
+        cur.execute("""
+            SELECT r.attendancerecordid, r.accountid
+            FROM attendance_record r
+            JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+            WHERE s.status = 'active'
+        """)
+        active_records = cur.fetchall()
+        
+        for record in active_records:
+            record_id = record['attendancerecordid'] if isinstance(record, dict) else record[0]
+            account_id = record['accountid'] if isinstance(record, dict) else record[1]
+            
+            # The 70% Logic Math
+            times_seen = tracking_dict.get(account_id, 0)
+            presence_percentage = (times_seen / total_scans) * 100 if total_scans > 0 else 0
+            
+            if presence_percentage >= 70.0:
+                new_status = 'present'
+                present_count += 1
+            else:
+                new_status = 'absent'
+                absent_count += 1
+                
+            cur.execute("""
+                UPDATE attendance_record
+                SET status = %s, marked_at = NOW()
+                WHERE attendancerecordid = %s
+            """, (new_status, record_id))
+            
+    return {
+        "success": True, 
+        "present_count": present_count, 
+        "absent_count": absent_count
+    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
