@@ -13,12 +13,77 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
+// ── Monthly summary (pie chart) ───────────────────────────────
+let monthlyChart = null;
+
+function renderMonthlySummary(records) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const monthName = now.toLocaleString(undefined, {month: "long", year: "numeric"});
+  document.getElementById("monthly-title").textContent = `${monthName} Attendance`;
+  const first = new Date(y, m, 1);
+  const last = new Date(y, m + 1, 0);
+  document.getElementById("monthly-range").textContent =
+    `${first.toLocaleDateString()} – ${last.toLocaleDateString()}`;
+
+  const counts = {present: 0, late: 0, absent: 0};
+  for (const r of records) {
+    const d = new Date(r.start_time);
+    if (d.getFullYear() !== y || d.getMonth() !== m) continue;
+    if (counts[r.status] !== undefined) counts[r.status]++;
+  }
+  const total = counts.present + counts.late + counts.absent;
+  const attended = counts.present + counts.late;
+  const rate = total ? Math.round((attended / total) * 100) : 0;
+
+  document.getElementById("monthly-rate").textContent = total ? `${rate}%` : "--";
+  document.getElementById("monthly-counts").textContent = total
+    ? `(${attended}/${total} sessions)`
+    : "(no sessions this month)";
+
+  const canvas = document.getElementById("monthly-chart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  const data = {
+    labels: ["Present", "Late", "Absent"],
+    datasets: [{
+      data: [counts.present, counts.late, counts.absent],
+      backgroundColor: ["#16a34a", "#d97706", "#c0392b"],
+      borderWidth: 1,
+    }],
+  };
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {position: "bottom", labels: {boxWidth: 12, font: {size: 11}}},
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const v = ctx.parsed;
+            const pct = total ? Math.round((v / total) * 100) : 0;
+            return `${ctx.label}: ${v} (${pct}%)`;
+          },
+        },
+      },
+    },
+  };
+
+  if (monthlyChart) {
+    monthlyChart.data = data;
+    monthlyChart.update();
+  } else {
+    monthlyChart = new Chart(canvas, {type: "pie", data, options});
+  }
+}
+
 // ── Attendance list ───────────────────────────────────────────
 async function loadAttendance() {
   const body = document.getElementById("att-body");
   body.innerHTML = "";
   try {
     const res = await api("/student/attendance");
+    renderMonthlySummary(res.records || []);
     if (!res.records.length) {
       body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No records yet.")));
       return;

@@ -13,7 +13,7 @@
     <h1>Student Dashboard</h1>
     <div>
       <span id="who" class="muted"></span>
-      <button class="secondary" onclick="logout()">Logout</button>
+      <button class="danger" onclick="logout()">Logout</button>
     </div>
   </header>
 
@@ -45,6 +45,21 @@
 
     <section id="tab-attendance" class="panel" style="display:none">
       <h2>Attendance Records</h2>
+
+      <div id="monthly-summary" class="row" style="align-items:center;gap:1.5rem;margin-bottom:1rem">
+        <div style="max-width:260px">
+          <h3 style="margin:0 0 .25rem" id="monthly-title">This Month's Attendance</h3>
+          <p class="muted small" id="monthly-range" style="margin:0"></p>
+          <p style="margin:.5rem 0 0;font-size:1.4rem;font-weight:600">
+            <span id="monthly-rate">--%</span>
+            <span class="muted small" id="monthly-counts" style="font-weight:400;margin-left:.5rem"></span>
+          </p>
+        </div>
+        <div style="width:220px;height:220px">
+          <canvas id="monthly-chart"></canvas>
+        </div>
+      </div>
+
       <table>
         <thead>
           <tr>
@@ -117,6 +132,7 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
   <script src="student.js"></script>
 </body>
