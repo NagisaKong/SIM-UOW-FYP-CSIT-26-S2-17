@@ -175,8 +175,10 @@ document.getElementById("face-upload-form").addEventListener("submit", async (e)
 async function loadCourses() {
   const body = document.getElementById("courses-body");
   const select = document.getElementById("session-course-select");
+  const enrollSelect = document.getElementById("enroll-course-select");
   body.innerHTML = "";
   select.innerHTML = "";
+  if (enrollSelect) enrollSelect.innerHTML = "";
   const res = await api("/admin/courses");
   for (const c of res.courses) {
     body.append(el("tr", {},
@@ -204,15 +206,90 @@ async function loadCourses() {
           }
         }
       }, c.status === "inactive" ? "Activate" : "Deactivate")),
+      el("td", {}, el("button", {
+        class: "danger",
+        onclick: async () => {
+          if (!confirm(`Permanently delete course ${c.course_code} — ${c.course_name}?`)) return;
+          try {
+            await api(`/admin/courses/${c.courseid}`, {method: "DELETE"});
+            loadCourses();
+          } catch (ex) {
+            if (/force=true/.test(ex.message)) {
+              if (!confirm(`${ex.message}\n\nForce delete (also removes all scheduled sessions)?`)) return;
+              try {
+                await api(`/admin/courses/${c.courseid}?force=true`, {method: "DELETE"});
+                loadCourses();
+              } catch (ex2) { alert(ex2.message); }
+            } else {
+              alert(ex.message);
+            }
+          }
+        }
+      }, "Delete")),
     ));
     if ((c.status || "active") === "active") {
       const opt = document.createElement("option");
       opt.value = c.courseid;
       opt.textContent = `${c.course_code} — ${c.course_name}`;
       select.append(opt);
+      if (enrollSelect) {
+        const opt2 = document.createElement("option");
+        opt2.value = c.courseid;
+        opt2.textContent = `${c.course_code} — ${c.course_name}`;
+        enrollSelect.append(opt2);
+      }
     }
   }
   loadSessions();
+  loadStudentsForEnrollment();
+  loadEnrollments();
+}
+
+async function loadStudentsForEnrollment() {
+  const sel = document.getElementById("enroll-student-select");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const res = await api("/admin/users");
+  for (const u of res.users) {
+    if (u.role !== "student" || u.status !== "active") continue;
+    const opt = document.createElement("option");
+    opt.value = u.accountid;
+    opt.textContent = `${u.full_name || u.email} (${u.student_id || "acc#" + u.accountid})`;
+    sel.append(opt);
+  }
+}
+
+async function loadEnrollments() {
+  const body = document.getElementById("enrollments-body");
+  const sel = document.getElementById("enroll-course-select");
+  if (!body || !sel) return;
+  body.innerHTML = "";
+  const courseId = sel.value;
+  if (!courseId) return;
+  let res;
+  try {
+    res = await api(`/admin/courses/${courseId}/enrollments`);
+  } catch (ex) {
+    return;
+  }
+  for (const e of res.enrollments) {
+    body.append(el("tr", {},
+      el("td", {}, e.student_id || "-"),
+      el("td", {}, e.full_name || "-"),
+      el("td", {}, e.email || "-"),
+      el("td", {}, e.status),
+      el("td", {}, el("button", {
+        class: "danger",
+        onclick: async () => {
+          if (!confirm(`Remove ${e.full_name || e.email} from this course?`)) return;
+          try {
+            await api(`/admin/courses/${courseId}/enrollments/${e.accountid}`, {method: "DELETE"});
+            loadEnrollments();
+          } catch (ex) { alert(ex.message); }
+        }
+      }, "Remove")),
+    ));
+  }
 }
 
 async function loadSessions() {
@@ -282,6 +359,35 @@ document.getElementById("session-form").addEventListener("submit", async (e) => 
     msg.textContent = "Session scheduled.";
     e.target.reset();
     loadSessions();
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
+
+document.getElementById("enroll-course-select").addEventListener("change", loadEnrollments);
+
+document.getElementById("enrollment-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("enrollment-msg");
+  msg.textContent = "";
+  const fd = Object.fromEntries(new FormData(e.target));
+  const courseId = parseInt(fd.course_id);
+  const accountId = parseInt(fd.account_id);
+  if (!courseId || !accountId) {
+    msg.style.color = "#c0392b";
+    msg.textContent = "Please select a course and a student.";
+    return;
+  }
+  try {
+    await api(`/admin/courses/${courseId}/enrollments`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({account_id: accountId}),
+    });
+    msg.style.color = "#16a34a";
+    msg.textContent = "Student assigned to course.";
+    loadEnrollments();
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

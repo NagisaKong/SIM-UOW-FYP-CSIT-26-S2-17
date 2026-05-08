@@ -612,6 +612,123 @@ def admin_set_course_status(
     return {"success": True}
 
 
+@app.delete("/admin/courses/{course_id}")
+def admin_delete_course(
+    course_id: int,
+    force: bool = False,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    """Delete a course. Refuses if any attendance session exists unless force=True;
+    even then, refuses if any session has attendance records (would orphan history)."""
+    with _db() as c, c.cursor() as cur:
+        cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "课程不存在")
+
+        cur.execute(
+            """
+            SELECT 1 FROM attendance_record r
+            JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+            WHERE s.courseid = %s LIMIT 1
+            """,
+            (course_id,),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "该课程已有签到记录，无法删除（请改为停用）")
+
+        cur.execute(
+            "SELECT COUNT(*) FROM attendance_session WHERE courseid = %s",
+            (course_id,),
+        )
+        session_count = cur.fetchone()[0]
+        if session_count > 0 and not force:
+            raise HTTPException(
+                409,
+                f"该课程下有 {session_count} 个课时安排，确认删除请使用 force=true",
+            )
+
+        if session_count > 0:
+            cur.execute("DELETE FROM attendance_session WHERE courseid = %s", (course_id,))
+        cur.execute("DELETE FROM course WHERE courseid = %s", (course_id,))
+    return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Course enrollment (admin assigns students to courses)
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/admin/courses/{course_id}/enrollments")
+def admin_list_enrollments(
+    course_id: int, user: CurrentUser = Depends(require_role("admin"))
+):
+    sql = """
+        SELECT e.enrollmentid, e.accountid, e.status,
+               pi.full_name, pi.student_id, ua.email
+        FROM course_enrollment e
+        JOIN user_account ua ON ua.accountid = e.accountid
+        LEFT JOIN personal_info pi ON pi.accountid = e.accountid
+        WHERE e.courseid = %s
+        ORDER BY pi.full_name NULLS LAST, e.accountid
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (course_id,))
+        return {"success": True, "enrollments": _dict_rows(cur)}
+
+
+class EnrollmentBody(BaseModel):
+    account_id: int
+
+
+@app.post("/admin/courses/{course_id}/enrollments")
+def admin_create_enrollment(
+    course_id: int,
+    body: EnrollmentBody,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "课程不存在")
+        cur.execute(
+            """
+            SELECT up.role FROM user_account ua
+            JOIN user_profiles up ON up.profileid = ua.profileid
+            WHERE ua.accountid = %s
+            """,
+            (body.account_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "用户不存在")
+        if row[0] != "student":
+            raise HTTPException(400, "只能将课程分配给学生")
+        cur.execute(
+            """
+            INSERT INTO course_enrollment (courseid, accountid, status)
+            VALUES (%s, %s, 'active')
+            ON CONFLICT (courseid, accountid)
+              DO UPDATE SET status = 'active'
+            RETURNING enrollmentid
+            """,
+            (course_id, body.account_id),
+        )
+        eid = cur.fetchone()[0]
+    return {"success": True, "enrollment_id": eid}
+
+
+@app.delete("/admin/courses/{course_id}/enrollments/{account_id}")
+def admin_delete_enrollment(
+    course_id: int,
+    account_id: int,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "DELETE FROM course_enrollment WHERE courseid = %s AND accountid = %s",
+            (course_id, account_id),
+        )
+    return {"success": True}
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Attendance session scheduling (admin)
 # ──────────────────────────────────────────────────────────────────────────

@@ -114,10 +114,38 @@
             <th>Name</th>
             <th>Status</th>
             <th>Active Sessions</th>
-            <th>Actions</th>
+            <th>Status Action</th>
+            <th>Delete</th>
           </tr>
         </thead>
         <tbody id="courses-body"></tbody>
+      </table>
+
+      <h3 style="margin-top:1.5rem">Assign Students to Course</h3>
+      <p class="muted small">Enroll students into a course so they can check in to its sessions.</p>
+      <form id="enrollment-form" class="row">
+        <label>Course
+          <select name="course_id" id="enroll-course-select" required></select>
+        </label>
+        <label>Student
+          <select name="account_id" id="enroll-student-select" required></select>
+        </label>
+        <button type="submit">Assign Student</button>
+      </form>
+      <p id="enrollment-msg" class="error"></p>
+
+      <h4 style="margin-top:1rem">Enrolled Students</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Student ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="enrollments-body"></tbody>
       </table>
 
       <h3 style="margin-top:1.5rem">Schedule Class Session</h3>
