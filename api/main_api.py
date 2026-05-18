@@ -114,7 +114,7 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
 # Health + auth
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/")
-def root():
+def RootController():
     return {
         "service": "SIM-UOW Face Attendance API",
         "version": app.version,
@@ -125,7 +125,7 @@ def root():
 
 
 @app.get("/health")
-def health():
+def HealthController():
     pipeline: AttendancePipeline = app.state.pipeline
     stores = {name: len(s) for name, s in pipeline.store_manager.stores.items()}
     return {"success": True, "stores": stores}
@@ -155,7 +155,7 @@ def login(body: LoginBody):
 
 
 @app.get("/auth/me")
-def me(user: CurrentUser = Depends(get_current_user)):
+def CurrentUserController(user: CurrentUser = Depends(get_current_user)):
     return {"account_id": user.account_id, "role": user.role, "email": user.email}
 
 
@@ -163,7 +163,7 @@ def me(user: CurrentUser = Depends(get_current_user)):
 # Face endpoints (protected: user must be logged in)
 # ──────────────────────────────────────────────────────────────────────────
 @app.post("/register")
-async def register_face(
+async def FaceRegistrationController(
     account_id: int = Form(...),
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
@@ -184,7 +184,7 @@ async def register_face(
 
 
 @app.post("/identify")
-async def identify_face(
+async def FaceIdentificationController(
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -217,7 +217,7 @@ async def identify_face(
 # Student endpoints
 # ──────────────────────────────────────────────────────────────────────────
 @app.post("/student/checkin")
-async def student_checkin(
+async def StudentCheckinController(
     file: UploadFile = File(...),
     user: CurrentUser = Depends(require_role("student")),
 ):
@@ -292,7 +292,7 @@ async def student_checkin(
 
 
 @app.get("/student/attendance")
-def student_attendance(user: CurrentUser = Depends(require_role("student"))):
+def StudentAttendanceController(user: CurrentUser = Depends(require_role("student"))):
     sql = """
         SELECT r.attendancerecordid AS record_id,
                r.attendancesessionid AS session_id,
@@ -311,7 +311,7 @@ def student_attendance(user: CurrentUser = Depends(require_role("student"))):
 
 
 @app.get("/student/sessions/{session_id}")
-def student_session_detail(
+def StudentSessionDetailController(
     session_id: int, user: CurrentUser = Depends(require_role("student"))
 ):
     sql = """
@@ -339,7 +339,7 @@ class AppealBody(BaseModel):
 
 
 @app.post("/student/appeals")
-def student_create_appeal(
+def StudentCreateAppealController(
     body: AppealBody, user: CurrentUser = Depends(require_role("student"))
 ):
     with _db() as c, c.cursor() as cur:
@@ -364,7 +364,7 @@ def student_create_appeal(
 
 
 @app.get("/student/appeals")
-def student_list_appeals(user: CurrentUser = Depends(require_role("student"))):
+def StudentListAppealsController(user: CurrentUser = Depends(require_role("student"))):
     sql = """
         SELECT a.appealid, a.attendancerecordid, a.reason, a.status,
                a.created_at, a.reviewed_at
@@ -381,7 +381,7 @@ def student_list_appeals(user: CurrentUser = Depends(require_role("student"))):
 # Admin endpoints
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/admin/users")
-def admin_list_users(user: CurrentUser = Depends(require_role("admin"))):
+def AdminListUsersController(user: CurrentUser = Depends(require_role("admin"))):
     sql = """
         SELECT ua.accountid, ua.email, up.role, up.status,
                pi.full_name, pi.student_id, pi.staff_id, ua.created_at
@@ -405,7 +405,7 @@ class CreateUserBody(BaseModel):
 
 
 @app.post("/admin/users")
-def admin_create_user(
+def AdminCreateUserController(
     body: CreateUserBody, user: CurrentUser = Depends(require_role("admin"))
 ):
     from api.auth import hash_password
@@ -447,7 +447,7 @@ class StatusBody(BaseModel):
 
 
 @app.patch("/admin/users/{account_id}/status")
-def admin_set_user_status(
+def AdminSetUserStatusController(
     account_id: int,
     body: StatusBody,
     user: CurrentUser = Depends(require_role("admin")),
@@ -466,7 +466,7 @@ def admin_set_user_status(
 
 
 @app.get("/admin/faces")
-def admin_list_faces(user: CurrentUser = Depends(require_role("admin"))):
+def AdminListFacesController(user: CurrentUser = Depends(require_role("admin"))):
     sql = """
         SELECT f.faceid, f.accountid, pi.full_name, pi.student_id,
                f.model_name, f.model_version, f.dimension, f.is_active, f.created_at
@@ -480,7 +480,7 @@ def admin_list_faces(user: CurrentUser = Depends(require_role("admin"))):
 
 
 @app.delete("/admin/faces/{face_id}")
-def admin_delete_face(face_id: int, user: CurrentUser = Depends(require_role("admin"))):
+def AdminDeleteFaceController(face_id: int, user: CurrentUser = Depends(require_role("admin"))):
     with _db() as c, c.cursor() as cur:
         cur.execute(
             "UPDATE face_embedding SET is_active = FALSE WHERE faceid = %s", (face_id,)
@@ -494,7 +494,7 @@ def admin_delete_face(face_id: int, user: CurrentUser = Depends(require_role("ad
 
 
 @app.get("/admin/attendance")
-def admin_list_attendance(user: CurrentUser = Depends(require_role("admin"))):
+def AdminListAttendanceController(user: CurrentUser = Depends(require_role("admin"))):
     sql = """
         SELECT r.attendancerecordid, r.attendancesessionid,
                s.start_time, c.course_code, c.course_name,
@@ -513,7 +513,7 @@ def admin_list_attendance(user: CurrentUser = Depends(require_role("admin"))):
 
 
 @app.get("/admin/appeals")
-def admin_list_appeals(user: CurrentUser = Depends(require_role("admin"))):
+def AdminListAppealsController(user: CurrentUser = Depends(require_role("admin"))):
     sql = """
         SELECT a.appealid, a.attendancerecordid, a.accountid,
                pi.full_name, pi.student_id,
@@ -532,7 +532,7 @@ class AppealReviewBody(BaseModel):
 
 
 @app.patch("/admin/appeals/{appeal_id}")
-def admin_review_appeal(
+def AdminReviewAppealController(
     appeal_id: int,
     body: AppealReviewBody,
     user: CurrentUser = Depends(require_role("admin")),
@@ -555,7 +555,7 @@ def admin_review_appeal(
 # Course management (U26)
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/admin/courses")
-def admin_list_courses(user: CurrentUser = Depends(require_role("admin"))):
+def AdminListCoursesController(user: CurrentUser = Depends(require_role("admin"))):
     sql = """
         SELECT c.courseid, c.course_code, c.course_name,
                COALESCE(c.status, 'active') AS status,
@@ -575,7 +575,7 @@ class CourseBody(BaseModel):
 
 
 @app.post("/admin/courses")
-def admin_create_course(
+def AdminCreateCourseController(
     body: CourseBody, user: CurrentUser = Depends(require_role("admin"))
 ):
     with _db() as c, c.cursor() as cur:
@@ -597,7 +597,7 @@ class CourseStatusBody(BaseModel):
 
 
 @app.patch("/admin/courses/{course_id}/status")
-def admin_set_course_status(
+def AdminSetCourseStatusController(
     course_id: int,
     body: CourseStatusBody,
     user: CurrentUser = Depends(require_role("admin")),
@@ -613,7 +613,7 @@ def admin_set_course_status(
 
 
 @app.delete("/admin/courses/{course_id}")
-def admin_delete_course(
+def AdminDeleteCourseController(
     course_id: int,
     force: bool = False,
     user: CurrentUser = Depends(require_role("admin")),
@@ -657,7 +657,7 @@ def admin_delete_course(
 # Course enrollment (admin assigns students to courses)
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/admin/courses/{course_id}/enrollments")
-def admin_list_enrollments(
+def AdminListEnrollmentsController(
     course_id: int, user: CurrentUser = Depends(require_role("admin"))
 ):
     sql = """
@@ -679,7 +679,7 @@ class EnrollmentBody(BaseModel):
 
 
 @app.post("/admin/courses/{course_id}/enrollments")
-def admin_create_enrollment(
+def AdminCreateEnrollmentController(
     course_id: int,
     body: EnrollmentBody,
     user: CurrentUser = Depends(require_role("admin")),
@@ -716,7 +716,7 @@ def admin_create_enrollment(
 
 
 @app.delete("/admin/courses/{course_id}/enrollments/{account_id}")
-def admin_delete_enrollment(
+def AdminDeleteEnrollmentController(
     course_id: int,
     account_id: int,
     user: CurrentUser = Depends(require_role("admin")),
@@ -733,7 +733,7 @@ def admin_delete_enrollment(
 # Attendance session scheduling (admin)
 # ──────────────────────────────────────────────────────────────────────────
 @app.get("/admin/sessions")
-def admin_list_sessions(
+def AdminListSessionsController(
     course_id: int | None = None,
     user: CurrentUser = Depends(require_role("admin")),
 ):
@@ -761,7 +761,7 @@ class SessionBody(BaseModel):
 
 
 @app.post("/admin/sessions")
-def admin_create_session(
+def AdminCreateSessionController(
     body: SessionBody, user: CurrentUser = Depends(require_role("admin"))
 ):
     if body.status not in ("scheduled", "active", "ended", "cancelled"):
@@ -795,7 +795,7 @@ class SessionPatchBody(BaseModel):
 
 
 @app.patch("/admin/sessions/{session_id}")
-def admin_update_session(
+def AdminUpdateSessionController(
     session_id: int,
     body: SessionPatchBody,
     user: CurrentUser = Depends(require_role("admin")),
@@ -824,7 +824,7 @@ def admin_update_session(
 
 
 @app.delete("/admin/sessions/{session_id}")
-def admin_delete_session(
+def AdminDeleteSessionController(
     session_id: int, user: CurrentUser = Depends(require_role("admin"))
 ):
     with _db() as c, c.cursor() as cur:
@@ -850,7 +850,7 @@ class TrainingDataBody(BaseModel):
 
 
 @app.post("/admin/training-data")
-def admin_assign_training_data(
+def AdminAssignTrainingDataController(
     body: TrainingDataBody, user: CurrentUser = Depends(require_role("admin"))
 ):
     if not (10 <= body.train_pct <= 95):
@@ -880,7 +880,7 @@ class EnsembleBody(BaseModel):
 
 
 @app.post("/admin/ensemble")
-def admin_configure_ensemble(
+def AdminConfigureEnsembleController(
     body: EnsembleBody, user: CurrentUser = Depends(require_role("admin"))
 ):
     selected = sum([body.use_arcface, body.use_facenet])
@@ -898,7 +898,7 @@ def admin_configure_ensemble(
 
 
 @app.post("/admin/retrain")
-async def admin_retrain_model(
+async def AdminRetrainModelController(
     force: bool = False, user: CurrentUser = Depends(require_role("admin"))
 ):
     """Retrain & redeploy active model. Warns if new threshold deviates strongly
@@ -941,7 +941,7 @@ async def admin_retrain_model(
 
 
 @app.post("/admin/recalibrate")
-async def recalibrate_models():
+async def RecalibrateModelsController():
     #Initialize StyleGAN generator
     from ai.training.synthetic_gen import SyntheticDataGenerator
     generator = SyntheticDataGenerator()
@@ -971,7 +971,7 @@ if not hasattr(app.state, "webcam_sessions"):
     app.state.webcam_sessions = {}
 
 @app.post("/admin/start-webcam-scan")
-def start_webcam_scan(user: CurrentUser = Depends(require_role("admin"))):
+def StartWebcamScanController(user: CurrentUser = Depends(require_role("admin"))):
     """Initializes a new tracking dictionary for the incoming photo stream."""
     tracking_id = str(uuid.uuid4())
     app.state.webcam_sessions[tracking_id] = {}
@@ -982,7 +982,7 @@ class FrameBody(BaseModel):
     tracking_id: str
 
 @app.post("/admin/process-webcam-frame")
-def process_webcam_frame(body: FrameBody, user: CurrentUser = Depends(require_role("admin"))):
+def ProcessWebcamFrameController(body: FrameBody, user: CurrentUser = Depends(require_role("admin"))):
     """Receives a single base64 snapshot from the webcam and counts the identities."""
     pipeline: AttendancePipeline = app.state.pipeline
     
@@ -1004,7 +1004,7 @@ def process_webcam_frame(body: FrameBody, user: CurrentUser = Depends(require_ro
     return {"success": True, "faces_found": len(result.predictions)}
 
 @app.post("/admin/finalize-webcam-scan")
-def finalize_webcam_scan(tracking_id: str, total_scans: int, user: CurrentUser = Depends(require_role("admin"))):
+def FinalizeWebcamScanController(tracking_id: str, total_scans: int, user: CurrentUser = Depends(require_role("admin"))):
     """Applies the 70% rule based on the final counts."""
     # Retrieve and delete the memory dictionary to free up RAM
     tracking_dict = app.state.webcam_sessions.pop(tracking_id, {})
