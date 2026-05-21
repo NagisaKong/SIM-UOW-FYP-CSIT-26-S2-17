@@ -31,6 +31,8 @@ from ai.training.calibrate import calibrate_threshold
 
 
 import contextlib
+import csv
+import io
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -40,8 +42,9 @@ import psycopg2
 import base64
 import uuid
 import uvicorn
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ai.attendance_pipeline import AttendancePipeline
@@ -54,6 +57,7 @@ from api.auth import (
     get_current_user,
     require_role,
 )
+from api.notifications import send_late_absent_emails
 
 
 # ── Lifespan: load the pipeline once at startup ───────────────────────────
@@ -839,6 +843,432 @@ def AdminDeleteSessionController(
             (session_id,),
         )
     return {"success": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Teacher endpoints (U10-U15, U30)
+#   note: no teacher↔course ownership column yet, so a teacher may view
+#   all courses. Tighten with COURSE.teacher_account_id when that table change
+#   lands.
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/teacher/courses")
+def TeacherListCoursesController(user: CurrentUser = Depends(require_role("teacher"))):
+    sql = """
+        SELECT c.courseid, c.course_code, c.course_name,
+               COALESCE(c.status, 'active') AS status,
+               (SELECT COUNT(*) FROM course_enrollment e
+                  WHERE e.courseid = c.courseid AND e.status = 'active') AS enrolled
+        FROM course c
+        WHERE COALESCE(c.status, 'active') = 'active'
+        ORDER BY c.course_code
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql)
+        return {"success": True, "courses": _dict_rows(cur)}
+
+
+@app.get("/teacher/sessions")
+def TeacherListSessionsController(
+    course_id: int | None = None,
+    status: str | None = None,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    clauses, params = [], []
+    if course_id is not None:
+        clauses.append("s.courseid = %s")
+        params.append(course_id)
+    if status:
+        if status not in ("scheduled", "active", "ended", "cancelled"):
+            raise HTTPException(400, "status 非法")
+        clauses.append("s.status = %s")
+        params.append(status)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"""
+        SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
+               s.start_time, s.end_time, s.status
+        FROM attendance_session s
+        JOIN course c ON c.courseid = s.courseid
+        {where}
+        ORDER BY s.start_time DESC
+        LIMIT 500
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, params)
+        return {"success": True, "sessions": _dict_rows(cur)}
+
+
+@app.get("/teacher/sessions/{session_id}/live")
+def TeacherLiveRosterController(
+    session_id: int, user: CurrentUser = Depends(require_role("teacher"))
+):
+    """Roster + current attendance status for a session (U12)."""
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.attendancesessionid, s.courseid, s.start_time, s.end_time, s.status,
+                   c.course_code, c.course_name
+            FROM attendance_session s
+            JOIN course c ON c.courseid = s.courseid
+            WHERE s.attendancesessionid = %s
+            """,
+            (session_id,),
+        )
+        srow = cur.fetchone()
+        if not srow:
+            raise HTTPException(404, "课时不存在")
+        cols = [d[0] for d in cur.description]
+        session = dict(zip(cols, srow))
+
+        cur.execute(
+            """
+            SELECT e.accountid, pi.full_name, pi.student_id,
+                   r.status AS attendance_status, r.marked_at
+            FROM course_enrollment e
+            LEFT JOIN personal_info pi ON pi.accountid = e.accountid
+            LEFT JOIN attendance_record r
+              ON r.attendancesessionid = %s AND r.accountid = e.accountid
+            WHERE e.courseid = %s AND e.status = 'active'
+            ORDER BY pi.full_name NULLS LAST, e.accountid
+            """,
+            (session_id, session["courseid"]),
+        )
+        roster = _dict_rows(cur)
+
+    summary = {"present": 0, "late": 0, "absent": 0, "no_record": 0}
+    for r in roster:
+        st = r.get("attendance_status")
+        if st in summary:
+            summary[st] += 1
+        else:
+            summary["no_record"] += 1
+    return {"success": True, "session": session, "roster": roster, "summary": summary}
+
+
+@app.post("/teacher/sessions/{session_id}/start")
+def TeacherStartSessionController(
+    session_id: int, user: CurrentUser = Depends(require_role("teacher"))
+):
+    """U15: open the attendance window for this session."""
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+            (session_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "课时不存在")
+        course_id, current_status = row
+        if current_status == "active":
+            raise HTTPException(409, "该课时已处于进行中")
+        if current_status == "ended":
+            raise HTTPException(409, "该课时已结束，无法再次开始")
+
+        cur.execute(
+            """
+            SELECT 1 FROM attendance_session
+            WHERE courseid = %s AND status = 'active'
+              AND attendancesessionid <> %s
+            LIMIT 1
+            """,
+            (course_id, session_id),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, "该课程已有进行中的课时")
+
+        cur.execute(
+            """
+            UPDATE attendance_session
+            SET status = 'active',
+                start_time = CASE WHEN start_time > NOW() THEN NOW() ELSE start_time END
+            WHERE attendancesessionid = %s
+            """,
+            (session_id,),
+        )
+    return {"success": True, "session_id": session_id, "status": "active"}
+
+
+def _fetch_late_absent_recipients(session_id: int) -> list[dict[str, Any]]:
+    """Return email payload rows for every late/absent student in this session."""
+    sql = """
+        SELECT ua.email, pi.full_name, r.status,
+               c.course_code, c.course_name, s.start_time
+        FROM attendance_record r
+        JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+        JOIN course c ON c.courseid = s.courseid
+        JOIN user_account ua ON ua.accountid = r.accountid
+        LEFT JOIN personal_info pi ON pi.accountid = r.accountid
+        WHERE r.attendancesessionid = %s
+          AND r.status IN ('late', 'absent')
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (session_id,))
+        return _dict_rows(cur)
+
+
+@app.post("/teacher/sessions/{session_id}/end")
+def TeacherEndSessionController(
+    session_id: int,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    """U15: close the session and mark any enrolled student without a
+    record as absent. After commit, fire U05 late/absent emails in the
+    background so SMTP latency doesn't block the response."""
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+            (session_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "课时不存在")
+        course_id, current_status = row
+        if current_status == "ended":
+            raise HTTPException(409, "该课时已结束")
+        if current_status == "cancelled":
+            raise HTTPException(409, "该课时已取消")
+
+        cur.execute(
+            """
+            INSERT INTO attendance_record (attendancesessionid, accountid, status)
+            SELECT %s, e.accountid, 'absent'
+            FROM course_enrollment e
+            WHERE e.courseid = %s AND e.status = 'active'
+            ON CONFLICT (attendancesessionid, accountid) DO NOTHING
+            """,
+            (session_id, course_id),
+        )
+        absentees = cur.rowcount
+        cur.execute(
+            """
+            UPDATE attendance_session
+            SET status = 'ended',
+                end_time = COALESCE(end_time, NOW())
+            WHERE attendancesessionid = %s
+            """,
+            (session_id,),
+        )
+
+    recipients = _fetch_late_absent_recipients(session_id)
+    background_tasks.add_task(send_late_absent_emails, recipients)
+    return {
+        "success": True,
+        "session_id": session_id,
+        "marked_absent": absentees,
+        "notifications_queued": len(recipients),
+    }
+
+
+@app.post("/teacher/sessions/{session_id}/notify")
+def TeacherResendNotificationsController(
+    session_id: int,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    """U05 manual resend: re-email every late/absent student for this session.
+    Useful if SMTP was down during the original end-session call."""
+    with _db() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM attendance_session WHERE attendancesessionid = %s",
+            (session_id,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "课时不存在")
+    recipients = _fetch_late_absent_recipients(session_id)
+    background_tasks.add_task(send_late_absent_emails, recipients)
+    return {"success": True, "queued": len(recipients)}
+
+
+@app.get("/teacher/courses/{course_id}/students")
+def TeacherCourseRosterController(
+    course_id: int, user: CurrentUser = Depends(require_role("teacher"))
+):
+    sql = """
+        SELECT e.accountid, pi.full_name, pi.student_id, ua.email, e.status,
+               COUNT(r.attendancerecordid) FILTER (WHERE r.status IN ('present','late')) AS attended,
+               COUNT(s.attendancesessionid) FILTER (WHERE s.status = 'ended') AS sessions_completed
+        FROM course_enrollment e
+        JOIN user_account ua ON ua.accountid = e.accountid
+        LEFT JOIN personal_info pi ON pi.accountid = e.accountid
+        LEFT JOIN attendance_session s ON s.courseid = e.courseid
+        LEFT JOIN attendance_record r
+          ON r.attendancesessionid = s.attendancesessionid AND r.accountid = e.accountid
+        WHERE e.courseid = %s AND e.status = 'active'
+        GROUP BY e.accountid, pi.full_name, pi.student_id, ua.email, e.status
+        ORDER BY pi.full_name NULLS LAST, e.accountid
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, (course_id,))
+        return {"success": True, "students": _dict_rows(cur)}
+
+
+@app.get("/teacher/students/{account_id}/attendance")
+def TeacherStudentHistoryController(
+    account_id: int,
+    course_id: int | None = None,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    """U13: per-student attendance history (optionally scoped to a course)."""
+    clauses = ["r.accountid = %s"]
+    params: list[Any] = [account_id]
+    if course_id is not None:
+        clauses.append("s.courseid = %s")
+        params.append(course_id)
+    where = " AND ".join(clauses)
+    sql = f"""
+        SELECT r.attendancerecordid AS record_id,
+               r.attendancesessionid AS session_id,
+               c.course_code, c.course_name,
+               s.start_time, s.end_time, s.status AS session_status,
+               r.status, r.marked_at
+        FROM attendance_record r
+        JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+        JOIN course c ON c.courseid = s.courseid
+        WHERE {where}
+        ORDER BY s.start_time DESC
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, params)
+        rows = _dict_rows(cur)
+
+    summary = {"present": 0, "late": 0, "absent": 0}
+    for r in rows:
+        if r["status"] in summary:
+            summary[r["status"]] += 1
+    total = sum(summary.values())
+    attended = summary["present"] + summary["late"]
+    rate = round(attended / total * 100, 1) if total else 0.0
+    return {
+        "success": True,
+        "records": rows,
+        "summary": summary,
+        "total": total,
+        "rate": rate,
+    }
+
+
+@app.get("/teacher/reports/export")
+def TeacherExportReportController(
+    course_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    session_id: int | None = None,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    """U14: stream a CSV attendance report."""
+    clauses, params = [], []
+    if session_id is not None:
+        clauses.append("s.attendancesessionid = %s")
+        params.append(session_id)
+    if course_id is not None:
+        clauses.append("s.courseid = %s")
+        params.append(course_id)
+    if date_from:
+        clauses.append("s.start_time >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append("s.start_time <= %s")
+        params.append(date_to)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"""
+        SELECT c.course_code, c.course_name,
+               s.attendancesessionid, s.start_time, s.end_time, s.status AS session_status,
+               pi.student_id, pi.full_name, ua.email,
+               r.status AS attendance_status, r.marked_at
+        FROM attendance_session s
+        JOIN course c ON c.courseid = s.courseid
+        JOIN course_enrollment e ON e.courseid = s.courseid AND e.status = 'active'
+        JOIN user_account ua ON ua.accountid = e.accountid
+        LEFT JOIN personal_info pi ON pi.accountid = e.accountid
+        LEFT JOIN attendance_record r
+          ON r.attendancesessionid = s.attendancesessionid AND r.accountid = e.accountid
+        {where}
+        ORDER BY s.start_time DESC, pi.full_name NULLS LAST
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(sql, params)
+        rows = _dict_rows(cur)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "course_code", "course_name", "session_id", "start_time", "end_time",
+        "session_status", "student_id", "full_name", "email",
+        "attendance_status", "marked_at",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.get("course_code"), r.get("course_name"), r.get("attendancesessionid"),
+            r.get("start_time"), r.get("end_time"), r.get("session_status"),
+            r.get("student_id"), r.get("full_name"), r.get("email"),
+            r.get("attendance_status") or "absent", r.get("marked_at"),
+        ])
+    buf.seek(0)
+    fname = "attendance_report.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/teacher/courses/{course_id}/analytics")
+def TeacherClassAnalyticsController(
+    course_id: int,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    account_id: int | None = None,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    """U30: aggregated attendance for charts (weekly trend + status breakdown)."""
+    clauses = ["s.courseid = %s"]
+    params: list[Any] = [course_id]
+    if date_from:
+        clauses.append("s.start_time >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append("s.start_time <= %s")
+        params.append(date_to)
+    if account_id is not None:
+        clauses.append("r.accountid = %s")
+        params.append(account_id)
+    where = " AND ".join(clauses)
+
+    trend_sql = f"""
+        SELECT date_trunc('week', s.start_time) AS week,
+               COUNT(*) FILTER (WHERE r.status = 'present') AS present,
+               COUNT(*) FILTER (WHERE r.status = 'late')    AS late,
+               COUNT(*) FILTER (WHERE r.status = 'absent')  AS absent,
+               COUNT(r.attendancerecordid) AS total
+        FROM attendance_session s
+        LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
+        WHERE {where}
+        GROUP BY week
+        ORDER BY week
+    """
+    breakdown_sql = f"""
+        SELECT COUNT(*) FILTER (WHERE r.status = 'present') AS present,
+               COUNT(*) FILTER (WHERE r.status = 'late')    AS late,
+               COUNT(*) FILTER (WHERE r.status = 'absent')  AS absent,
+               COUNT(r.attendancerecordid) AS total
+        FROM attendance_session s
+        LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
+        WHERE {where}
+    """
+    with _db() as c, c.cursor() as cur:
+        cur.execute(trend_sql, params)
+        trend = _dict_rows(cur)
+        cur.execute(breakdown_sql, params)
+        breakdown = _dict_rows(cur)[0] if cur.description else {}
+
+    for row in trend:
+        total = row.get("total") or 0
+        attended = (row.get("present") or 0) + (row.get("late") or 0)
+        row["rate"] = round(attended / total * 100, 1) if total else 0.0
+    total = breakdown.get("total") or 0
+    attended = (breakdown.get("present") or 0) + (breakdown.get("late") or 0)
+    breakdown["rate"] = round(attended / total * 100, 1) if total else 0.0
+    return {"success": True, "trend": trend, "breakdown": breakdown}
 
 
 # ──────────────────────────────────────────────────────────────────────────

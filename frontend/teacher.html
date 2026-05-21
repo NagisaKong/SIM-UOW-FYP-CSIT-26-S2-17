@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teacher — FYP Attendance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header class="topbar">
+    <h1>Teacher Dashboard</h1>
+    <div>
+      <span id="who" class="muted"></span>
+      <button class="danger" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="sessions">Sessions</button>
+    <button class="tab-btn" data-tab="live">Live Attendance</button>
+    <button class="tab-btn" data-tab="roster">Class Roster</button>
+    <button class="tab-btn" data-tab="analytics">Analytics</button>
+    <button class="tab-btn" data-tab="reports">Reports</button>
+  </div>
+
+  <main>
+    <!-- U15 Start/End Session -->
+    <section id="tab-sessions" class="panel">
+      <h2>Manage Sessions</h2>
+      <div class="row row--compact">
+        <label>Course
+          <select id="sess-course"></select>
+        </label>
+        <label>Status filter
+          <select id="sess-status">
+            <option value="">All</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="active">Active</option>
+            <option value="ended">Ended</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </label>
+        <button id="sess-refresh">Refresh</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Course</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="sess-body"></tbody>
+      </table>
+      <p id="sess-msg" class="small"></p>
+    </section>
+
+    <!-- U12 Live Attendance -->
+    <section id="tab-live" class="panel" style="display:none">
+      <h2>Real-Time Attendance</h2>
+      <div class="row row--compact">
+        <label>Active session
+          <select id="live-session"></select>
+        </label>
+        <button id="live-refresh">Refresh now</button>
+        <label><input type="checkbox" id="live-auto" checked> Auto-refresh (5s)</label>
+      </div>
+      <p id="live-summary" class="small muted"></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Student ID</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Marked At</th>
+          </tr>
+        </thead>
+        <tbody id="live-body"></tbody>
+      </table>
+    </section>
+
+    <!-- U13 Roster + Per-student history -->
+    <section id="tab-roster" class="panel" style="display:none">
+      <h2>Class Roster</h2>
+      <div class="row row--compact">
+        <label>Course
+          <select id="roster-course"></select>
+        </label>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Student ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Attended / Sessions</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="roster-body"></tbody>
+      </table>
+
+      <div id="student-history" style="display:none;margin-top:1.5rem">
+        <h3 id="student-history-title">Attendance History</h3>
+        <p id="student-history-summary" class="small muted"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Course</th>
+              <th>Start</th>
+              <th>Status</th>
+              <th>Marked At</th>
+            </tr>
+          </thead>
+          <tbody id="student-history-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- U30 Analytics -->
+    <section id="tab-analytics" class="panel" style="display:none">
+      <h2>Class Analytics</h2>
+      <div class="row row--compact">
+        <label>Course
+          <select id="ana-course"></select>
+        </label>
+        <label>From
+          <input type="date" id="ana-from">
+        </label>
+        <label>To
+          <input type="date" id="ana-to">
+        </label>
+        <button id="ana-refresh">Apply</button>
+      </div>
+      <p id="ana-summary" class="small muted"></p>
+      <div class="row" style="align-items:center;gap:1.5rem;margin-top:1rem">
+        <div style="flex:1;min-width:320px;max-width:640px;height:280px">
+          <canvas id="ana-trend"></canvas>
+        </div>
+        <div style="width:240px;height:240px">
+          <canvas id="ana-breakdown"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- U14 Reports -->
+    <section id="tab-reports" class="panel" style="display:none">
+      <h2>Export Attendance Report</h2>
+      <form id="report-form" class="row row--compact">
+        <label>Course
+          <select id="report-course">
+            <option value="">All courses</option>
+          </select>
+        </label>
+        <label>From
+          <input type="date" id="report-from">
+        </label>
+        <label>To
+          <input type="date" id="report-to">
+        </label>
+        <button type="submit">Export CSV</button>
+      </form>
+      <p id="report-msg" class="small"></p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+  <script src="teacher.js"></script>
+</body>
+
+</html>

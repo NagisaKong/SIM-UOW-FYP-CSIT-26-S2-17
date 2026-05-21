@@ -35,7 +35,8 @@
         });
         localStorage.setItem("token", res.token);
         localStorage.setItem("user", JSON.stringify(res.user));
-        location.href = res.user.role === "admin" ? "admin.html" : "student.html";
+        const dest = {admin: "admin.html", teacher: "teacher.html", student: "student.html"};
+        location.href = dest[res.user.role] || "student.html";
       } catch (ex) {
         err.textContent = ex.message;
       }
