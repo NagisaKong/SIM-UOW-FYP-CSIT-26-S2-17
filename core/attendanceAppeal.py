@@ -95,7 +95,7 @@ class AttendanceAppeal:
             start_time, sstatus, course_id = row
             if sstatus in ("active", "ended"):
                 raise HTTPException(
-                    400, "该课程已开始/结束，请改为提交考勤申诉（U08）",
+                    400, "该课程已开始/结束，请改为提交考勤申诉",
                 )
             cur.execute(
                 """SELECT 1 FROM course_enrollment
