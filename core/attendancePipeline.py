@@ -47,6 +47,16 @@ import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
+# Preload torch's bundled CUDA/cuDNN DLLs so onnxruntime-gpu can find them.
+# InsightFace (SCRFD + ArcFace) builds its onnxruntime session before torch is
+# otherwise imported; without this, onnxruntime-gpu fails to load cublasLt64_12.dll
+# and silently falls back to CPU. Importing torch here loads those DLLs into the
+# process first, enabling CUDAExecutionProvider. Harmless if torch is CPU-only.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 # Load .env once when this module is imported (was in config.py).
 try:
     from dotenv import load_dotenv  # type: ignore
