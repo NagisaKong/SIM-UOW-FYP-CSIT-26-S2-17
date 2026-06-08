@@ -322,9 +322,16 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_THRESHOLD_CONFIG (
     absence_threshold           INTEGER     NOT NULL DEFAULT 3
                                             CHECK (absence_threshold BETWEEN 1 AND 100),
     late_grace_seconds          INTEGER     NOT NULL DEFAULT 600,
+    -- U03: default gap between detection windows during a scan (20 minutes).
+    detection_interval_seconds  INTEGER     NOT NULL DEFAULT 1200
+                                            CHECK (detection_interval_seconds BETWEEN 3 AND 86400),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by                  INTEGER     REFERENCES USER_ACCOUNT(AccountID)
 );
+
+-- Idempotent add for databases created before this column existed.
+ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
+    ADD COLUMN IF NOT EXISTS detection_interval_seconds INTEGER NOT NULL DEFAULT 1200;
 
 INSERT INTO ATTENDANCE_THRESHOLD_CONFIG (ConfigID) VALUES (1)
 ON CONFLICT DO NOTHING;
@@ -342,6 +349,25 @@ ALTER TABLE ATTENDANCE_RECORD
 ALTER TABLE ATTENDANCE_RECORD
     ADD CONSTRAINT attendance_record_status_check
     CHECK (status IN ('present', 'late', 'absent', 'leave', 'early_left'));
+
+
+-- ------------------------------------------------------------
+-- 18. SESSION_RECORDING  (U03 class recording, retained 30 days)
+-- ------------------------------------------------------------
+-- The full class video captured during a scan is stored locally and kept
+-- for 30 days as appeal evidence, then automatically deleted. This table
+-- tracks the recording's location and expiry; purge_expired_recordings()
+-- removes expired rows (and their files) on startup.
+CREATE TABLE IF NOT EXISTS SESSION_RECORDING (
+    RecordingID         SERIAL          PRIMARY KEY,
+    AttendanceSessionID INTEGER         NOT NULL UNIQUE
+                                        REFERENCES ATTENDANCE_SESSION(AttendanceSessionID) ON DELETE CASCADE,
+    file_path           TEXT,
+    recorded_at         TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ     NOT NULL DEFAULT (NOW() + INTERVAL '30 days')
+);
+
+CREATE INDEX IF NOT EXISTS idx_recording_expires ON SESSION_RECORDING(expires_at);
 
 
 -- ------------------------------------------------------------

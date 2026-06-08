@@ -1,7 +1,7 @@
 """Class 2: attendanceRecord
 
 Covers UC:
-  U03 Automated Attendance Check-in   (checkIn)
+  U03 Automated Attendance Check-in   (viewActiveSessions — automatic, no manual check-in)
   U04 View Attendance Records         (viewAttendanceRecord)
   U12 View Real-Time Attendance       (viewRealTimeAttendanceStatus)
   U13 View Student Attendance History (viewAttendanceHistoryAcrossAllSession)
@@ -35,6 +35,7 @@ from core.userInformation import CurrentUser, require_role
 _DEFAULT_MIN_RATE = 70.0
 _DEFAULT_ABSENCE_THRESHOLD = 3
 _DEFAULT_LATE_GRACE = 600
+_DEFAULT_DETECTION_INTERVAL = 1200  # 20 min between detection windows (U03)
 
 
 def load_threshold_config(database_url: str) -> dict[str, Any]:
@@ -46,7 +47,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
     try:
         with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT minimum_attendance_rate, absence_threshold, late_grace_seconds
+                """SELECT minimum_attendance_rate, absence_threshold,
+                          late_grace_seconds, detection_interval_seconds
                    FROM attendance_threshold_config WHERE configid = 1"""
             )
             row = cur.fetchone()
@@ -55,6 +57,7 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
                     "minimum_attendance_rate": float(row[0]),
                     "absence_threshold": int(row[1]),
                     "late_grace_seconds": int(row[2]),
+                    "detection_interval_seconds": int(row[3]),
                 }
     except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
             psycopg2.OperationalError):
@@ -65,6 +68,7 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
         "minimum_attendance_rate": _DEFAULT_MIN_RATE,
         "absence_threshold": _DEFAULT_ABSENCE_THRESHOLD,
         "late_grace_seconds": _DEFAULT_LATE_GRACE,
+        "detection_interval_seconds": _DEFAULT_DETECTION_INTERVAL,
     }
 
 
@@ -114,59 +118,122 @@ class AttendanceRecord:
         self.attendanceRate: float | None = None
         self.status: str | None = None
 
-    # ── U03 checkIn ──────────────────────────────────────────────────
-    async def checkIn(self, user: CurrentUser, image: np.ndarray) -> dict[str, Any]:
-        result = self.pipeline.process_frame(image)
-        matched = next(
-            (p for p in result.predictions
-             if p.recognised and p.account_id == user.account_id),
-            None,
-        )
-        if matched is None:
-            faces = len(result.predictions)
-            return {
-                "success": False,
-                "message": f"Could not verify your identity ({faces} face(s) detected, please face the camera directly)",
-                "detections": faces,
-            }
+    # ── U03 Automated Attendance Check-in ────────────────────────────
+    # Per U03, attendance is recorded automatically by the teacher-activated
+    # classroom camera scan (SCRFD + ArcFace). The student performs NO manual
+    # check-in. This method only lets the student see, for their enrolled
+    # courses, any session the teacher is currently scanning and the live
+    # status the system has recorded for them so far.
+    def viewActiveSessions(self, account_id: int) -> dict[str, Any]:
+        sql = """
+            SELECT s.attendancesessionid AS session_id,
+                   c.course_code, c.course_name,
+                   s.start_time, s.status AS session_status,
+                   r.status AS my_status, r.marked_at
+            FROM attendance_session s
+            JOIN course c ON c.courseid = s.courseid
+            JOIN course_enrollment e
+              ON e.courseid = s.courseid
+             AND e.accountid = %s
+             AND e.status = 'active'
+            LEFT JOIN attendance_record r
+              ON r.attendancesessionid = s.attendancesessionid
+             AND r.accountid = %s
+            WHERE s.status = 'active'
+            ORDER BY s.start_time DESC
+        """
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            return {"success": True, "sessions": _dict_rows(cur)}
+
+    # ── U28 helper: upcoming (scheduled) sessions for leave requests ─
+    def viewUpcomingSessions(self, account_id: int) -> dict[str, Any]:
+        sql = """
+            SELECT s.attendancesessionid AS session_id,
+                   c.course_code, c.course_name, s.start_time
+            FROM attendance_session s
+            JOIN course c ON c.courseid = s.courseid
+            JOIN course_enrollment e
+              ON e.courseid = s.courseid
+             AND e.accountid = %s
+             AND e.status = 'active'
+            WHERE s.status = 'scheduled'
+            ORDER BY s.start_time
+        """
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(sql, (account_id,))
+            return {"success": True, "sessions": _dict_rows(cur)}
+
+    # ── U03 recordDetectionSnapshot (teacher-driven scan window) ─────
+    # One detection window = one snapshot. The teacher's device uploads a
+    # frame; we run SCRFD + ArcFace and write ONE temporary detection row
+    # (presence_check) per enrolled student indicating whether they were
+    # seen in this snapshot. Final statuses are aggregated later by
+    # endSession (U15). The student performs no action (U03).
+    def recordDetectionSnapshot(
+        self, session_id: int, image: np.ndarray, camera_id: str | None = None,
+    ) -> dict[str, Any]:
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                """
-                SELECT s.attendancesessionid, c.course_code, c.course_name
-                FROM attendance_session s
-                JOIN course c ON c.courseid = s.courseid
-                JOIN course_enrollment e
-                  ON e.courseid = s.courseid AND e.accountid = %s AND e.status = 'active'
-                WHERE s.status = 'active'
-                  AND NOW() BETWEEN s.start_time AND COALESCE(s.end_time, NOW() + INTERVAL '1 day')
-                ORDER BY s.start_time DESC
-                LIMIT 1
-                """,
-                (user.account_id,),
+                "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+                (session_id,),
             )
             row = cur.fetchone()
             if not row:
-                return {"success": False, "message": "No session is currently in progress"}
-            session_id, course_code, course_name = row
+                raise HTTPException(404, "Session not found")
+            course_id, status = row
+            if status != "active":
+                raise HTTPException(409, "The scan can only run while the session is active")
+
+            # Recognise faces present in this frame.
+            result = self.pipeline.process_frame(image)
+            best_score: dict[int, float] = {}
+            for p in result.predictions:
+                if p.recognised and p.account_id is not None:
+                    s = float(p.score)
+                    if s > best_score.get(p.account_id, -1.0):
+                        best_score[p.account_id] = s
+
+            # Enrolled roster for this session's course.
             cur.execute(
-                """
-                INSERT INTO attendance_record (attendancesessionid, accountid, status)
-                VALUES (%s, %s, 'present')
-                ON CONFLICT (attendancesessionid, accountid) DO NOTHING
-                RETURNING attendancerecordid
-                """,
-                (session_id, user.account_id),
+                """SELECT e.accountid, pi.full_name, pi.student_id
+                   FROM course_enrollment e
+                   LEFT JOIN personal_info pi ON pi.accountid = e.accountid
+                   WHERE e.courseid = %s AND e.status = 'active'""",
+                (course_id,),
             )
-            new_row = cur.fetchone()
-            already = new_row is None
+            roster = _dict_rows(cur)
+
+            # Write one detection row per enrolled student for this snapshot.
+            detected = []
+            for stu in roster:
+                acc = stu["accountid"]
+                seen = acc in best_score
+                cur.execute(
+                    """INSERT INTO presence_check
+                         (attendancesessionid, accountid, detected, camera_id, confidence)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (session_id, acc, seen, camera_id,
+                     round(best_score[acc], 3) if seen else None),
+                )
+                if seen:
+                    detected.append({
+                        "account_id": acc,
+                        "full_name": stu.get("full_name"),
+                        "student_id": stu.get("student_id"),
+                        "confidence": round(best_score[acc], 3),
+                    })
+
+        faces = len(result.predictions)
         return {
             "success": True,
-            "already_checked_in": already,
-            "message": "Already checked in (duplicate check-in ignored)" if already else f"Check-in successful: {course_code} {course_name}",
             "session_id": session_id,
-            "course_code": course_code,
-            "course_name": course_name,
-            "confidence": round(float(matched.score), 3),
+            "enrolled": len(roster),
+            "faces_in_frame": faces,
+            "detected_count": len(detected),
+            "detected": detected,
+            "message": f"Snapshot recorded: {len(detected)}/{len(roster)} enrolled student(s) detected "
+                       f"({faces} face(s) in frame)",
         }
 
     # ── U04 viewAttendanceRecord ─────────────────────────────────────
@@ -310,7 +377,8 @@ class AttendanceRecord:
                 """, (session_id, session["courseid"]),
             )
             roster = _dict_rows(cur)
-        summary = {"present": 0, "late": 0, "absent": 0, "no_record": 0}
+        summary = {"present": 0, "late": 0, "early_left": 0,
+                   "absent": 0, "leave": 0, "no_record": 0}
         for r in roster:
             st = r.get("attendance_status")
             summary[st if st in summary else "no_record"] += 1
@@ -340,13 +408,18 @@ class AttendanceRecord:
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(sql, params)
             rows = _dict_rows(cur)
-        summary = {"present": 0, "late": 0, "absent": 0}
+        # Count every status so the summary total matches the listed rows
+        # (U03 can produce early_left; approved leave produces 'leave').
+        summary = {"present": 0, "late": 0, "early_left": 0, "absent": 0, "leave": 0}
         for r in rows:
-            if r["status"] in summary:
-                summary[r["status"]] += 1
-        total = sum(summary.values())
-        attended = summary["present"] + summary["late"]
-        rate = round(attended / total * 100, 1) if total else 0.0
+            st = r["status"]
+            if st in summary:
+                summary[st] += 1
+        total = len(rows)
+        attended = summary["present"] + summary["late"] + summary["early_left"]
+        # Approved leave is excused — exclude it from the rate denominator.
+        rate_total = total - summary["leave"]
+        rate = round(attended / rate_total * 100, 1) if rate_total else 0.0
         return {
             "success": True, "records": rows,
             "summary": summary, "total": total, "rate": rate,
@@ -396,6 +469,8 @@ class AttendanceRecord:
         self,
         consecutive_threshold: int | None = None,
         minimum_rate: float | None = None,
+        late_grace_seconds: int | None = None,
+        detection_interval_seconds: int | None = None,
         updated_by: int | None = None,
     ) -> dict[str, Any]:
         """Persist threshold updates to attendance_threshold_config (U34)."""
@@ -405,6 +480,12 @@ class AttendanceRecord:
         if minimum_rate is not None:
             if minimum_rate < 0 or minimum_rate > 100:
                 raise HTTPException(400, "minimum_rate must be between 0 and 100")
+        if late_grace_seconds is not None:
+            if late_grace_seconds < 0 or late_grace_seconds > 86400:
+                raise HTTPException(400, "late_grace_seconds must be between 0 and 86400")
+        if detection_interval_seconds is not None:
+            if detection_interval_seconds < 3 or detection_interval_seconds > 86400:
+                raise HTTPException(400, "detection_interval_seconds must be between 3 and 86400")
 
         # Build a parameterised UPDATE so we only touch the supplied fields.
         sets, params = [], []
@@ -412,6 +493,11 @@ class AttendanceRecord:
             sets.append("absence_threshold = %s"); params.append(int(consecutive_threshold))
         if minimum_rate is not None:
             sets.append("minimum_attendance_rate = %s"); params.append(float(minimum_rate))
+        if late_grace_seconds is not None:
+            sets.append("late_grace_seconds = %s"); params.append(int(late_grace_seconds))
+        if detection_interval_seconds is not None:
+            sets.append("detection_interval_seconds = %s")
+            params.append(int(detection_interval_seconds))
         if updated_by is not None:
             sets.append("updated_by = %s"); params.append(updated_by)
         if sets:
@@ -443,6 +529,7 @@ class AttendanceRecord:
             "absence_threshold": cfg["absence_threshold"],
             "minimum_attendance_rate": cfg["minimum_attendance_rate"],
             "late_grace_seconds": cfg["late_grace_seconds"],
+            "detection_interval_seconds": cfg["detection_interval_seconds"],
         }
 
 
@@ -457,15 +544,21 @@ def _svc(request: Request) -> AttendanceRecord:
     )
 
 
-# Student: U03
-@router.post("/student/checkin")
-async def student_checkin(
-    request: Request,
-    file: UploadFile = File(...),
-    user: CurrentUser = Depends(require_role("student")),
+# Student: U03 — automated check-in is teacher-driven; the student only views
+# which of their sessions are currently being scanned and their live status.
+@router.get("/student/sessions/active")
+def student_active_sessions(
+    request: Request, user: CurrentUser = Depends(require_role("student"))
 ):
-    img = await _bytes_to_cv2(file)
-    return await _svc(request).checkIn(user, img)
+    return _svc(request).viewActiveSessions(user.account_id)
+
+
+# Student: U28 helper — upcoming scheduled sessions to request leave for.
+@router.get("/student/sessions/upcoming")
+def student_upcoming_sessions(
+    request: Request, user: CurrentUser = Depends(require_role("student"))
+):
+    return _svc(request).viewUpcomingSessions(user.account_id)
 
 
 # Student: U04
@@ -485,6 +578,21 @@ def student_analytics(
     user: CurrentUser = Depends(require_role("student")),
 ):
     return _svc(request).viewStudentGraphicalReport(user.account_id, date_from, date_to)
+
+
+# Teacher: U03 — record one detection-window snapshot for an active session.
+# The teacher's device (or demo webcam) uploads a frame; the system runs the
+# recognition pipeline and stores one presence_check row per enrolled student.
+@router.post("/teacher/sessions/{session_id}/scan")
+async def teacher_scan_snapshot(
+    session_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    camera_id: str | None = None,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    img = await _bytes_to_cv2(file)
+    return _svc(request).recordDetectionSnapshot(session_id, img, camera_id)
 
 
 # Teacher: U12 — live roster
@@ -533,10 +641,23 @@ def teacher_class_analytics(
     )
 
 
+# Shared: current attendance config (teachers read detection interval for the
+# scan UI; admins read everything for the config form).
+@router.get("/config/attendance")
+def get_attendance_config(
+    request: Request,
+    user: CurrentUser = Depends(require_role("teacher", "admin")),
+):
+    cfg = load_threshold_config(request.app.state.cfg.database_url)
+    return {"success": True, **cfg}
+
+
 # Admin: U34
 class ThresholdBody(BaseModel):
     consecutive_threshold: int | None = None
     minimum_rate: float | None = None
+    late_grace_seconds: int | None = None
+    detection_interval_seconds: int | None = None
 
 
 @router.patch("/admin/config/absence-threshold")
@@ -547,6 +668,7 @@ def admin_configure_absence_threshold(
 ):
     return _svc(request).configureAbsenceThreshold(
         body.consecutive_threshold, body.minimum_rate,
+        body.late_grace_seconds, body.detection_interval_seconds,
         updated_by=user.account_id,
     )
 

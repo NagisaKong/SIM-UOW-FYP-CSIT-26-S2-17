@@ -142,3 +142,40 @@ CROSS JOIN (VALUES
 ) AS v(email, status)
 JOIN user_account ua ON ua.email = v.email
 ON CONFLICT DO NOTHING;
+
+-- ============================================================
+-- U03 detection snapshots (presence_check) for the ACTIVE CSIT226 session.
+-- Three detection windows (~35 / 20 / 5 minutes ago). When the teacher
+-- clicks "End Scan & Finalize", endSession aggregates these into:
+--     Alice  → present     (seen in every snapshot)
+--     Bob    → late        (missing from the first snapshot, seen after)
+--     Carol  → early_left  (seen early, missing from the final snapshot)
+-- (Absent is demonstrated by the ended history sessions above.)
+-- Only inserted if this session has no snapshots yet (idempotent).
+-- ============================================================
+INSERT INTO presence_check (attendancesessionid, accountid, detected, detected_at, confidence, camera_id)
+SELECT s.attendancesessionid, ua.accountid, v.detected,
+       NOW() - v.mins * INTERVAL '1 minute',
+       CASE WHEN v.detected THEN 0.82 ELSE NULL END,
+       'demo-cam-1'
+FROM attendance_session s
+JOIN course c ON c.courseid = s.courseid AND c.course_code='CSIT226' AND s.status='active'
+CROSS JOIN (VALUES
+    ('alice@demo.local', 35, TRUE),  ('alice@demo.local', 20, TRUE),  ('alice@demo.local', 5, TRUE),
+    ('bob@demo.local',   35, FALSE), ('bob@demo.local',   20, TRUE),  ('bob@demo.local',   5, TRUE),
+    ('carol@demo.local', 35, TRUE),  ('carol@demo.local', 20, TRUE),  ('carol@demo.local', 5, FALSE)
+) AS v(email, mins, detected)
+JOIN user_account ua ON ua.email = v.email
+WHERE NOT EXISTS (
+    SELECT 1 FROM presence_check pc WHERE pc.attendancesessionid = s.attendancesessionid
+);
+
+-- ============================================================
+-- U03 class recording metadata for the ACTIVE CSIT226 session
+-- (retained 30 days, then auto-deleted by purge_expired_recordings()).
+-- ============================================================
+INSERT INTO session_recording (attendancesessionid, file_path)
+SELECT s.attendancesessionid, 'recordings/session_' || s.attendancesessionid || '.mp4'
+FROM attendance_session s
+JOIN course c ON c.courseid = s.courseid AND c.course_code='CSIT226' AND s.status='active'
+ON CONFLICT (attendancesessionid) DO NOTHING;

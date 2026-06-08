@@ -23,6 +23,7 @@
     <button class="tab-btn" data-tab="roster">Class Roster</button>
     <button class="tab-btn" data-tab="analytics">Analytics</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
+    <button class="tab-btn" data-tab="leave">Leave Applications</button>
   </div>
 
   <main>
@@ -70,6 +71,35 @@
         <button id="live-refresh">Refresh now</button>
         <label><input type="checkbox" id="live-auto" checked> Auto-refresh (5s)</label>
       </div>
+
+      <!-- U03: teacher-activated classroom camera scan -->
+      <div class="panel" style="margin:1rem 0;background:var(--c-surface-2)">
+        <h3 style="margin-top:0">Classroom Camera Scan</h3>
+        <p class="muted small">
+          Activate the scan, then capture detection snapshots (manually or automatically).
+          Each snapshot runs SCRFD&nbsp;+&nbsp;ArcFace and records who is present.
+          When you finalize, the system assigns each student a final status.
+        </p>
+        <div class="camera-stage">
+          <div class="camera-frame">
+            <video id="scan-cam" autoplay playsinline muted width="320" height="240"></video>
+            <canvas id="scan-canvas" width="320" height="240" style="display:none"></canvas>
+          </div>
+          <div class="camera-actions">
+            <button id="scan-start">Start Scan</button>
+            <button id="scan-capture" disabled>Capture Snapshot</button>
+            <label class="small"><input type="checkbox" id="scan-auto"> Auto every
+              <input type="number" id="scan-interval" value="15" min="3" max="86400"
+                     style="width:5rem"> s</label>
+            <label class="small"><input type="checkbox" id="scan-countdown-toggle" checked> Show countdown</label>
+            <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
+            <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+          </div>
+          <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
+          <p id="scan-msg" class="small camera-msg"></p>
+        </div>
+      </div>
+
       <p id="live-summary" class="small muted"></p>
       <table>
         <thead>
@@ -163,15 +193,37 @@
         <label>To
           <input type="date" id="report-to">
         </label>
-        <button type="submit">Export CSV</button>
+        <button type="submit">Export Report</button>
       </form>
       <p id="report-msg" class="small"></p>
+    </section>
+
+    <!-- U31 Review Leave Applications -->
+    <section id="tab-leave" class="panel" style="display:none">
+      <h2>Review Leave Applications</h2>
+      <div class="row row--compact">
+        <button id="leave-refresh">Refresh</button>
+      </div>
+      <p id="tleave-msg" class="small"></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>Course</th>
+            <th>Session Start</th>
+            <th>Reason</th>
+            <th>Document</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tleave-body"></tbody>
+      </table>
     </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js"></script>
-  <script src="teacher.js"></script>
+  <script src="app.js?v=2"></script>
+  <script src="teacher.js?v=2"></script>
 </body>
 
 </html>

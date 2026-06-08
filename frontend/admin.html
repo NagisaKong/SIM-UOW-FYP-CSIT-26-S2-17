@@ -23,7 +23,9 @@
     <button class="tab-btn" data-tab="courses">Courses</button>
     <button class="tab-btn" data-tab="attendance">Attendance</button>
     <button class="tab-btn" data-tab="appeals">Appeals</button>
-    <button class="tab-btn" data-tab="ai-config">AI Model Governance</button>
+    <button class="tab-btn" data-tab="att-config">Attendance Config</button>
+    <button class="tab-btn" data-tab="ai-config">Model Management</button>
+    <button class="tab-btn" data-tab="ensemble">Ensemble Configuration</button>
     <button class="tab-btn" data-tab="live-scanner">Live Scanner</button>
   </div>
 
@@ -220,8 +222,32 @@
       </table>
     </section>
 
+    <section id="tab-att-config" class="panel" style="display:none">
+      <h2>Attendance Configuration</h2>
+      <p class="muted small">Institution-wide thresholds used by the automated check-in (U03) and
+        reminder logic (U34). Changes apply to all future sessions.</p>
+      <form id="att-config-form" class="row">
+        <label>Detection interval (seconds)
+          <input type="number" name="detection_interval_seconds" min="3" max="86400" required>
+          <span class="muted small">Default gap between detection windows during a scan (e.g. 1200 = 20 min).</span>
+        </label>
+        <label>Late grace (seconds)
+          <input type="number" name="late_grace_seconds" min="0" max="86400" required>
+          <span class="muted small">A student first seen within this many seconds of scan start is still on-time.</span>
+        </label>
+        <label>Minimum attendance rate (%)
+          <input type="number" name="minimum_rate" min="0" max="100" step="0.1" required>
+        </label>
+        <label>Absence reminder threshold (sessions)
+          <input type="number" name="consecutive_threshold" min="1" max="100" required>
+        </label>
+        <button type="submit">Save</button>
+        <p id="att-config-msg" class="small"></p>
+      </form>
+    </section>
+
     <section id="tab-ai-config" class="panel" style="display:none">
-      <h2>AI Model Governance</h2>
+      <h2>Model Management</h2>
 
       <h3 style="margin-top:1rem">Assign Training & Testing Data</h3>
       <p class="muted small">Choose which subset of registered facial embeddings is used as the training set vs. the
@@ -244,9 +270,16 @@
       <button id="recalibrate-btn">Start Training</button>
       <p id="recalibrate-status" class="muted small" style="margin-top:.75rem"></p>
 
-      <h3 style="margin-top:1.5rem">Ensemble Voting Panel</h3>
-      <p class="muted small">Combine multiple trained models via majority voting. Requires at least two trained models.
-      </p>
+      <h3 style="margin-top:1.5rem">Retrain & Redeploy</h3>
+      <p class="muted small">Retrain the active model on the latest data and deploy if performance improves.</p>
+      <button id="retrain-btn">Retrain & Redeploy</button>
+      <p id="retrain-msg" class="error"></p>
+    </section>
+
+    <section id="tab-ensemble" class="panel" style="display:none">
+      <h2>Ensemble Configuration</h2>
+      <p class="muted small">Combine two or more trained models via majority voting (e.g. SCRFD + ArcFace and
+        MTCNN + FaceNet). Configure voting weights or select equal weighting. At least two models are required.</p>
       <form id="ensemble-form" class="row">
         <label><input type="checkbox" name="use_arcface" checked> SCRFD + ArcFace</label>
         <label><input type="checkbox" name="use_facenet" checked> MTCNN + FaceNet</label>
@@ -259,11 +292,6 @@
         <button type="submit">Save Ensemble Config</button>
       </form>
       <p id="ensemble-msg" class="error"></p>
-
-      <h3 style="margin-top:1.5rem">Retrain & Redeploy</h3>
-      <p class="muted small">Retrain the active model on the latest data and deploy if performance improves.</p>
-      <button id="retrain-btn">Retrain & Redeploy</button>
-      <p id="retrain-msg" class="error"></p>
     </section>
 
     <section id="tab-live-scanner" class="panel" style="display:none">
@@ -293,8 +321,8 @@
 
   </main>
 
-  <script src="app.js"></script>
-  <script src="admin.js"></script>
+  <script src="app.js?v=2"></script>
+  <script src="admin.js?v=2"></script>
 </body>
 
 </html>

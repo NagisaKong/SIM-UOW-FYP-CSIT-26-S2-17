@@ -2,7 +2,7 @@ const user = requireAuth("teacher");
 document.getElementById("who").textContent = `${user.full_name || user.email} (teacher)`;
 
 // ── Tabs ──────────────────────────────────────────────────────
-const TABS = ["sessions", "live", "roster", "analytics", "reports"];
+const TABS = ["sessions", "live", "roster", "analytics", "reports", "leave"];
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -14,6 +14,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "live") loadLiveSessions();
     if (btn.dataset.tab === "roster") loadRoster();
     if (btn.dataset.tab === "analytics") loadAnalytics();
+    if (btn.dataset.tab === "leave") loadTeacherLeave();
   });
 });
 
@@ -163,7 +164,8 @@ async function refreshLive() {
     }
     const sm = res.summary || {};
     document.getElementById("live-summary").textContent =
-      `Present ${sm.present || 0} · Late ${sm.late || 0} · Absent ${sm.absent || 0} · No record ${sm.no_record || 0}`;
+      `Present ${sm.present || 0} · Late ${sm.late || 0} · Left early ${sm.early_left || 0} · ` +
+      `Absent ${sm.absent || 0} · No record ${sm.no_record || 0}`;
   } catch (e) {
     document.getElementById("live-summary").textContent = "Error: " + e.message;
   }
@@ -180,6 +182,166 @@ document.getElementById("live-auto").addEventListener("change", e => {
   }
 });
 liveTimer = setInterval(refreshLive, 5000);
+
+// ──────────────────────────────────────────────────────────────
+// U03 Classroom camera scan (teacher-activated detection windows)
+// ──────────────────────────────────────────────────────────────
+const scanCam = document.getElementById("scan-cam");
+const scanCanvas = document.getElementById("scan-canvas");
+const scanStart = document.getElementById("scan-start");
+const scanCapture = document.getElementById("scan-capture");
+const scanFinalize = document.getElementById("scan-finalize");
+const scanStop = document.getElementById("scan-stop");
+const scanAuto = document.getElementById("scan-auto");
+const scanInterval = document.getElementById("scan-interval");
+const scanCountdownToggle = document.getElementById("scan-countdown-toggle");
+const scanCountdownEl = document.getElementById("scan-countdown");
+const scanMsg = document.getElementById("scan-msg");
+let scanStream = null;
+let scanTimer = null;
+let scanBusy = false;
+let scanCountdown = 0;
+
+// Default the auto-snapshot interval to the admin-configured detection
+// interval (U03/U34). Falls back to the input's existing value on error.
+async function loadScanConfig() {
+  try {
+    const cfg = await api("/config/attendance");
+    if (cfg && cfg.detection_interval_seconds) {
+      scanInterval.value = cfg.detection_interval_seconds;
+    }
+  } catch { /* keep the default in the input */ }
+}
+loadScanConfig();
+
+function currentSessionId() {
+  return document.getElementById("live-session").value;
+}
+
+function stopScanCamera() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (scanStream) scanStream.getTracks().forEach(t => t.stop());
+  scanStream = null;
+  scanCam.srcObject = null;
+  scanStart.disabled = false;
+  scanCapture.disabled = true;
+  scanFinalize.disabled = true;
+  scanStop.disabled = true;
+  updateCountdownDisplay();
+}
+
+function updateCountdownDisplay() {
+  // Only show while auto-scanning is actively running and the toggle is on.
+  if (scanCountdownToggle.checked && scanTimer) {
+    scanCountdownEl.textContent = `Next snapshot in ${scanCountdown}s`;
+  } else {
+    scanCountdownEl.textContent = "";
+  }
+}
+
+scanStart.addEventListener("click", async () => {
+  if (!currentSessionId()) {
+    scanMsg.style.color = "#c0392b";
+    scanMsg.textContent = "Select an active session first.";
+    return;
+  }
+  scanMsg.textContent = "";
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    scanCam.srcObject = scanStream;
+    scanStart.disabled = true;
+    scanCapture.disabled = false;
+    scanFinalize.disabled = false;
+    scanStop.disabled = false;
+    if (scanAuto.checked) startAutoSnapshots();
+  } catch (e) {
+    scanMsg.style.color = "#c0392b";
+    scanMsg.textContent = "Unable to open camera: " + e.message;
+  }
+});
+
+async function captureSnapshot() {
+  const id = currentSessionId();
+  if (!scanStream || !id || scanBusy) return;
+  scanBusy = true;
+  const w = scanCam.videoWidth || 640, h = scanCam.videoHeight || 480;
+  scanCanvas.width = w; scanCanvas.height = h;
+  scanCanvas.getContext("2d").drawImage(scanCam, 0, 0, w, h);
+  await new Promise(resolve => {
+    scanCanvas.toBlob(async (blob) => {
+      const fd = new FormData();
+      fd.append("file", blob, "snapshot.jpg");
+      try {
+        const res = await api(`/teacher/sessions/${id}/scan`, {method: "POST", body: fd});
+        scanMsg.style.color = "#16a34a";
+        scanMsg.textContent = `✓ ${res.message}`;
+        refreshLive();
+      } catch (ex) {
+        scanMsg.style.color = "#c0392b";
+        scanMsg.textContent = "✗ " + ex.message;
+      } finally {
+        scanBusy = false;
+        resolve();
+      }
+    }, "image/jpeg", 0.92);
+  });
+}
+
+scanCapture.addEventListener("click", captureSnapshot);
+
+function startAutoSnapshots() {
+  if (scanTimer) clearInterval(scanTimer);
+  const secs = Math.max(3, Number(scanInterval.value) || 15);
+  scanCountdown = secs;
+  updateCountdownDisplay();
+  // 1-second tick drives both the countdown and the capture, so the
+  // displayed number always matches when the next snapshot fires.
+  scanTimer = setInterval(async () => {
+    scanCountdown -= 1;
+    if (scanCountdown <= 0) {
+      scanCountdown = secs;
+      await captureSnapshot();
+    }
+    updateCountdownDisplay();
+  }, 1000);
+}
+
+scanAuto.addEventListener("change", () => {
+  if (scanAuto.checked && scanStream) {
+    startAutoSnapshots();
+  } else if (scanTimer) {
+    clearInterval(scanTimer); scanTimer = null;
+    updateCountdownDisplay();
+  }
+});
+
+scanCountdownToggle.addEventListener("change", updateCountdownDisplay);
+// Restart the cadence if the interval is changed mid-scan.
+scanInterval.addEventListener("change", () => {
+  if (scanAuto.checked && scanStream) startAutoSnapshots();
+});
+
+scanFinalize.addEventListener("click", async () => {
+  const id = currentSessionId();
+  if (!id) return;
+  if (!confirm("End the scan and finalize attendance for this session?")) return;
+  try {
+    const res = await api(`/teacher/sessions/${id}/end`, {method: "POST"});
+    scanMsg.style.color = "#16a34a";
+    scanMsg.textContent =
+      `Finalized: Present ${res.present}, Late ${res.late}, Left early ${res.early_left}, ` +
+      `Absent ${res.marked_absent} (${res.notifications_queued} emails queued)`;
+    stopScanCamera();
+    loadLiveSessions();
+    refreshLive();
+  } catch (ex) {
+    scanMsg.style.color = "#c0392b";
+    scanMsg.textContent = "✗ " + ex.message;
+  }
+});
+
+scanStop.addEventListener("click", stopScanCamera);
+window.addEventListener("pagehide", stopScanCamera);
 
 // ──────────────────────────────────────────────────────────────
 // U13 Roster tab
@@ -209,8 +371,10 @@ async function viewStudentHistory(accountId, name, courseId) {
   const res = await api(`/teacher/students/${accountId}/attendance?course_id=${courseId}`);
   document.getElementById("student-history").style.display = "";
   document.getElementById("student-history-title").textContent = `Attendance History — ${name}`;
+  const sm = res.summary || {};
   document.getElementById("student-history-summary").textContent =
-    `Rate ${res.rate}% · Present ${res.summary.present} · Late ${res.summary.late} · Absent ${res.summary.absent} · Total ${res.total}`;
+    `Rate ${res.rate}% · Present ${sm.present || 0} · Late ${sm.late || 0} · ` +
+    `Left early ${sm.early_left || 0} · Absent ${sm.absent || 0} · Leave ${sm.leave || 0} · Total ${res.total}`;
   const tbody = document.getElementById("student-history-body");
   tbody.innerHTML = "";
   for (const r of res.records || []) {
@@ -261,8 +425,8 @@ function renderTrend(trend) {
       datasets: [{
         label: "Attendance rate (%)",
         data,
-        borderColor: "#2563eb",
-        backgroundColor: "rgba(37,99,235,0.15)",
+        borderColor: "#2a4b7f",
+        backgroundColor: "rgba(42,75,127,0.15)",
         fill: true,
         tension: 0.3,
       }],
@@ -328,6 +492,62 @@ document.getElementById("report-form").addEventListener("submit", async e => {
     msg.textContent = "Error: " + ex.message;
   }
 });
+
+// ──────────────────────────────────────────────────────────────
+// U31 Leave Applications tab
+// ──────────────────────────────────────────────────────────────
+async function loadTeacherLeave() {
+  const body = document.getElementById("tleave-body");
+  const msg = document.getElementById("tleave-msg");
+  body.innerHTML = "";
+  msg.textContent = "";
+  try {
+    const res = await api("/teacher/leave-applications");
+    const apps = res.applications || [];
+    if (!apps.length) {
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No pending leave applications.")));
+      return;
+    }
+    for (const a of apps) {
+      const doc = a.supporting_doc_url
+        ? el("a", {href: a.supporting_doc_url, target: "_blank"}, "View")
+        : "—";
+      const approveBtn = el("button", {onclick: () => reviewLeave(a.leaveapplicationid, "approved")}, "Approve");
+      const rejectBtn = el("button", {class: "danger", onclick: () => reviewLeave(a.leaveapplicationid, "rejected")}, "Reject");
+      body.append(el("tr", {},
+        el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
+        el("td", {}, `${a.course_code} — ${a.course_name}`),
+        el("td", {}, fmt(a.start_time)),
+        el("td", {}, a.reason),
+        el("td", {}, doc),
+        el("td", {}, approveBtn, rejectBtn),
+      ));
+    }
+  } catch (e) {
+    msg.style.color = "#c0392b";
+    msg.textContent = e.message;
+  }
+}
+
+async function reviewLeave(leaveId, decision) {
+  const comment = prompt(`Optional comment for this ${decision} decision:`, "") || null;
+  const msg = document.getElementById("tleave-msg");
+  try {
+    await api(`/teacher/leave-applications/${leaveId}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({decision, comment}),
+    });
+    msg.style.color = "#16a34a";
+    msg.textContent = `Application ${decision}.`;
+    loadTeacherLeave();
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+}
+
+document.getElementById("leave-refresh").addEventListener("click", loadTeacherLeave);
 
 // ── Init ──────────────────────────────────────────────────────
 (async () => {

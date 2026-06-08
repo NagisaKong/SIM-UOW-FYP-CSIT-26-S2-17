@@ -6,10 +6,12 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["checkin", "attendance", "appeals", "face"].forEach(name => {
+    ["checkin", "attendance", "analytics", "appeals", "leave", "face"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
+    if (btn.dataset.tab === "analytics") loadStudentAnalytics();
+    if (btn.dataset.tab === "leave") loadLeave();
   });
 });
 
@@ -156,6 +158,144 @@ async function loadAppeals() {
   }
 }
 
+// ── Analytics (U27) ───────────────────────────────────────────
+let sTrendChart = null, sBreakdownChart = null;
+
+async function loadStudentAnalytics() {
+  const params = new URLSearchParams();
+  const from = document.getElementById("sana-from").value;
+  const to = document.getElementById("sana-to").value;
+  if (from) params.set("date_from", from);
+  if (to) params.set("date_to", to);
+  const summaryEl = document.getElementById("sana-summary");
+  try {
+    const res = await api("/student/analytics?" + params.toString());
+    const b = res.breakdown || {};
+    summaryEl.style.color = "";
+    summaryEl.textContent =
+      `Total ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · ` +
+      `Late ${b.late || 0} · Absent ${b.absent || 0}`;
+    renderStudentTrend(res.trend || []);
+    renderStudentBreakdown(b);
+  } catch (e) {
+    summaryEl.style.color = "#c0392b";
+    summaryEl.textContent = e.message;
+  }
+}
+
+function renderStudentTrend(trend) {
+  const ctx = document.getElementById("sana-trend");
+  if (!ctx || typeof Chart === "undefined") return;
+  const labels = trend.map(r => new Date(r.week).toLocaleDateString("en-US"));
+  const data = trend.map(r => r.rate);
+  if (sTrendChart) sTrendChart.destroy();
+  sTrendChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        label: "Attendance rate (%)",
+        data,
+        borderColor: "#2a4b7f",
+        backgroundColor: "rgba(42,75,127,0.15)",
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: {responsive: true, maintainAspectRatio: false,
+      scales: {y: {beginAtZero: true, max: 100}}},
+  });
+}
+
+function renderStudentBreakdown(b) {
+  const ctx = document.getElementById("sana-breakdown");
+  if (!ctx || typeof Chart === "undefined") return;
+  if (sBreakdownChart) sBreakdownChart.destroy();
+  sBreakdownChart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Present", "Late", "Absent"],
+      datasets: [{
+        data: [b.present || 0, b.late || 0, b.absent || 0],
+        backgroundColor: ["#16a34a", "#d97706", "#c0392b"],
+      }],
+    },
+    options: {responsive: true, maintainAspectRatio: false,
+      plugins: {legend: {position: "bottom", labels: {boxWidth: 12, font: {size: 11}}}}},
+  });
+}
+
+document.getElementById("sana-refresh").addEventListener("click", loadStudentAnalytics);
+
+// ── Leave Application (U28) ───────────────────────────────────
+async function loadLeave() {
+  // Populate the upcoming-session dropdown.
+  const sel = document.getElementById("leave-session");
+  try {
+    const res = await api("/student/sessions/upcoming");
+    const sessions = res.sessions || [];
+    sel.innerHTML = sessions.length
+      ? '<option value="">— select a session —</option>'
+      : '<option value="">No upcoming sessions</option>';
+    for (const s of sessions) {
+      const o = document.createElement("option");
+      o.value = s.session_id;
+      o.textContent = `#${s.session_id} ${s.course_code} — ${fmt(s.start_time)}`;
+      sel.appendChild(o);
+    }
+  } catch { /* leave dropdown empty */ }
+  loadMyLeave();
+}
+
+async function loadMyLeave() {
+  const body = document.getElementById("leave-body");
+  body.innerHTML = "";
+  try {
+    const res = await api("/student/leave-applications");
+    if (!res.applications.length) {
+      body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No leave applications.")));
+      return;
+    }
+    for (const a of res.applications) {
+      body.append(el("tr", {},
+        el("td", {}, `${a.course_code} — ${a.course_name}`),
+        el("td", {}, fmt(a.start_time)),
+        el("td", {}, a.reason),
+        el("td", {}, el("span", {class: "badge"}, a.status)),
+        el("td", {}, a.reviewer_comment || "—"),
+      ));
+    }
+  } catch (e) {
+    body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+  }
+}
+
+document.getElementById("leave-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("leave-msg");
+  msg.textContent = "";
+  const fd = new FormData(e.target);
+  const doc = fd.get("supporting_doc_url");
+  try {
+    await api("/student/leave-applications", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        session_id: Number(fd.get("session_id")),
+        reason: fd.get("reason"),
+        supporting_doc_url: doc ? doc : null,
+      }),
+    });
+    msg.style.color = "#16a34a";
+    msg.textContent = "Leave application submitted.";
+    e.target.reset();
+    loadMyLeave();
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
+
 // ── Face re-register ──────────────────────────────────────────
 // ── Face Re-register: shared submit ───────────────────────────
 async function submitFaceBlob(blob, filename) {
@@ -274,75 +414,42 @@ faceSubmitBtn.addEventListener("click", async () => {
 
 window.addEventListener("pagehide", stopFaceCam);
 
-// ── Face Check-in ─────────────────────────────────────────────
-const cam = document.getElementById("cam");
-const canvas = document.getElementById("cam-canvas");
-const btnStart = document.getElementById("btn-start");
-const btnCap = document.getElementById("btn-capture");
-const btnStop = document.getElementById("btn-stop");
+// ── Automated Check-in: live session status ───────────────────
+// U03: attendance is recorded automatically by the teacher-activated
+// classroom camera scan. The student does not check in manually; this view
+// just shows which of their sessions are currently being scanned and the
+// status the system has recorded for them so far.
 const ciMsg = document.getElementById("checkin-msg");
-let camStream = null;
 
-btnStart.addEventListener("click", async () => {
+async function loadActiveSessions() {
+  const body = document.getElementById("active-body");
+  body.innerHTML = "";
   ciMsg.textContent = "";
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-    cam.srcObject = camStream;
-    btnStart.disabled = true;
-    btnCap.disabled = false;
-    btnStop.disabled = false;
+    const res = await api("/student/sessions/active");
+    const sessions = res.sessions || [];
+    if (!sessions.length) {
+      body.append(el("tr", {}, el("td", {colspan: 4, class: "muted"},
+        "No class is currently being scanned. Your attendance will be recorded automatically once a teacher starts a session.")));
+      return;
+    }
+    for (const s of sessions) {
+      body.append(el("tr", {},
+        el("td", {}, `${s.course_code} — ${s.course_name}`),
+        el("td", {}, fmt(s.start_time)),
+        el("td", {}, `#${s.session_id}`),
+        el("td", {}, s.my_status
+          ? el("span", {class: "status-" + s.my_status}, s.my_status)
+          : el("span", {class: "muted"}, "awaiting detection")),
+      ));
+    }
   } catch (e) {
-    ciMsg.style.color = "#c0392b";
-    ciMsg.textContent = "Unable to open camera: " + e.message;
+    body.append(el("tr", {}, el("td", {colspan: 4, class: "error"}, e.message)));
   }
-});
-
-btnStop.addEventListener("click", stopCamera);
-
-function stopCamera() {
-  if (camStream) camStream.getTracks().forEach(t => t.stop());
-  camStream = null;
-  cam.srcObject = null;
-  btnStart.disabled = false;
-  btnCap.disabled = true;
-  btnStop.disabled = true;
 }
 
-btnCap.addEventListener("click", async () => {
-  if (!camStream) return;
-  ciMsg.style.color = "#555";
-  ciMsg.textContent = "Recognizing, please wait...";
-  btnCap.disabled = true;
+document.getElementById("checkin-refresh").addEventListener("click", loadActiveSessions);
 
-  const w = cam.videoWidth || 640, h = cam.videoHeight || 480;
-  canvas.width = w; canvas.height = h;
-  canvas.getContext("2d").drawImage(cam, 0, 0, w, h);
-
-  canvas.toBlob(async (blob) => {
-    const fd = new FormData();
-    fd.append("file", blob, "checkin.jpg");
-    try {
-      const res = await api("/student/checkin", { method: "POST", body: fd });
-      if (res.success) {
-        ciMsg.style.color = res.already_checked_in ? "#d97706" : "#16a34a";
-        ciMsg.textContent = `✓ ${res.message}  (confidence=${res.confidence})`;
-        stopCamera();
-        loadAttendance();
-      } else {
-        ciMsg.style.color = "#c0392b";
-        ciMsg.textContent = "✗ " + res.message;
-        btnCap.disabled = false;
-      }
-    } catch (ex) {
-      ciMsg.style.color = "#c0392b";
-      ciMsg.textContent = ex.message;
-      btnCap.disabled = false;
-    }
-  }, "image/jpeg", 0.92);
-});
-
-// Auto-stop camera when leaving the page/tab
-window.addEventListener("pagehide", stopCamera);
-
+loadActiveSessions();
 loadAttendance();
 loadAppeals();

@@ -11,10 +11,10 @@
   --c-text-2:    #475569;
   --c-muted:     #94a3b8;
 
-  --c-primary:        #2563eb;
-  --c-primary-hover:  #1d4ed8;
-  --c-primary-soft:   #eff6ff;
-  --c-accent:         #6366f1;
+  --c-primary:        #2a4b7f;
+  --c-primary-hover:  #203a63;
+  --c-primary-soft:   #eaeff6;
+  --c-accent:         #2a4b7f;
 
   --c-success:    #16a34a;
   --c-success-bg: #dcfce7;
@@ -47,8 +47,8 @@ body {
   line-height: 1.55;
   color: var(--c-text);
   background:
-    radial-gradient(1200px 600px at 100% -200px, rgba(99, 102, 241, .08), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(37, 99, 235, .06), transparent 60%),
+    radial-gradient(1200px 600px at 100% -200px, rgba(42, 75, 127, .08), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(42, 75, 127, .06), transparent 60%),
     var(--c-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -135,7 +135,7 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--c-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, .15);
+  box-shadow: 0 0 0 3px rgba(42, 75, 127, .15);
 }
 input[type="file"] {
   padding: .35rem;
@@ -233,7 +233,7 @@ header.topbar h1::before {
   height: 28px;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--c-primary), var(--c-accent));
-  box-shadow: 0 4px 12px rgba(37, 99, 235, .35);
+  box-shadow: 0 4px 12px rgba(42, 75, 127, .35);
 }
 header.topbar > div {
   display: flex;
@@ -365,6 +365,11 @@ form.row > button,
   white-space: nowrap;
 }
 
+/* Attendance config form: top-align labels so all inputs line up even
+   though only some fields carry a helper description below the input. */
+#att-config-form { align-items: start; }
+#att-config-form > button { align-self: start; }
+
 form .row + button,
 form > button {
   margin-top: 1rem;
@@ -405,7 +410,9 @@ td button + button { margin-left: .35rem; }
 /* Status / badges --------------------------------------------- */
 .status-present,
 .status-absent,
-.status-late {
+.status-late,
+.status-early_left,
+.status-leave {
   display: inline-block;
   padding: 2px 9px;
   border-radius: 999px;
@@ -413,9 +420,11 @@ td button + button { margin-left: .35rem; }
   font-weight: 600;
   text-transform: capitalize;
 }
-.status-present { color: var(--c-success); background: var(--c-success-bg); }
-.status-late    { color: var(--c-warning); background: var(--c-warning-bg); }
-.status-absent  { color: var(--c-danger);  background: var(--c-danger-bg); }
+.status-present    { color: var(--c-success); background: var(--c-success-bg); }
+.status-late       { color: var(--c-warning); background: var(--c-warning-bg); }
+.status-absent     { color: var(--c-danger);  background: var(--c-danger-bg); }
+.status-early_left { color: var(--c-warning); background: var(--c-warning-bg); }
+.status-leave      { color: var(--c-primary); background: var(--c-primary-soft); }
 
 .badge {
   display: inline-block;
@@ -436,11 +445,6 @@ video, img.preview, canvas {
   background: #0f172a;
 }
 img.preview { background: var(--c-surface-2); }
-
-/* Center the whole Check-in panel content */
-#tab-checkin { text-align: center; }
-#tab-checkin > h2 { justify-content: center; border-bottom-color: transparent; }
-#tab-checkin > p  { max-width: 520px; margin-left: auto; margin-right: auto; }
 
 /* Centered camera stage (check-in & re-register) -------------- */
 .camera-stage {

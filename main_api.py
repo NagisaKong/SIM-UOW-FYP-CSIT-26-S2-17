@@ -6,7 +6,7 @@ router from core/, and starts uvicorn.
 Run:
     python main_api.py
     # or:
-    uvicorn main_api:app --host 127.0.0.1 --port 8000
+    uvicorn main_api:app --host 127.0.0.1 --port 8001
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core import all_routers
 from core.attendancePipeline import AIConfig, AttendancePipeline
+from core.attendanceSession import purge_expired_recordings
 
 
 @asynccontextmanager
@@ -34,6 +35,13 @@ async def lifespan(app: FastAPI):
     print(cfg.log_summary())
     app.state.cfg = cfg
     app.state.pipeline = AttendancePipeline.from_env(cfg)
+    # U03 retention: drop class recordings / detection rows past their 30-day expiry.
+    try:
+        stats = purge_expired_recordings(cfg.database_url)
+        if stats["recordings_deleted"]:
+            print(f"[retention] purged {stats['recordings_deleted']} expired recording(s)")
+    except Exception as exc:  # noqa: BLE001 — startup must not crash on cleanup
+        print(f"[retention] skipped: {exc}")
     yield
 
 
@@ -82,4 +90,4 @@ for r in all_routers:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8001)

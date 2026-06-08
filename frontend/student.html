@@ -20,27 +20,49 @@
   <div class="tabs">
     <button class="tab-btn active" data-tab="checkin">Check-in</button>
     <button class="tab-btn" data-tab="attendance">My Attendance</button>
+    <button class="tab-btn" data-tab="analytics">Analytics</button>
     <button class="tab-btn" data-tab="appeals">My Appeals</button>
-    <button class="tab-btn" data-tab="face">My Face</button>
+    <button class="tab-btn" data-tab="leave">Leave Application</button>
+    <button class="tab-btn" data-tab="face">Update Facial Image</button>
   </div>
 
   <main>
     <section id="tab-checkin" class="panel">
-      <h2>Face Check-in</h2>
+      <h2>Automated Attendance Check-in</h2>
 
-      <p class="muted small">Click <b>Start Camera</b>, face the lens, then <b>Capture &amp; Check-in</b>.</p>
-      <div class="camera-stage">
-        <div class="camera-frame">
-          <video id="cam" autoplay playsinline muted width="320" height="240"></video>
-          <canvas id="cam-canvas" width="320" height="240" style="display:none"></canvas>
-        </div>
-        <div class="camera-actions">
-          <button id="btn-start">Start Camera</button>
-          <button id="btn-capture" disabled>Capture &amp; Check-in</button>
-          <button id="btn-stop" class="secondary" disabled>Stop Camera</button>
-        </div>
-        <p id="checkin-msg" class="small camera-msg"></p>
+      <p class="muted">
+        No manual interaction is required. Once the teacher activates the classroom camera scan,
+        your attendance is recorded <b>automatically</b> when you are detected by the camera.
+        Just enter and remain in the classroom as normal — there is no button to press.
+      </p>
+
+      <ol class="checkin-steps muted small">
+        <li>Enter and remain in the classroom as normal. No login or manual check-in action is required.</li>
+        <li>When the teacher triggers a check-in, the classroom camera captures the faces present and the
+          system runs the SCRFD&nbsp;+&nbsp;ArcFace recognition pipeline against the registered facial registry.</li>
+        <li>The system records your attendance status for that check-in automatically.</li>
+        <li>The teacher may trigger additional check-ins during the session to verify continued presence;
+          your status is updated accordingly.</li>
+        <li>At the end of the session the system assigns your final status (Present / Late / Left Early / Absent).
+          You can review it under <b>My Attendance</b>, and you will be notified if marked Late or Absent.</li>
+      </ol>
+
+      <div class="row" style="align-items:center;justify-content:space-between;margin-top:1rem">
+        <h3 style="margin:0">Live Session Status</h3>
+        <button id="checkin-refresh" class="secondary small">Refresh</button>
       </div>
+      <p class="muted small" id="checkin-msg"></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Course</th>
+            <th>Started</th>
+            <th>Session</th>
+            <th>My Status</th>
+          </tr>
+        </thead>
+        <tbody id="active-body"></tbody>
+      </table>
     </section>
 
     <section id="tab-attendance" class="panel" style="display:none">
@@ -74,6 +96,24 @@
       </table>
     </section>
 
+    <section id="tab-analytics" class="panel" style="display:none">
+      <h2>Attendance Analytics</h2>
+      <div class="row row--compact">
+        <label>From<input type="date" id="sana-from"></label>
+        <label>To<input type="date" id="sana-to"></label>
+        <button id="sana-refresh">Apply</button>
+      </div>
+      <p id="sana-summary" class="small muted"></p>
+      <div class="row" style="align-items:center;gap:1.5rem;margin-top:1rem">
+        <div style="flex:1;min-width:320px;max-width:640px;height:280px">
+          <canvas id="sana-trend"></canvas>
+        </div>
+        <div style="width:240px;height:240px">
+          <canvas id="sana-breakdown"></canvas>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-appeals" class="panel" style="display:none">
       <h2>Submit Appeal</h2>
       <form id="appeal-form">
@@ -97,8 +137,38 @@
       </table>
     </section>
 
+    <section id="tab-leave" class="panel" style="display:none">
+      <h2>Submit Leave Application</h2>
+      <p class="muted small">Request leave for an upcoming (scheduled) session. A reason is required;
+        supporting documentation is optional. The assigned teacher will review it.</p>
+      <form id="leave-form">
+        <label>Upcoming session
+          <select name="session_id" id="leave-session" required></select>
+        </label>
+        <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+        <label>Supporting document URL (optional)
+          <input type="url" name="supporting_doc_url" placeholder="https://...">
+        </label>
+        <button type="submit">Submit Application</button>
+        <p id="leave-msg" class="error"></p>
+      </form>
+      <h3 style="margin-top:1.5rem">My Leave Applications</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Start</th>
+            <th>Reason</th>
+            <th>Status</th>
+            <th>Reviewer Comment</th>
+          </tr>
+        </thead>
+        <tbody id="leave-body"></tbody>
+      </table>
+    </section>
+
     <section id="tab-face" class="panel" style="display:none">
-      <h2>Re-register My Face</h2>
+      <h2>Update My Facial Image</h2>
       <p class="muted">Choose a clear, front-facing photo — capture from camera or upload a file.
         Previous embeddings will be replaced.</p>
 
@@ -133,8 +203,8 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js"></script>
-  <script src="student.js"></script>
+  <script src="app.js?v=2"></script>
+  <script src="student.js?v=2"></script>
 </body>
 
 </html>

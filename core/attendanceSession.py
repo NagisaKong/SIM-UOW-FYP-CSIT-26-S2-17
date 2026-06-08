@@ -17,6 +17,7 @@ import psycopg2
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from core.attendanceRecord import load_threshold_config
 from core.notification import send_late_absent_emails
 from core.userInformation import CurrentUser, require_role
 
@@ -35,6 +36,34 @@ def _db(database_url: str):
 def _dict_rows(cur) -> list[dict[str, Any]]:
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def purge_expired_recordings(database_url: str) -> dict[str, int]:
+    """U03 retention: delete class recordings (and detection rows) older
+    than their 30-day expiry. Best-effort — safe to call at startup."""
+    import os
+
+    removed_files = 0
+    deleted_rows = 0
+    try:
+        with _db(database_url) as c, c.cursor() as cur:
+            cur.execute(
+                "SELECT recordingid, file_path FROM session_recording WHERE expires_at < NOW()"
+            )
+            expired = cur.fetchall()
+            for _rid, path in expired:
+                if path and os.path.isfile(path):
+                    with contextlib.suppress(OSError):
+                        os.remove(path); removed_files += 1
+            cur.execute("DELETE FROM session_recording WHERE expires_at < NOW()")
+            deleted_rows = cur.rowcount
+            # Detection snapshots are only needed while the recording exists.
+            cur.execute(
+                "DELETE FROM presence_check WHERE detected_at < NOW() - INTERVAL '30 days'"
+            )
+    except (psycopg2.errors.UndefinedTable, psycopg2.OperationalError):
+        pass
+    return {"recordings_deleted": deleted_rows, "files_removed": removed_files}
 
 
 class AttendanceSession:
@@ -94,9 +123,27 @@ class AttendanceSession:
                    WHERE attendancesessionid = %s""",
                 (session_id,),
             )
+            # U03: the class recording begins when the scan is activated.
+            # Tracked here with a 30-day expiry (file written by the capture
+            # device). Best-effort: skip silently if the table is absent.
+            with contextlib.suppress(psycopg2.errors.UndefinedTable):
+                cur.execute(
+                    """INSERT INTO session_recording (attendancesessionid, file_path)
+                       VALUES (%s, %s)
+                       ON CONFLICT (attendancesessionid) DO NOTHING""",
+                    (session_id, f"recordings/session_{session_id}.mp4"),
+                )
         return {"success": True, "session_id": session_id, "status": "active"}
 
-    # ── U15 endSession ───────────────────────────────────────────────
+    # ── U15 endSession (U03 aggregation) ─────────────────────────────
+    # When the teacher ends the scan, aggregate every detection snapshot
+    # (presence_check rows) into ONE final status per enrolled student:
+    #   Absent     — never detected in any snapshot (or no scan ran).
+    #   Left Early — detected earlier but missing from the final snapshot
+    #                (signed-in-then-disappeared / tail gap).
+    #   Late       — missing from the first snapshot but detected later.
+    #   Present    — detected in both the first and the last snapshot.
+    # An approved leave ('leave') is never overwritten.
     def endSession(
         self, session_id: int, background_tasks: BackgroundTasks | None = None,
     ) -> dict[str, Any]:
@@ -113,15 +160,32 @@ class AttendanceSession:
                 raise HTTPException(409, "This session has already ended")
             if current_status == "cancelled":
                 raise HTTPException(409, "This session has been cancelled")
+
+            # Active roster for the course.
             cur.execute(
-                """INSERT INTO attendance_record (attendancesessionid, accountid, status)
-                   SELECT %s, e.accountid, 'absent'
-                   FROM course_enrollment e
-                   WHERE e.courseid = %s AND e.status = 'active'
-                   ON CONFLICT (attendancesessionid, accountid) DO NOTHING""",
-                (session_id, course_id),
+                """SELECT e.accountid FROM course_enrollment e
+                   WHERE e.courseid = %s AND e.status = 'active'""",
+                (course_id,),
             )
-            absentees = cur.rowcount
+            roster = [r[0] for r in cur.fetchall()]
+
+            late_grace = load_threshold_config(self.database_url)["late_grace_seconds"]
+            final_status = self._aggregate_presence(cur, session_id, roster, late_grace)
+
+            counts = {"present": 0, "late": 0, "early_left": 0, "absent": 0}
+            for acc in roster:
+                st = final_status.get(acc, "absent")
+                counts[st] = counts.get(st, 0) + 1
+                # Upsert; never clobber an approved leave.
+                cur.execute(
+                    """INSERT INTO attendance_record (attendancesessionid, accountid, status)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (attendancesessionid, accountid)
+                       DO UPDATE SET status = EXCLUDED.status, marked_at = NOW()
+                       WHERE attendance_record.status <> 'leave'""",
+                    (session_id, acc, st),
+                )
+
             cur.execute(
                 """UPDATE attendance_session
                    SET status = 'ended',
@@ -138,8 +202,69 @@ class AttendanceSession:
             queued = len(recipients)
         return {
             "success": True, "session_id": session_id,
-            "marked_absent": absentees, "notifications_queued": queued,
+            "present": counts["present"], "late": counts["late"],
+            "early_left": counts["early_left"], "marked_absent": counts["absent"],
+            "notifications_queued": queued,
         }
+
+    # ── internal: snapshot aggregation (U03) ─────────────────────────
+    def _aggregate_presence(
+        self, cur, session_id: int, roster: list[int], late_grace_seconds: int = 0,
+    ) -> dict[int, str]:
+        """Return {account_id: final_status} from presence_check snapshots.
+
+        A "snapshot" is a distinct detected_at timestamp (one detection
+        window writes all its rows in a single transaction).
+
+        Rules (per enrolled student):
+          * never detected            → absent (also when no scan ran)
+          * missing from last snapshot → early_left (signed-in-then-left)
+          * first detected later than (scan start + late_grace) → late
+          * otherwise                  → present
+
+        ``late_grace_seconds`` is the configurable tolerance (U34): a
+        student first seen within this many seconds of the scan starting
+        still counts as on-time.
+        """
+        try:
+            cur.execute(
+                """SELECT accountid, detected_at, BOOL_OR(detected) AS seen
+                   FROM presence_check
+                   WHERE attendancesessionid = %s
+                   GROUP BY accountid, detected_at""",
+                (session_id,),
+            )
+            rows = cur.fetchall()
+        except psycopg2.errors.UndefinedTable:
+            rows = []
+
+        # Ordered list of distinct snapshot timestamps.
+        snapshots = sorted({r[1] for r in rows})
+        if not snapshots:
+            return {acc: "absent" for acc in roster}
+
+        scan_start, last = snapshots[0], snapshots[-1]
+        seen_last: set[int] = set()
+        first_seen: dict[int, Any] = {}
+        for acc, ts, seen in rows:
+            if not seen:
+                continue
+            if acc not in first_seen or ts < first_seen[acc]:
+                first_seen[acc] = ts
+            if ts == last:
+                seen_last.add(acc)
+
+        result: dict[int, str] = {}
+        for acc in roster:
+            if acc not in first_seen:
+                result[acc] = "absent"
+            elif acc not in seen_last:
+                result[acc] = "early_left"
+            elif (first_seen[acc] - scan_start).total_seconds() > late_grace_seconds:
+                result[acc] = "late"
+            else:
+                result[acc] = "present"
+        return result
 
     # ── internal ─────────────────────────────────────────────────────
     def _fetch_late_absent_recipients(self, session_id: int) -> list[dict[str, Any]]:

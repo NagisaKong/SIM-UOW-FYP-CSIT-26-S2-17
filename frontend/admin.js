@@ -6,7 +6,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["users", "faces", "courses", "attendance", "appeals", "ai-config", "live-scanner"].forEach(name => {
+    ["users", "faces", "courses", "attendance", "appeals", "att-config", "ai-config", "ensemble", "live-scanner"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
@@ -14,6 +14,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "courses") loadCourses();
     if (btn.dataset.tab === "attendance") loadAttendance();
     if (btn.dataset.tab === "appeals") loadAppeals();
+    if (btn.dataset.tab === "att-config") loadAttConfig();
     if (btn.dataset.tab === "ai-config") {}
     if (btn.dataset.tab === "live-scanner") {}
   });
@@ -572,6 +573,49 @@ async function reviewAppeal(id, status) {
   });
   loadAppeals();
 }
+
+// ── Attendance Config (U03 detection interval + U34 thresholds) ───
+async function loadAttConfig() {
+  const form = document.getElementById("att-config-form");
+  const msg = document.getElementById("att-config-msg");
+  msg.textContent = "";
+  try {
+    const cfg = await api("/config/attendance");
+    form.detection_interval_seconds.value = cfg.detection_interval_seconds;
+    form.late_grace_seconds.value = cfg.late_grace_seconds;
+    form.minimum_rate.value = cfg.minimum_attendance_rate;
+    form.consecutive_threshold.value = cfg.absence_threshold;
+  } catch (e) {
+    msg.style.color = "#c0392b";
+    msg.textContent = e.message;
+  }
+}
+
+document.getElementById("att-config-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("att-config-msg");
+  const fd = new FormData(e.target);
+  const body = {
+    detection_interval_seconds: Number(fd.get("detection_interval_seconds")),
+    late_grace_seconds: Number(fd.get("late_grace_seconds")),
+    minimum_rate: Number(fd.get("minimum_rate")),
+    consecutive_threshold: Number(fd.get("consecutive_threshold")),
+  };
+  try {
+    const res = await api("/admin/config/absence-threshold", {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    msg.style.color = "#16a34a";
+    msg.textContent = `Saved. Detection interval ${res.detection_interval_seconds}s · ` +
+      `late grace ${res.late_grace_seconds}s · min rate ${res.minimum_attendance_rate}% · ` +
+      `reminder after ${res.absence_threshold} sessions.`;
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
 
 loadUsers();
 
