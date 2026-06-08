@@ -19,12 +19,12 @@ let monthlyChart = null;
 function renderMonthlySummary(records) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth();
-  const monthName = now.toLocaleString(undefined, {month: "long", year: "numeric"});
+  const monthName = now.toLocaleString("en-US", {month: "long", year: "numeric"});
   document.getElementById("monthly-title").textContent = `${monthName} Attendance`;
   const first = new Date(y, m, 1);
   const last = new Date(y, m + 1, 0);
   document.getElementById("monthly-range").textContent =
-    `${first.toLocaleDateString()} – ${last.toLocaleDateString()}`;
+    `${first.toLocaleDateString("en-US")} – ${last.toLocaleDateString("en-US")}`;
 
   const counts = {present: 0, late: 0, absent: 0};
   for (const r of records) {
@@ -233,7 +233,7 @@ faceStartBtn.addEventListener("click", async () => {
   } catch (e) {
     const msg = document.getElementById("face-msg");
     msg.style.color = "#c0392b";
-    msg.textContent = "无法打开摄像头: " + e.message;
+    msg.textContent = "Unable to open camera: " + e.message;
   }
 });
 
@@ -293,7 +293,7 @@ btnStart.addEventListener("click", async () => {
     btnStop.disabled = false;
   } catch (e) {
     ciMsg.style.color = "#c0392b";
-    ciMsg.textContent = "无法打开摄像头: " + e.message;
+    ciMsg.textContent = "Unable to open camera: " + e.message;
   }
 });
 
@@ -311,7 +311,7 @@ function stopCamera() {
 btnCap.addEventListener("click", async () => {
   if (!camStream) return;
   ciMsg.style.color = "#555";
-  ciMsg.textContent = "识别中，请稍候...";
+  ciMsg.textContent = "Recognizing, please wait...";
   btnCap.disabled = true;
 
   const w = cam.videoWidth || 640, h = cam.videoHeight || 480;

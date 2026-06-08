@@ -251,7 +251,7 @@ async function loadAnalytics() {
 function renderTrend(trend) {
   const ctx = document.getElementById("ana-trend");
   if (!ctx || typeof Chart === "undefined") return;
-  const labels = trend.map(r => new Date(r.week).toLocaleDateString());
+  const labels = trend.map(r => new Date(r.week).toLocaleDateString("en-US"));
   const data = trend.map(r => r.rate);
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(ctx, {

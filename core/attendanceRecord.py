@@ -91,7 +91,7 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None:
-        raise HTTPException(status_code=400, detail="无法解析图片文件")
+        raise HTTPException(status_code=400, detail="Unable to parse image file")
     return img
 
 
@@ -126,7 +126,7 @@ class AttendanceRecord:
             faces = len(result.predictions)
             return {
                 "success": False,
-                "message": f"未能识别为本人（检测到 {faces} 张人脸，请正对摄像头）",
+                "message": f"Could not verify your identity ({faces} face(s) detected, please face the camera directly)",
                 "detections": faces,
             }
         with _db(self.database_url) as c, c.cursor() as cur:
@@ -146,7 +146,7 @@ class AttendanceRecord:
             )
             row = cur.fetchone()
             if not row:
-                return {"success": False, "message": "当前没有进行中的课程"}
+                return {"success": False, "message": "No session is currently in progress"}
             session_id, course_code, course_name = row
             cur.execute(
                 """
@@ -162,7 +162,7 @@ class AttendanceRecord:
         return {
             "success": True,
             "already_checked_in": already,
-            "message": "已签到（重复打卡已忽略）" if already else f"签到成功：{course_code} {course_name}",
+            "message": "Already checked in (duplicate check-in ignored)" if already else f"Check-in successful: {course_code} {course_name}",
             "session_id": session_id,
             "course_code": course_code,
             "course_name": course_name,
@@ -294,7 +294,7 @@ class AttendanceRecord:
             )
             srow = cur.fetchone()
             if not srow:
-                raise HTTPException(404, "课时不存在")
+                raise HTTPException(404, "Session not found")
             cols = [d[0] for d in cur.description]
             session = dict(zip(cols, srow))
             cur.execute(
@@ -387,7 +387,7 @@ class AttendanceRecord:
             return {"success": True, "early_left": rows}
         except psycopg2.errors.UndefinedTable:
             return {"success": True, "early_left": [],
-                    "note": "presence_check 表暂未创建"}
+                    "note": "presence_check table not yet created"}
         except Exception:
             return {"success": True, "early_left": []}
 
@@ -401,10 +401,10 @@ class AttendanceRecord:
         """Persist threshold updates to attendance_threshold_config (U34)."""
         if consecutive_threshold is not None:
             if consecutive_threshold < 1 or consecutive_threshold > 100:
-                raise HTTPException(400, "consecutive_threshold 必须在 1-100 之间")
+                raise HTTPException(400, "consecutive_threshold must be between 1 and 100")
         if minimum_rate is not None:
             if minimum_rate < 0 or minimum_rate > 100:
-                raise HTTPException(400, "minimum_rate 必须在 0-100 之间")
+                raise HTTPException(400, "minimum_rate must be between 0 and 100")
 
         # Build a parameterised UPDATE so we only touch the supplied fields.
         sets, params = [], []
@@ -431,7 +431,7 @@ class AttendanceRecord:
                     )
             except psycopg2.errors.UndefinedTable:
                 raise HTTPException(
-                    503, "attendance_threshold_config 表不存在；请先运行 schema.sql",
+                    503, "attendance_threshold_config table does not exist; please run schema.sql first",
                 )
 
         # Refresh instance attributes from DB so callers see fresh state.

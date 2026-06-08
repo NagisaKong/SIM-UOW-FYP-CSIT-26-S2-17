@@ -27,7 +27,7 @@ function requireAuth(expectedRole) {
   const user = JSON.parse(localStorage.getItem("user") || "null");
   if (!token || !user) { location.href = "index.html"; return null; }
   if (expectedRole && user.role !== expectedRole) {
-    alert("权限不足: 需要 " + expectedRole);
+    alert("Insufficient permissions: " + expectedRole + " role required");
     location.href = "index.html";
     return null;
   }
@@ -42,7 +42,7 @@ function logout() {
 
 function fmt(ts) {
   if (!ts) return "-";
-  return new Date(ts).toLocaleString();
+  return new Date(ts).toLocaleString("en-US");
 }
 
 function el(tag, attrs = {}, ...children) {

@@ -45,7 +45,7 @@ class AttendanceAppeal:
     # ── U08 appealAbsence (existing record disputed) ────────────────
     def appealAbsence(self, applicant: int, record_id: int, reason: str) -> dict[str, Any]:
         if not reason or not reason.strip():
-            raise HTTPException(400, "申诉原因不能为空")
+            raise HTTPException(400, "Appeal reason cannot be empty")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
                 "SELECT accountid FROM attendance_record WHERE attendancerecordid = %s",
@@ -55,7 +55,7 @@ class AttendanceAppeal:
             if not row:
                 raise HTTPException(404, "Record not found")
             if row[0] != applicant:
-                raise HTTPException(403, "不能对他人记录申诉")
+                raise HTTPException(403, "Cannot appeal another user's record")
             cur.execute(
                 """INSERT INTO attendance_appeal (attendancerecordid, accountid, reason)
                    VALUES (%s, %s, %s) RETURNING appealid""",
@@ -82,7 +82,7 @@ class AttendanceAppeal:
         supporting_doc_url: str | None = None,
     ) -> dict[str, Any]:
         if not reason or not reason.strip():
-            raise HTTPException(400, "请假原因不能为空")
+            raise HTTPException(400, "Leave reason cannot be empty")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
                 """SELECT s.start_time, s.status, s.courseid
@@ -95,7 +95,7 @@ class AttendanceAppeal:
             start_time, sstatus, course_id = row
             if sstatus in ("active", "ended"):
                 raise HTTPException(
-                    400, "该课程已开始/结束，请改为提交考勤申诉",
+                    400, "This session has already started/ended; please submit an attendance appeal instead",
                 )
             cur.execute(
                 """SELECT 1 FROM course_enrollment
@@ -103,7 +103,7 @@ class AttendanceAppeal:
                 (course_id, applicant),
             )
             if not cur.fetchone():
-                raise HTTPException(403, "未选修该课程")
+                raise HTTPException(403, "Not enrolled in this course")
             cur.execute(
                 """INSERT INTO leave_application
                        (accountid, attendancesessionid, reason, supporting_doc_url, status)
@@ -136,7 +136,7 @@ class AttendanceAppeal:
         comment: str | None = None,
     ) -> dict[str, Any]:
         if decision not in ("approved", "rejected"):
-            raise HTTPException(400, "decision 必须为 approved/rejected")
+            raise HTTPException(400, "decision must be approved/rejected")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
                 """SELECT accountid, attendancesessionid FROM leave_application
@@ -288,7 +288,7 @@ def admin_review_appeal(
     user: CurrentUser = Depends(require_role("admin")),
 ):
     if body.status not in ("approved", "rejected"):
-        raise HTTPException(400, "status 非法")
+        raise HTTPException(400, "Invalid status")
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute(
             """UPDATE attendance_appeal

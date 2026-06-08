@@ -106,7 +106,7 @@ class InClassBehaviour:
             return {"success": True, "session_id": session_id, "students": rows}
         except psycopg2.errors.UndefinedTable:
             return {"success": True, "session_id": session_id, "students": [],
-                    "note": "behaviour_event 表暂未创建（行为分析模块待集成）"}
+                    "note": "behaviour_event table not yet created (behaviour analysis module pending integration)"}
         except Exception:
             return {"success": True, "session_id": session_id, "students": []}
 
@@ -126,7 +126,7 @@ class InClassBehaviour:
             return {"success": True, "session_id": session_id, "zones": rows}
         except psycopg2.errors.UndefinedTable:
             return {"success": True, "session_id": session_id, "zones": [],
-                    "note": "heatmap_snapshot 表暂未创建（待集成）"}
+                    "note": "heatmap_snapshot table not yet created (pending integration)"}
         except Exception:
             return {"success": True, "session_id": session_id, "zones": []}
 
@@ -165,7 +165,7 @@ class InClassBehaviour:
                         # 1. Verify the course exists (FK protection).
                         cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
                         if not cur.fetchone():
-                            raise HTTPException(404, "课程不存在")
+                            raise HTTPException(404, "Course not found")
 
                         # 2. UPSERT. When disabling we only flip `enabled`;
                         #    when enabling we may also flip sub-feature flags.
@@ -201,7 +201,7 @@ class InClassBehaviour:
                     raise
         except psycopg2.errors.UndefinedTable:
             raise HTTPException(
-                503, "behaviour_config 表不存在；请先运行 schema.sql",
+                503, "behaviour_config table does not exist; please run schema.sql first",
             )
 
         flags = self._refresh_enabled_for(course_id)

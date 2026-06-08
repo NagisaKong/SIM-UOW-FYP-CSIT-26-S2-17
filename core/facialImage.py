@@ -31,7 +31,7 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None:
-        raise HTTPException(status_code=400, detail="无法解析图片文件")
+        raise HTTPException(status_code=400, detail="Unable to parse image file")
     return img
 
 
@@ -73,9 +73,9 @@ class FacialImage:
         if action == "delete":
             face_id = kwargs.get("face_id")
             if face_id is None:
-                raise HTTPException(400, "缺少 face_id")
+                raise HTTPException(400, "Missing face_id")
             return self._soft_delete_face(int(face_id))
-        raise HTTPException(400, f"未知操作: {action}")
+        raise HTTPException(400, f"Unknown action: {action}")
 
     # ── Optional bulk helper (replaces the old ai/enrol.py CLI) ──────
     def bulk_enrol_from_folder(
@@ -125,10 +125,10 @@ class FacialImage:
     ) -> dict[str, Any]:
         written = self.pipeline.enrol_student(account_id=account_id, images=images)
         if not written:
-            return {"success": False, "message": "未检测到人脸，请重新拍摄"}
+            return {"success": False, "message": "No face detected, please retake the photo"}
         return {
             "success": True,
-            "message": f"账号 {account_id} 录入成功",
+            "message": f"Account {account_id} enrolled successfully",
             "written": written,
         }
 
@@ -188,7 +188,7 @@ async def register_face(
     """U06/U09/U19: register or update a face image.
     Students may only register their own face; admins may register anyone."""
     if user.role != "admin" and user.account_id != account_id:
-        raise HTTPException(status_code=403, detail="只能录入本人人脸")
+        raise HTTPException(status_code=403, detail="You may only enrol your own face")
     img = await _bytes_to_cv2(file)
     svc = _svc(request)
     if user.role == "admin" and user.account_id != account_id:

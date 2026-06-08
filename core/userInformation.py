@@ -113,7 +113,7 @@ class UserInformation:
     def login(self, email: str, password: str) -> dict[str, Any]:
         user = self.validateUserAccount(email, password)
         if not user:
-            raise HTTPException(status_code=401, detail="邮箱或密码错误")
+            raise HTTPException(status_code=401, detail="Incorrect email or password")
         token = _create_token(user.account_id, user.role, user.email)
         return {
             "success": True,
@@ -183,7 +183,7 @@ class UserInformation:
         if action == "set_status":
             self._require_admin(actor)
             if target_account_id is None:
-                raise HTTPException(400, "缺少 target_account_id")
+                raise HTTPException(400, "Missing target_account_id")
             return self._set_user_status(target_account_id, (payload or {}).get("status", ""))
 
         if action == "view_self":
@@ -193,13 +193,13 @@ class UserInformation:
                 "email": actor.email,
             }
 
-        raise HTTPException(400, f"未知操作: {action}")
+        raise HTTPException(400, f"Unknown action: {action}")
 
     # ── internals ────────────────────────────────────────────────────
     @staticmethod
     def _require_admin(actor: CurrentUser) -> None:
         if actor.role != "admin":
-            raise HTTPException(403, "需要管理员权限")
+            raise HTTPException(403, "Administrator privileges required")
 
     def _list_users(self) -> list[dict[str, Any]]:
         sql = """
@@ -218,12 +218,12 @@ class UserInformation:
     def _create_user(self, body: dict[str, Any]) -> dict[str, Any]:
         role = body.get("role")
         if role not in ("student", "teacher", "admin"):
-            raise HTTPException(400, "role 非法")
+            raise HTTPException(400, "Invalid role")
         email = body.get("email")
         password = body.get("password")
         full_name = body.get("full_name")
         if not (email and password and full_name):
-            raise HTTPException(400, "email / password / full_name 必填")
+            raise HTTPException(400, "email / password / full_name are required")
 
         with psycopg2.connect(self.database_url) as conn:
             try:
@@ -234,7 +234,7 @@ class UserInformation:
                     )
                     prow = cur.fetchone()
                     if not prow:
-                        raise HTTPException(500, f"未找到角色 profile: {role}")
+                        raise HTTPException(500, f"Role profile not found: {role}")
                     profile_id = prow[0]
 
                     cur.execute(
@@ -266,7 +266,7 @@ class UserInformation:
 
     def _set_user_status(self, account_id: int, status: str) -> dict[str, Any]:
         if status not in ("active", "inactive"):
-            raise HTTPException(400, "status 非法")
+            raise HTTPException(400, "Invalid status")
         with psycopg2.connect(self.database_url) as conn:
             try:
                 with conn.cursor() as cur:

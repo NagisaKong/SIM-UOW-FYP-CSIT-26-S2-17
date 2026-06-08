@@ -73,12 +73,12 @@ class AttendanceSession:
             )
             row = cur.fetchone()
             if not row:
-                raise HTTPException(404, "课时不存在")
+                raise HTTPException(404, "Session not found")
             course_id, current_status = row
             if current_status == "active":
-                raise HTTPException(409, "该课时已处于进行中")
+                raise HTTPException(409, "This session is already in progress")
             if current_status == "ended":
-                raise HTTPException(409, "该课时已结束，无法再次开始")
+                raise HTTPException(409, "This session has ended and cannot be started again")
             cur.execute(
                 """SELECT 1 FROM attendance_session
                    WHERE courseid = %s AND status = 'active'
@@ -86,7 +86,7 @@ class AttendanceSession:
                 (course_id, session_id),
             )
             if cur.fetchone():
-                raise HTTPException(409, "该课程已有进行中的课时")
+                raise HTTPException(409, "This course already has a session in progress")
             cur.execute(
                 """UPDATE attendance_session
                    SET status = 'active',
@@ -107,12 +107,12 @@ class AttendanceSession:
             )
             row = cur.fetchone()
             if not row:
-                raise HTTPException(404, "课时不存在")
+                raise HTTPException(404, "Session not found")
             course_id, current_status = row
             if current_status == "ended":
-                raise HTTPException(409, "该课时已结束")
+                raise HTTPException(409, "This session has already ended")
             if current_status == "cancelled":
-                raise HTTPException(409, "该课时已取消")
+                raise HTTPException(409, "This session has been cancelled")
             cur.execute(
                 """INSERT INTO attendance_record (attendancesessionid, accountid, status)
                    SELECT %s, e.accountid, 'absent'
@@ -228,7 +228,7 @@ def teacher_list_sessions(
         clauses.append("s.courseid = %s"); params.append(course_id)
     if status:
         if status not in ("scheduled", "active", "ended", "cancelled"):
-            raise HTTPException(400, "status 非法")
+            raise HTTPException(400, "Invalid status")
         clauses.append("s.status = %s"); params.append(status)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     sql = f"""
@@ -323,7 +323,7 @@ def admin_create_course(
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute("SELECT 1 FROM course WHERE course_code = %s", (body.course_code,))
         if cur.fetchone():
-            raise HTTPException(409, f"课程代码 {body.course_code} 已存在")
+            raise HTTPException(409, f"Course code {body.course_code} already exists")
         cur.execute(
             "INSERT INTO course (course_code, course_name) VALUES (%s, %s) RETURNING courseid",
             (body.course_code, body.course_name),
@@ -338,7 +338,7 @@ def admin_set_course_status(
     user: CurrentUser = Depends(require_role("admin")),
 ):
     if body.status not in ("active", "inactive"):
-        raise HTTPException(400, "status 非法")
+        raise HTTPException(400, "Invalid status")
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute(
             "UPDATE course SET status = %s WHERE courseid = %s",
@@ -355,7 +355,7 @@ def admin_delete_course(
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
         if not cur.fetchone():
-            raise HTTPException(404, "课程不存在")
+            raise HTTPException(404, "Course not found")
         cur.execute(
             """SELECT 1 FROM attendance_record r
                JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
@@ -363,7 +363,7 @@ def admin_delete_course(
             (course_id,),
         )
         if cur.fetchone():
-            raise HTTPException(409, "该课程已有签到记录，无法删除（请改为停用）")
+            raise HTTPException(409, "This course already has attendance records and cannot be deleted (deactivate it instead)")
         cur.execute(
             "SELECT COUNT(*) FROM attendance_session WHERE courseid = %s",
             (course_id,),
@@ -371,7 +371,7 @@ def admin_delete_course(
         session_count = cur.fetchone()[0]
         if session_count > 0 and not force:
             raise HTTPException(
-                409, f"该课程下有 {session_count} 个课时安排，确认删除请使用 force=true",
+                409, f"This course has {session_count} scheduled session(s); use force=true to confirm deletion",
             )
         if session_count > 0:
             cur.execute("DELETE FROM attendance_session WHERE courseid = %s", (course_id,))
@@ -406,7 +406,7 @@ def admin_create_enrollment(
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
         if not cur.fetchone():
-            raise HTTPException(404, "课程不存在")
+            raise HTTPException(404, "Course not found")
         cur.execute(
             """SELECT up.role FROM user_account ua
                JOIN user_profiles up ON up.profileid = ua.profileid
@@ -415,9 +415,9 @@ def admin_create_enrollment(
         )
         row = cur.fetchone()
         if not row:
-            raise HTTPException(404, "用户不存在")
+            raise HTTPException(404, "User not found")
         if row[0] != "student":
-            raise HTTPException(400, "只能将课程分配给学生")
+            raise HTTPException(400, "Courses can only be assigned to students")
         cur.execute(
             """INSERT INTO course_enrollment (courseid, accountid, status)
                VALUES (%s, %s, 'active')
@@ -469,7 +469,7 @@ def admin_create_session(
     user: CurrentUser = Depends(require_role("admin")),
 ):
     if body.status not in ("scheduled", "active", "ended", "cancelled"):
-        raise HTTPException(400, "status 非法")
+        raise HTTPException(400, "Invalid status")
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute(
             "SELECT COALESCE(status,'active') FROM course WHERE courseid = %s",
@@ -477,9 +477,9 @@ def admin_create_session(
         )
         row = cur.fetchone()
         if not row:
-            raise HTTPException(404, "课程不存在")
+            raise HTTPException(404, "Course not found")
         if row[0] == "inactive":
-            raise HTTPException(400, "课程已停用，无法排课")
+            raise HTTPException(400, "Course is inactive; cannot schedule sessions")
         cur.execute(
             """INSERT INTO attendance_session (courseid, start_time, end_time, status)
                VALUES (%s, %s, %s, %s) RETURNING attendancesessionid""",
@@ -501,10 +501,10 @@ def admin_update_session(
         fields.append("end_time = %s"); params.append(body.end_time)
     if body.status is not None:
         if body.status not in ("scheduled", "active", "ended", "cancelled"):
-            raise HTTPException(400, "status 非法")
+            raise HTTPException(400, "Invalid status")
         fields.append("status = %s"); params.append(body.status)
     if not fields:
-        raise HTTPException(400, "无可更新字段")
+        raise HTTPException(400, "No fields to update")
     params.append(session_id)
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute(
@@ -525,7 +525,7 @@ def admin_delete_session(
             (session_id,),
         )
         if cur.fetchone():
-            raise HTTPException(409, "该课时已有签到记录，无法删除")
+            raise HTTPException(409, "This session already has attendance records and cannot be deleted")
         cur.execute(
             "DELETE FROM attendance_session WHERE attendancesessionid = %s",
             (session_id,),

@@ -64,7 +64,7 @@ class TrainConfiguration:
         self, model_name: str, train_pct: int,
     ) -> dict[str, Any]:
         if not (10 <= train_pct <= 95):
-            raise HTTPException(400, "train_pct 必须在 10-95 之间")
+            raise HTTPException(400, "train_pct must be between 10 and 95")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
                 "SELECT COUNT(*) FROM face_embedding WHERE is_active = TRUE AND model_name = %s",
@@ -72,7 +72,7 @@ class TrainConfiguration:
             )
             total = cur.fetchone()[0]
         if total == 0:
-            raise HTTPException(400, "训练集为空，无法分配数据")
+            raise HTTPException(400, "Training set is empty; cannot allocate data")
         train_count = int(total * train_pct / 100)
         test_count = total - train_count
         _active_config["trainingDataSet"] = {
@@ -96,7 +96,7 @@ class TrainConfiguration:
         """STUB: real implementation will hand off to core/training/.
         For the preliminary build we just acknowledge the request."""
         if not _active_config.get("trainingDataSet"):
-            raise HTTPException(400, "请先调用 selectTrainingDataSet 选择数据集")
+            raise HTTPException(400, "Please call selectTrainingDataSet to choose a dataset first")
         # TODO: spawn background training job, stream progress over WebSocket.
         return {
             "success": True,
@@ -110,9 +110,9 @@ class TrainConfiguration:
         self, models: list[str], weighting: str = "equal",
     ) -> dict[str, Any]:
         if len(models) < 2:
-            raise HTTPException(400, "Ensemble 至少需要两个模型 (U24)")
+            raise HTTPException(400, "Ensemble requires at least two models (U24)")
         if weighting not in ("equal", "confidence"):
-            raise HTTPException(400, "weighting 非法")
+            raise HTTPException(400, "Invalid weighting")
         _active_config["singleOrMultimodel"] = True
         _active_config["ensemble"] = {"models": models, "weighting": weighting}
         return {"success": True, **_active_config["ensemble"]}

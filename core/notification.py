@@ -249,7 +249,7 @@ def teacher_resend_notifications(
             (session_id,),
         )
         if not cur.fetchone():
-            raise HTTPException(404, "课时不存在")
+            raise HTTPException(404, "Session not found")
     svc = _svc(request)
     recipients = svc._fetch_late_absent_recipients(session_id)
     background_tasks.add_task(_send_batch, recipients)

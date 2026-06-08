@@ -15,7 +15,7 @@ Absorbed from previous standalone files:
         Ensemble voting / EmbeddingStore / SupabaseEmbeddingStore /
         AttendancePipeline
 
-Layout (top → bottom):
+Layout:
    1. Env helpers + AIConfig
    2. EmbeddingRow + EmbeddingRepo  (DB persistence)
    3. Constants (model identifiers)
@@ -68,7 +68,7 @@ except ImportError:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 1. AIConfig  (absorbed from config.py)
+# 1. AIConfig
 # ════════════════════════════════════════════════════════════════════════
 def _env_bool(key: str, default: bool) -> bool:
     v = os.getenv(key)
@@ -160,7 +160,7 @@ class AIConfig:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. EmbeddingRow + EmbeddingRepo  (absorbed from database_manager.py)
+# 2. EmbeddingRow + EmbeddingRepo
 # ════════════════════════════════════════════════════════════════════════
 @dataclass
 class EmbeddingRow:
@@ -299,7 +299,7 @@ class EmbeddingRepo:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 3. Constants (model identifiers — used by DB rows + ensemble weighting)
+# 3. Constants
 # ════════════════════════════════════════════════════════════════════════
 ARCFACE_MODEL_NAME = "arcface"
 ARCFACE_MODEL_VERSION = "buffalo_l/r100"
@@ -915,7 +915,7 @@ class SupabaseEmbeddingStore:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 10. AttendancePipeline — top-level service class
+# 10. AttendancePipeline
 # ════════════════════════════════════════════════════════════════════════
 class AttendancePipeline:
     """End-to-end inference pipeline (Service Class).
