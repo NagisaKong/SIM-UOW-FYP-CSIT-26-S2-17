@@ -94,6 +94,17 @@
         </thead>
         <tbody id="att-body"></tbody>
       </table>
+
+      <!-- U07 Session details -->
+      <div id="session-detail" style="display:none;margin-top:1.5rem;padding:1rem;
+           border:1px solid var(--c-border);border-radius:var(--radius);background:var(--c-surface-2)">
+        <div class="row" style="align-items:center;justify-content:space-between">
+          <h3 style="margin:0">Session Details</h3>
+          <button class="secondary small"
+            onclick="document.getElementById('session-detail').style.display='none'">Close</button>
+        </div>
+        <div id="session-detail-body" style="margin-top:.5rem"></div>
+      </div>
     </section>
 
     <section id="tab-analytics" class="panel" style="display:none">

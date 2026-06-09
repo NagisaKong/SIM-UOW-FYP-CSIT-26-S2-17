@@ -96,17 +96,53 @@ async function loadAttendance() {
         el("td", {}, fmt(r.start_time)),
         el("td", {}, el("span", {class: "status-" + r.status}, r.status)),
         el("td", {}, fmt(r.marked_at)),
-        el("td", {}, el("button", {
-          class: "secondary",
-          onclick: () => {
-            document.querySelector('[data-tab="appeals"]').click();
-            document.querySelector('#appeal-form [name="record_id"]').value = r.record_id;
-          }
-        }, "Appeal")),
+        el("td", {},
+          el("button", {
+            class: "secondary",
+            onclick: () => viewSessionDetail(r.session_id),
+          }, "Details"),
+          el("button", {
+            class: "secondary",
+            onclick: () => {
+              document.querySelector('[data-tab="appeals"]').click();
+              document.querySelector('#appeal-form [name="record_id"]').value = r.record_id;
+            }
+          }, "Appeal"),
+        ),
       ));
     }
   } catch (e) {
     body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+  }
+}
+
+// ── Session details (U07) ─────────────────────────────────────
+async function viewSessionDetail(sessionId) {
+  const box = document.getElementById("session-detail");
+  const bodyEl = document.getElementById("session-detail-body");
+  box.style.display = "";
+  bodyEl.innerHTML = "Loading…";
+  box.scrollIntoView({behavior: "smooth", block: "nearest"});
+  try {
+    const res = await api(`/student/sessions/${sessionId}`);
+    const s = res.session;
+    const checkedIn = s.marked_at && s.attendance_status && s.attendance_status !== "absent";
+    const rows = [
+      ["Course", `${s.course_code} — ${s.course_name}`],
+      ["Date & time", `${fmt(s.start_time)}${s.end_time ? " – " + fmt(s.end_time) : ""}`],
+      ["Session status", s.session_status],
+      ["Attendance status", s.attendance_status
+        ? `<span class="status-${s.attendance_status}">${s.attendance_status}</span>`
+        : "—"],
+      ["Check-in timestamp", checkedIn ? fmt(s.marked_at)
+        : '<span class="muted">Absent — No check-in recorded</span>'],
+    ];
+    bodyEl.innerHTML = rows.map(([k, v]) =>
+      `<div style="display:flex;gap:.75rem;padding:.25rem 0;border-bottom:1px solid var(--c-border-2)">
+         <div style="min-width:160px;color:var(--c-text-2)">${k}</div><div>${v}</div></div>`
+    ).join("");
+  } catch (e) {
+    bodyEl.innerHTML = `<span class="error">${e.message}</span>`;
   }
 }
 

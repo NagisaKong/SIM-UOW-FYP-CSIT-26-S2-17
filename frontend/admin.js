@@ -6,7 +6,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["users", "faces", "courses", "attendance", "appeals", "att-config", "ai-config", "ensemble", "live-scanner"].forEach(name => {
+    ["users", "faces", "courses", "attendance", "appeals", "att-config", "ai-config", "ensemble", "behaviour", "live-scanner"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
@@ -15,6 +15,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "attendance") loadAttendance();
     if (btn.dataset.tab === "appeals") loadAppeals();
     if (btn.dataset.tab === "att-config") loadAttConfig();
+    if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "ai-config") {}
     if (btn.dataset.tab === "live-scanner") {}
   });
@@ -618,6 +619,71 @@ document.getElementById("att-config-form").addEventListener("submit", async (e) 
 });
 
 loadUsers();
+
+// ── Behaviour Analysis Settings (U35) ─────────────────────────────
+let behaviourCoursesLoaded = false;
+
+async function loadBehaviourTab() {
+  const sel = document.getElementById("behaviour-course");
+  if (!behaviourCoursesLoaded) {
+    const res = await api("/admin/courses");
+    sel.innerHTML = "";
+    for (const c of res.courses || []) {
+      const o = document.createElement("option");
+      o.value = c.courseid;
+      o.textContent = `${c.course_code} — ${c.course_name}`;
+      sel.appendChild(o);
+    }
+    behaviourCoursesLoaded = true;
+  }
+  loadBehaviourConfig();
+}
+
+async function loadBehaviourConfig() {
+  const cid = document.getElementById("behaviour-course").value;
+  const msg = document.getElementById("behaviour-msg");
+  if (!cid) return;
+  msg.textContent = "";
+  try {
+    const res = await api(`/admin/courses/${cid}/behaviour-analysis`);
+    const cfg = res.config || {};
+    document.getElementById("behaviour-enable").checked = !!cfg.enabled;
+    document.getElementById("behaviour-drowsiness").checked = !!cfg.drowsiness;
+    document.getElementById("behaviour-phone").checked = !!cfg.phone_usage;
+    document.getElementById("behaviour-heatmap").checked = !!cfg.heatmap;
+  } catch (e) {
+    msg.style.color = "#c0392b";
+    msg.textContent = e.message;
+  }
+}
+
+document.getElementById("behaviour-course").addEventListener("change", loadBehaviourConfig);
+
+document.getElementById("behaviour-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const cid = document.getElementById("behaviour-course").value;
+  const msg = document.getElementById("behaviour-msg");
+  if (!cid) { msg.textContent = "Select a course."; return; }
+  const body = {
+    enable: document.getElementById("behaviour-enable").checked,
+    drowsiness: document.getElementById("behaviour-drowsiness").checked,
+    phone_usage: document.getElementById("behaviour-phone").checked,
+    heatmap: document.getElementById("behaviour-heatmap").checked,
+  };
+  try {
+    const res = await api(`/admin/courses/${cid}/behaviour-analysis`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const cfg = res.config || {};
+    msg.style.color = "#16a34a";
+    msg.textContent = `Saved. Behaviour analysis ${cfg.enabled ? "ENABLED" : "disabled"} for this course.`;
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
 
 // ── Live Scanner (Webcam) ─────────────────────────────────────────
 document.getElementById("start-webcam-btn").addEventListener("click", async () => {

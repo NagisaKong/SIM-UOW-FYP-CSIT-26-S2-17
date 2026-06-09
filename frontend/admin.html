@@ -26,6 +26,7 @@
     <button class="tab-btn" data-tab="att-config">Attendance Config</button>
     <button class="tab-btn" data-tab="ai-config">Model Management</button>
     <button class="tab-btn" data-tab="ensemble">Ensemble Configuration</button>
+    <button class="tab-btn" data-tab="behaviour">Behaviour Analysis</button>
     <button class="tab-btn" data-tab="live-scanner">Live Scanner</button>
   </div>
 
@@ -292,6 +293,23 @@
         <button type="submit">Save Ensemble Config</button>
       </form>
       <p id="ensemble-msg" class="error"></p>
+    </section>
+
+    <section id="tab-behaviour" class="panel" style="display:none">
+      <h2>Classroom Behaviour Analysis Settings</h2>
+      <p class="muted small">Per-course toggle for in-class behaviour analysis (U35). When enabled, the
+        system may flag drowsiness / phone use and build an activity heatmap for that course's sessions.</p>
+      <form id="behaviour-form" class="row">
+        <label>Course
+          <select id="behaviour-course"></select>
+        </label>
+        <label><input type="checkbox" name="enable" id="behaviour-enable"> Enable behaviour analysis</label>
+        <label><input type="checkbox" name="drowsiness" id="behaviour-drowsiness" checked> Drowsiness detection</label>
+        <label><input type="checkbox" name="phone_usage" id="behaviour-phone" checked> Phone-use detection</label>
+        <label><input type="checkbox" name="heatmap" id="behaviour-heatmap" checked> Activity heatmap</label>
+        <button type="submit">Save Settings</button>
+      </form>
+      <p id="behaviour-msg" class="small"></p>
     </section>
 
     <section id="tab-live-scanner" class="panel" style="display:none">
