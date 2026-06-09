@@ -307,10 +307,12 @@ async function loadSessions() {
       el("td", {}, s.status),
       el("td", {},
         s.status !== "active" ? el("button", {
+          style: "min-width:64px",
           onclick: () => updateSession(s.attendancesessionid, {status: "active"}),
         }, "Start") : null,
         s.status === "active" ? el("button", {
           class: "secondary",
+          style: "min-width:64px",
           onclick: () => updateSession(s.attendancesessionid, {status: "ended"}),
         }, "End") : null,
         el("button", {
@@ -440,29 +442,26 @@ document.getElementById("ensemble-form").addEventListener("submit", async (e) =>
   e.preventDefault();
   const msg = document.getElementById("ensemble-msg");
   const form = e.target;
-  const body = {
-    use_arcface: form.use_arcface.checked,
-    use_facenet: form.use_facenet.checked,
-    weighting: form.weighting.value,
-  };
-  if (!body.use_arcface && !body.use_facenet) {
+  // Backend expects a list of model names. Two or more => ensemble voting;
+  // a single model runs on its own.
+  const models = [];
+  if (form.use_arcface.checked) models.push("arcface_ensemble");
+  if (form.use_facenet.checked) models.push("facenet_ensemble");
+  if (!models.length) {
     msg.style.color = "#c0392b";
     msg.textContent = "Select at least one model.";
     return;
   }
-  if ([body.use_arcface, body.use_facenet].filter(Boolean).length < 2) {
-    msg.style.color = "#c0392b";
-    msg.textContent = "Ensemble requires at least two models (per U24).";
-    return;
-  }
   try {
-    await api("/admin/ensemble", {
+    const res = await api("/admin/ensemble", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(body),
+      body: JSON.stringify({models, weighting: form.weighting.value}),
     });
     msg.style.color = "#16a34a";
-    msg.textContent = "Ensemble configuration saved.";
+    msg.textContent = res.is_ensemble
+      ? `Ensemble saved (${models.length} models, ${res.weighting} weighting).`
+      : "Saved. Single model active (no ensemble voting).";
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

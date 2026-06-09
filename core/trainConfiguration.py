@@ -109,13 +109,17 @@ class TrainConfiguration:
     def combineDifferentModel(
         self, models: list[str], weighting: str = "equal",
     ) -> dict[str, Any]:
-        if len(models) < 2:
-            raise HTTPException(400, "Ensemble requires at least two models (U24)")
+        # At least one model must be active. Two or more enables ensemble
+        # majority voting (U24); a single model runs on its own.
+        if not models:
+            raise HTTPException(400, "Select at least one model")
         if weighting not in ("equal", "confidence"):
             raise HTTPException(400, "Invalid weighting")
-        _active_config["singleOrMultimodel"] = True
+        is_ensemble = len(models) >= 2
+        _active_config["singleOrMultimodel"] = is_ensemble
         _active_config["ensemble"] = {"models": models, "weighting": weighting}
-        return {"success": True, **_active_config["ensemble"]}
+        return {"success": True, "is_ensemble": is_ensemble,
+                **_active_config["ensemble"]}
 
     # ── U25 deployUpdatedModel ──────────────────────────────────────
     def deployUpdatedModel(

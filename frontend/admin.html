@@ -225,8 +225,8 @@
 
     <section id="tab-att-config" class="panel" style="display:none">
       <h2>Attendance Configuration</h2>
-      <p class="muted small">Institution-wide thresholds used by the automated check-in (U03) and
-        reminder logic (U34). Changes apply to all future sessions.</p>
+      <p class="muted small">Institution-wide thresholds used by the automated check-in and
+        reminder logic. Changes apply to all future sessions.</p>
       <form id="att-config-form" class="row">
         <label>Detection interval (seconds)
           <input type="number" name="detection_interval_seconds" min="3" max="86400" required>
@@ -279,8 +279,8 @@
 
     <section id="tab-ensemble" class="panel" style="display:none">
       <h2>Ensemble Configuration</h2>
-      <p class="muted small">Combine two or more trained models via majority voting (e.g. SCRFD + ArcFace and
-        MTCNN + FaceNet). Configure voting weights or select equal weighting. At least two models are required.</p>
+      <p class="muted small">Select one or more trained models. Two or more are combined via majority voting
+        (e.g. SCRFD + ArcFace and MTCNN + FaceNet) with the chosen weighting; a single model runs on its own.</p>
       <form id="ensemble-form" class="row">
         <label><input type="checkbox" name="use_arcface" checked> SCRFD + ArcFace</label>
         <label><input type="checkbox" name="use_facenet" checked> MTCNN + FaceNet</label>
@@ -297,7 +297,7 @@
 
     <section id="tab-behaviour" class="panel" style="display:none">
       <h2>Classroom Behaviour Analysis Settings</h2>
-      <p class="muted small">Per-course toggle for in-class behaviour analysis (U35). When enabled, the
+      <p class="muted small">Per-course toggle for in-class behaviour analysis. When enabled, the
         system may flag drowsiness / phone use and build an activity heatmap for that course's sessions.</p>
       <form id="behaviour-form" class="row">
         <label>Course
