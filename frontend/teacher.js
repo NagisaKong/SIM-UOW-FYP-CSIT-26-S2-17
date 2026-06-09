@@ -180,27 +180,22 @@ async function refreshLive() {
 async function loadEarlyLeft(id) {
   const body = document.getElementById("earlyleft-body");
   const msg = document.getElementById("earlyleft-msg");
-  body.innerHTML = "";
-  msg.textContent = "";
-  msg.style.color = "";
   try {
     const res = await api(`/teacher/sessions/${id}/early-left`);
     const rows = res.early_left || [];
-    if (!rows.length) {
-      msg.textContent = "No early departures flagged for this session.";
-      return;
-    }
-    for (const r of rows) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
+    // Build the new content first, then swap it in once — avoids the
+    // clear-then-fetch flicker on the 5s auto-refresh.
+    msg.style.color = "";
+    msg.textContent = rows.length ? "" : "No early departures flagged for this session.";
+    body.innerHTML = rows.map(r => `
+      <tr>
         <td>${r.student_id || "-"}</td>
         <td>${r.full_name || "-"}</td>
         <td><span class="status-${r.attendance_status}">${r.attendance_status}</span></td>
         <td>${fmt(r.marked_at)}</td>
         <td>${r.last_seen ? fmt(r.last_seen) : "—"}</td>
-      `;
-      body.appendChild(tr);
-    }
+      </tr>
+    `).join("");
   } catch (e) {
     msg.style.color = "#c0392b";
     msg.textContent = e.message;
