@@ -27,7 +27,6 @@
     <button class="tab-btn" data-tab="ai-config">Model Management</button>
     <button class="tab-btn" data-tab="ensemble">Ensemble Configuration</button>
     <button class="tab-btn" data-tab="behaviour">Behaviour Analysis</button>
-    <button class="tab-btn" data-tab="live-scanner">Live Scanner</button>
   </div>
 
   <main>
@@ -310,31 +309,6 @@
         <button type="submit">Save Settings</button>
       </form>
       <p id="behaviour-msg" class="small"></p>
-    </section>
-
-    <section id="tab-live-scanner" class="panel" style="display:none">
-      <h2>Live Classroom Scanner</h2>
-      <p class="muted small">Perform periodic background scans for in-class presence verification via webcam.</p>
-
-      <form class="row row--compact">
-        <label>Total Scans
-          <input type="number" id="total-scans" value="5" min="1">
-        </label>
-        <label>Interval (seconds)
-          <input type="number" id="scan-interval" value="10" min="2">
-        </label>
-      </form>
-
-      <div class="scanner-box">
-        <video id="webcam-feed" autoplay playsinline style="display:none"></video>
-        <canvas id="snapshot-canvas" style="display:none"></canvas>
-        <h3 id="camera-placeholder">📷 Camera feed offline</h3>
-      </div>
-
-      <div class="camera-actions camera-actions--start">
-        <button id="start-webcam-btn">Start Periodic Webcam Scan</button>
-      </div>
-      <p id="scan-status-msg" class="muted small" style="margin-top:.75rem"></p>
     </section>
 
   </main>

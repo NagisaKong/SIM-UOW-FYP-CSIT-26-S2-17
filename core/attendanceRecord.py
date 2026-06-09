@@ -267,7 +267,7 @@ class AttendanceRecord:
             clauses.append("s.start_time <= %s"); params.append(date_to)
         where = " AND ".join(clauses)
         trend_sql = f"""
-            SELECT date_trunc('week', s.start_time) AS week,
+            SELECT s.start_time::date AS bucket,
                    COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
@@ -275,7 +275,7 @@ class AttendanceRecord:
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
             WHERE {where}
-            GROUP BY week ORDER BY week
+            GROUP BY bucket ORDER BY bucket
         """
         breakdown_sql = f"""
             SELECT COUNT(*) FILTER (WHERE r.status='present') AS present,
@@ -315,7 +315,7 @@ class AttendanceRecord:
             clauses.append("r.accountid = %s"); params.append(account_id)
         where = " AND ".join(clauses)
         trend_sql = f"""
-            SELECT date_trunc('week', s.start_time) AS week,
+            SELECT s.start_time::date AS bucket,
                    COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
@@ -323,7 +323,7 @@ class AttendanceRecord:
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
             WHERE {where}
-            GROUP BY week ORDER BY week
+            GROUP BY bucket ORDER BY bucket
         """
         breakdown_sql = f"""
             SELECT COUNT(*) FILTER (WHERE r.status='present') AS present,

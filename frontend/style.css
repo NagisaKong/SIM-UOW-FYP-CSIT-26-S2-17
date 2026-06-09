@@ -446,6 +446,14 @@ video, img.preview, canvas {
 }
 img.preview { background: var(--c-surface-2); }
 
+/* Analytics charts: clean light surface (override the dark camera canvas
+   background) so the line/doughnut charts and their legends are readable. */
+#ana-trend, #ana-breakdown,
+#sana-trend, #sana-breakdown {
+  background: var(--c-surface);
+  border-color: var(--c-border);
+}
+
 /* Centered camera stage (check-in & re-register) -------------- */
 .camera-stage {
   display: flex;
@@ -530,19 +538,6 @@ img.preview { background: var(--c-surface-2); }
   color: var(--c-primary);
   box-shadow: var(--shadow-sm);
 }
-
-/* Live scanner / utility -------------------------------------- */
-.scanner-box {
-  border: 2px dashed var(--c-border);
-  background: var(--c-surface-2);
-  padding: 1rem;
-  border-radius: var(--radius);
-  text-align: center;
-  margin: 1rem auto;
-  max-width: 640px;
-}
-.scanner-box video { max-width: 520px; width: 100%; margin: 0 auto; display: block; }
-.scanner-box h3 { margin: 0; padding: 2.5rem 0; color: var(--c-muted); font-weight: 500; }
 
 /* Responsive --------------------------------------------------- */
 @media (max-width: 720px) {

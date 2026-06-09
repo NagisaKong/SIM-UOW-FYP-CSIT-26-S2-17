@@ -443,10 +443,17 @@ async function loadAnalytics() {
     `Total records ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · Late ${b.late || 0} · Absent ${b.absent || 0}`;
 }
 
+// Format a YYYY-MM-DD date string without timezone shifting (avoids the
+// new Date("2026-06-08") UTC-parse off-by-one bug).
+function fmtDay(s) {
+  const [y, m, d] = String(s).slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US");
+}
+
 function renderTrend(trend) {
   const ctx = document.getElementById("ana-trend");
   if (!ctx || typeof Chart === "undefined") return;
-  const labels = trend.map(r => new Date(r.week).toLocaleDateString("en-US"));
+  const labels = trend.map(r => fmtDay(r.bucket ?? r.week));
   const data = trend.map(r => r.rate);
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(ctx, {
@@ -460,6 +467,8 @@ function renderTrend(trend) {
         backgroundColor: "rgba(42,75,127,0.15)",
         fill: true,
         tension: 0.3,
+        pointRadius: 5,
+        pointBackgroundColor: "#2a4b7f",
       }],
     },
     options: {

@@ -219,10 +219,16 @@ async function loadStudentAnalytics() {
   }
 }
 
+// Format a YYYY-MM-DD date string without timezone shifting.
+function fmtDay(s) {
+  const [y, m, d] = String(s).slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US");
+}
+
 function renderStudentTrend(trend) {
   const ctx = document.getElementById("sana-trend");
   if (!ctx || typeof Chart === "undefined") return;
-  const labels = trend.map(r => new Date(r.week).toLocaleDateString("en-US"));
+  const labels = trend.map(r => fmtDay(r.bucket ?? r.week));
   const data = trend.map(r => r.rate);
   if (sTrendChart) sTrendChart.destroy();
   sTrendChart = new Chart(ctx, {
@@ -236,6 +242,8 @@ function renderStudentTrend(trend) {
         backgroundColor: "rgba(42,75,127,0.15)",
         fill: true,
         tension: 0.3,
+        pointRadius: 5,
+        pointBackgroundColor: "#2a4b7f",
       }],
     },
     options: {responsive: true, maintainAspectRatio: false,
