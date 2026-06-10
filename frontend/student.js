@@ -51,12 +51,14 @@ function renderMonthlySummary(records) {
     datasets: [{
       data: [counts.present, counts.late, counts.absent],
       backgroundColor: ["#16a34a", "#d97706", "#c0392b"],
-      borderWidth: 1,
+      borderColor: "#ffffff",
+      borderWidth: 2,
     }],
   };
   const options = {
     responsive: true,
     maintainAspectRatio: false,
+    cutout: "60%",
     plugins: {
       legend: {position: "bottom", labels: {boxWidth: 12, font: {size: 11}}},
       tooltip: {
@@ -75,7 +77,7 @@ function renderMonthlySummary(records) {
     monthlyChart.data = data;
     monthlyChart.update();
   } else {
-    monthlyChart = new Chart(canvas, {type: "pie", data, options});
+    monthlyChart = new Chart(canvas, {type: "doughnut", data, options});
   }
 }
 

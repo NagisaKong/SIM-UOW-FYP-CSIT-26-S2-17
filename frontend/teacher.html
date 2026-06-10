@@ -69,7 +69,6 @@
           <select id="live-session"></select>
         </label>
         <button id="live-refresh">Refresh now</button>
-        <label><input type="checkbox" id="live-auto" checked> Auto-refresh (5s)</label>
       </div>
 
       <!-- U03: teacher-activated classroom camera scan -->
@@ -173,7 +172,7 @@
     <!-- U30 Analytics -->
     <section id="tab-analytics" class="panel" style="display:none">
       <h2>Class Analytics</h2>
-      <div class="row row--compact">
+      <div class="row" style="display:flex;flex-wrap:wrap;align-items:end;gap:1rem;max-width:none">
         <label>Course
           <select id="ana-course"></select>
         </label>
@@ -199,7 +198,7 @@
     <!-- U14 Reports -->
     <section id="tab-reports" class="panel" style="display:none">
       <h2>Export Attendance Report</h2>
-      <form id="report-form" class="row row--compact">
+      <form id="report-form" class="row form-stacked">
         <label>Course
           <select id="report-course">
             <option value="">All courses</option>

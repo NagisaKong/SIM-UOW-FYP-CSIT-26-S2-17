@@ -127,7 +127,6 @@ document.getElementById("sess-status").addEventListener("change", loadSessions);
 // ──────────────────────────────────────────────────────────────
 // U12 Live tab
 // ──────────────────────────────────────────────────────────────
-let liveTimer = null;
 
 async function loadLiveSessions() {
   const res = await api("/teacher/sessions?status=active");
@@ -204,15 +203,6 @@ async function loadEarlyLeft(id) {
 
 document.getElementById("live-session").addEventListener("change", refreshLive);
 document.getElementById("live-refresh").addEventListener("click", refreshLive);
-document.getElementById("live-auto").addEventListener("change", e => {
-  if (e.target.checked) {
-    if (!liveTimer) liveTimer = setInterval(refreshLive, 5000);
-  } else if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-  }
-});
-liveTimer = setInterval(refreshLive, 5000);
 
 // ──────────────────────────────────────────────────────────────
 // U03 Classroom camera scan (teacher-activated detection windows)

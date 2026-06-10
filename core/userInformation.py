@@ -186,6 +186,12 @@ class UserInformation:
                 raise HTTPException(400, "Missing target_account_id")
             return self._set_user_status(target_account_id, (payload or {}).get("status", ""))
 
+        if action == "update":
+            self._require_admin(actor)
+            if target_account_id is None:
+                raise HTTPException(400, "Missing target_account_id")
+            return self._update_user(target_account_id, payload or {})
+
         if action == "view_self":
             return {
                 "account_id": actor.account_id,
@@ -264,6 +270,58 @@ class UserInformation:
                 raise
         return {"success": True, "account_id": account_id}
 
+    def _update_user(self, account_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        """Admin edit of a user's basic details (U20). Only the supplied
+        fields are changed: email (user_account) and full_name / student_id /
+        staff_id (personal_info)."""
+        email = payload.get("email")
+        full_name = payload.get("full_name")
+        student_id = payload.get("student_id")
+        staff_id = payload.get("staff_id")
+        with psycopg2.connect(self.database_url) as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1 FROM user_account WHERE accountid = %s", (account_id,))
+                    if not cur.fetchone():
+                        raise HTTPException(404, "User not found")
+                    if email:
+                        cur.execute(
+                            "SELECT 1 FROM user_account WHERE email = %s AND accountid <> %s",
+                            (email, account_id),
+                        )
+                        if cur.fetchone():
+                            raise HTTPException(409, f"Email {email} is already in use")
+                        cur.execute(
+                            "UPDATE user_account SET email = %s WHERE accountid = %s",
+                            (email, account_id),
+                        )
+                    cur.execute("SELECT 1 FROM personal_info WHERE accountid = %s", (account_id,))
+                    if cur.fetchone():
+                        sets, params = [], []
+                        if full_name is not None:
+                            sets.append("full_name = %s"); params.append(full_name)
+                        if student_id is not None:
+                            sets.append("student_id = %s"); params.append(student_id or None)
+                        if staff_id is not None:
+                            sets.append("staff_id = %s"); params.append(staff_id or None)
+                        if sets:
+                            params.append(account_id)
+                            cur.execute(
+                                f"UPDATE personal_info SET {', '.join(sets)} WHERE accountid = %s",
+                                params,
+                            )
+                    else:
+                        cur.execute(
+                            """INSERT INTO personal_info (accountid, full_name, student_id, staff_id)
+                               VALUES (%s, %s, %s, %s)""",
+                            (account_id, full_name, student_id or None, staff_id or None),
+                        )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {"success": True}
+
     def _set_user_status(self, account_id: int, status: str) -> dict[str, Any]:
         if status not in ("active", "inactive"):
             raise HTTPException(400, "Invalid status")
@@ -323,6 +381,13 @@ class StatusBody(BaseModel):
     status: str
 
 
+class UpdateUserBody(BaseModel):
+    email: str | None = None
+    full_name: str | None = None
+    student_id: str | None = None
+    staff_id: str | None = None
+
+
 @router.get("/admin/users")
 def admin_list_users(
     request: Request,
@@ -349,4 +414,16 @@ def admin_set_user_status(
 ):
     return _svc(request).manageInformation(
         "set_status", user, body.model_dump(), target_account_id=account_id
+    )
+
+
+@router.patch("/admin/users/{account_id}")
+def admin_update_user(
+    account_id: int,
+    body: UpdateUserBody,
+    request: Request,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    return _svc(request).manageInformation(
+        "update", user, body.model_dump(exclude_none=True), target_account_id=account_id
     )

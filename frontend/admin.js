@@ -10,15 +10,60 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
-    if (btn.dataset.tab === "faces") loadFaces();
+    if (btn.dataset.tab === "users") showUsersView("list");
+    if (btn.dataset.tab === "faces") { showFacesView("list"); loadFaces(); }
     if (btn.dataset.tab === "courses") loadCourses();
     if (btn.dataset.tab === "attendance") loadAttendance();
     if (btn.dataset.tab === "appeals") loadAppeals();
     if (btn.dataset.tab === "att-config") loadAttConfig();
     if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "ai-config") {}
+
+    // Reveal the Courses sub-menu (slides out) only on the Courses tab.
+    const submenu = document.getElementById("courses-submenu");
+    if (btn.dataset.tab === "courses") {
+      showCourseSub("manage");
+      // Defer so the display flip registers before the slide transition runs.
+      requestAnimationFrame(() => submenu.classList.add("open"));
+    } else {
+      submenu.classList.remove("open");
+    }
   });
 });
+
+// ── Courses sub-pages ─────────────────────────────────────────
+function showCourseSub(name) {
+  document.querySelectorAll("#courses-submenu .submenu-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.sub === name));
+  ["manage", "enroll", "sessions"].forEach(sub => {
+    document.getElementById("sub-" + sub).hidden = sub !== name;
+  });
+  // Always land on the course list, not the Add Course form.
+  if (name === "manage") showManageView("list");
+}
+document.querySelectorAll("#courses-submenu .submenu-btn").forEach(btn => {
+  btn.addEventListener("click", () => showCourseSub(btn.dataset.sub));
+});
+
+// ── Users / Faces list ↔ form sub-pages ───────────────────────
+function showUsersView(view) {
+  document.getElementById("users-list").hidden = view !== "list";
+  document.getElementById("users-form-view").hidden = view !== "form";
+  document.getElementById("users-detail-view").hidden = view !== "detail";
+  document.getElementById("users-edit-view").hidden = view !== "edit";
+}
+function showFacesView(view) {
+  document.getElementById("faces-list").hidden = view !== "list";
+  document.getElementById("faces-form-view").hidden = view !== "form";
+}
+document.getElementById("show-user-form").addEventListener("click", () => showUsersView("form"));
+document.getElementById("back-users").addEventListener("click", () => showUsersView("list"));
+document.getElementById("show-face-form").addEventListener("click", () => {
+  document.getElementById("face-user-search").value = "";
+  loadFaceUserOptions();
+  showFacesView("form");
+});
+document.getElementById("back-faces").addEventListener("click", () => showFacesView("list"));
 
 // ── Users ─────────────────────────────────────────────────────
 async function loadUsers() {
@@ -35,25 +80,112 @@ async function loadUsers() {
       el("td", {}, u.status),
       el("td", {},
         el("button", {
-          class: u.status === "active" ? "danger" : "secondary",
-          onclick: async () => {
-            await api(`/admin/users/${u.accountid}/status`, {
-              method: "PATCH",
-              headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({status: u.status === "active" ? "inactive" : "active"}),
-            });
-            loadUsers();
-          }
-        }, u.status === "active" ? "Deactivate" : "Activate"),
-        u.role === "student" ? el("button", {
+          onclick: () => openUserDetail(u),
+        }, "View"),
+        el("button", {
           class: "secondary",
           style: "margin-left:6px",
-          onclick: () => promptUploadFace(u.accountid),
-        }, "Upload Face") : null,
+          onclick: () => openUserEdit(u),
+        }, "Edit"),
       ),
     ));
   }
 }
+
+// ── User View (detail) / Edit sub-pages ───────────────────────
+let currentUser = null;  // the user being viewed/edited
+
+function openUserDetail(u) {
+  currentUser = u;
+  document.getElementById("detail-id").textContent = u.accountid;
+  document.getElementById("detail-email").textContent = u.email || "-";
+  document.getElementById("detail-role").textContent = u.role || "-";
+  document.getElementById("detail-name").textContent = u.full_name || "-";
+  document.getElementById("detail-student").textContent = u.student_id || "-";
+  document.getElementById("detail-staff").textContent = u.staff_id || "-";
+  document.getElementById("detail-status").textContent = u.status || "-";
+  document.getElementById("detail-created").textContent = u.created_at ? fmt(u.created_at) : "-";
+  showUsersView("detail");
+}
+
+function openUserEdit(u) {
+  currentUser = u;
+  const f = document.getElementById("user-edit-form");
+  f.email.value = u.email || "";
+  f.full_name.value = u.full_name || "";
+  f.student_id.value = u.student_id || "";
+  f.staff_id.value = u.staff_id || "";
+  document.getElementById("user-edit-msg").textContent = "";
+  // Student-only controls
+  document.getElementById("edit-uploadface-btn").style.display =
+    u.role === "student" ? "" : "none";
+  f.student_id.closest("label").style.display = u.role === "student" ? "" : "none";
+  f.staff_id.closest("label").style.display = u.role === "student" ? "none" : "";
+  // Deactivate / Activate label reflects current status
+  const da = document.getElementById("edit-deactivate-btn");
+  const active = u.status === "active";
+  da.textContent = active ? "Deactivate" : "Activate";
+  da.className = active ? "danger" : "secondary";
+  showUsersView("edit");
+}
+
+document.getElementById("detail-edit-btn").addEventListener("click", () => {
+  if (currentUser) openUserEdit(currentUser);
+});
+document.getElementById("back-users-detail").addEventListener("click", () => showUsersView("list"));
+document.getElementById("back-users-edit").addEventListener("click", () => {
+  if (currentUser) openUserDetail(currentUser); else showUsersView("list");
+});
+
+// Save edited details
+document.getElementById("user-edit-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) return;
+  const msg = document.getElementById("user-edit-msg");
+  msg.textContent = "";
+  const fd = Object.fromEntries(new FormData(e.target));
+  const payload = {email: fd.email, full_name: fd.full_name};
+  if (currentUser.role === "student") payload.student_id = fd.student_id;
+  else payload.staff_id = fd.staff_id;
+  try {
+    await api(`/admin/users/${currentUser.accountid}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    Object.assign(currentUser, payload);  // keep local copy in sync
+    await loadUsers();
+    openUserDetail(currentUser);  // return to the (updated) detail view
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
+
+// Deactivate / Activate from the edit page
+document.getElementById("edit-deactivate-btn").addEventListener("click", async () => {
+  if (!currentUser) return;
+  const target = currentUser.status === "active" ? "inactive" : "active";
+  try {
+    await api(`/admin/users/${currentUser.accountid}/status`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({status: target}),
+    });
+    currentUser.status = target;
+    await loadUsers();
+    openUserEdit(currentUser);  // refresh button label
+  } catch (ex) {
+    const msg = document.getElementById("user-edit-msg");
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
+
+// Upload Face from the edit page (students only)
+document.getElementById("edit-uploadface-btn").addEventListener("click", () => {
+  if (currentUser) promptUploadFace(currentUser.accountid);
+});
 
 // U19/U21 — admin uploads a facial image for an existing student.
 function promptUploadFace(accountId) {
@@ -149,10 +281,58 @@ document.getElementById("user-form").addEventListener("submit", async (e) => {
     msg.textContent = "Created.";
     formEl.reset();
     loadUsers();
+    showUsersView("list");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
   }
+});
+
+// Face DB: searchable student picker (find by name or email) ----
+let faceUserList = [];
+
+async function loadFaceUserOptions() {
+  try {
+    const res = await api("/admin/users");
+    faceUserList = (res.users || []).filter(u => u.role === "student");
+  } catch {
+    faceUserList = [];
+  }
+  renderFaceUserOptions("");
+}
+
+function renderFaceUserOptions(query) {
+  const sel = document.getElementById("face-account-select");
+  if (!sel) return;
+  const q = query.trim().toLowerCase();
+  const matches = faceUserList.filter(u =>
+    !q ||
+    (u.full_name || "").toLowerCase().includes(q) ||
+    (u.email || "").toLowerCase().includes(q) ||
+    (u.student_id || "").toLowerCase().includes(q));
+  const prev = sel.value;
+  sel.innerHTML = "";
+  if (!matches.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = q ? "No matching student" : "No students found";
+    opt.disabled = true;
+    sel.append(opt);
+    return;
+  }
+  for (const u of matches) {
+    const opt = document.createElement("option");
+    opt.value = u.accountid;
+    const id = u.student_id || ("acc#" + u.accountid);
+    opt.textContent = `${u.full_name || u.email} — ${u.email} (${id})`;
+    sel.append(opt);
+  }
+  // Keep the previous selection if it is still in the filtered list.
+  if (matches.some(u => String(u.accountid) === prev)) sel.value = prev;
+}
+
+document.getElementById("face-user-search").addEventListener("input", (e) => {
+  renderFaceUserOptions(e.target.value);
 });
 
 // Face DB direct upload form
@@ -165,7 +345,7 @@ document.getElementById("face-upload-form").addEventListener("submit", async (e)
     const res = await api("/register", {method: "POST", body: fd});
     msg.style.color = res.success ? "#16a34a" : "#c0392b";
     msg.textContent = res.message || (res.success ? "Face registered." : "Failed.");
-    if (res.success) { e.target.reset(); loadFaces(); }
+    if (res.success) { e.target.reset(); loadFaces(); showFacesView("list"); }
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -186,6 +366,7 @@ async function loadCourses() {
       el("td", {}, c.courseid),
       el("td", {}, c.course_code),
       el("td", {}, c.course_name),
+      el("td", {}, c.teacher_name || "—"),
       el("td", {}, c.status || "active"),
       el("td", {}, c.active_sessions ?? 0),
       el("td", {}, el("button", {
@@ -397,21 +578,53 @@ document.getElementById("enrollment-form").addEventListener("submit", async (e) 
   }
 });
 
+// ── Manage Courses: list ↔ Add Course form sub-pages ──────────
+function showManageView(view) {
+  document.getElementById("courses-list").hidden = view !== "list";
+  document.getElementById("courses-form-view").hidden = view !== "form";
+}
+
+async function loadTeacherOptions() {
+  const sel = document.getElementById("course-teacher-select");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— No teacher —</option>';
+  try {
+    const res = await api("/admin/users");
+    for (const u of res.users || []) {
+      if (u.role !== "teacher" || u.status !== "active") continue;
+      const opt = document.createElement("option");
+      opt.value = u.accountid;
+      opt.textContent = `${u.full_name || u.email} (${u.email})`;
+      sel.append(opt);
+    }
+  } catch { /* leave just the "no teacher" option */ }
+  sel.value = prev;
+}
+
+document.getElementById("show-course-form").addEventListener("click", () => {
+  document.getElementById("course-msg").textContent = "";
+  loadTeacherOptions();
+  showManageView("form");
+});
+document.getElementById("back-courses").addEventListener("click", () => showManageView("list"));
+
 document.getElementById("course-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("course-msg");
   msg.textContent = "";
   const fd = Object.fromEntries(new FormData(e.target));
+  const payload = {course_code: fd.course_code, course_name: fd.course_name};
+  if (fd.teacher_id) payload.teacher_id = parseInt(fd.teacher_id);
   try {
     await api("/admin/courses", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(fd),
+      body: JSON.stringify(payload),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = "Course created.";
     e.target.reset();
     loadCourses();
+    showManageView("list");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

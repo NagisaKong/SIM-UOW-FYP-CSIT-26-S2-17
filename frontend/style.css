@@ -263,6 +263,7 @@ header.topbar #who { font-size: 13px; }
   border-radius: var(--radius-sm);
   font-weight: 500;
   white-space: nowrap;
+  transition: background .2s ease, color .2s ease;
 }
 .tabs button.tab-btn:hover {
   background: var(--c-surface-2);
@@ -283,6 +284,75 @@ header.topbar #who { font-size: 13px; }
   border-radius: 2px;
 }
 
+/* Slide-out sub-menu (e.g. Courses sub-pages) ------------------ */
+.submenu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  margin-bottom: 0;
+  padding: 0;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-10px);
+  transition: max-height .35s ease, opacity .3s ease,
+              transform .35s ease, margin-bottom .35s ease;
+}
+.submenu.open {
+  max-height: 120px;
+  margin-bottom: 1.25rem;
+  opacity: 1;
+  transform: translateY(0);
+}
+.submenu .submenu-btn {
+  flex: none;
+  padding: .5rem .95rem;
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+  border: 1px solid var(--c-border-2);
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.submenu .submenu-btn:hover {
+  color: var(--c-text);
+  border-color: var(--c-primary);
+}
+.submenu .submenu-btn.active {
+  background: var(--c-primary);
+  color: #fff;
+  border-color: var(--c-primary);
+}
+/* Animate the active sub-page into view */
+.subpage {
+  animation: subpage-in .3s ease;
+}
+/* List-view header: title on the left, "+ create" action on the right */
+.subpage-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.subpage-head h2 { margin: 0; }
+.subpage-head { margin-bottom: 1rem; }
+/* Read-only key/value detail table (e.g. User Details) */
+.kv-table { max-width: 520px; }
+.kv-table th {
+  width: 150px;
+  text-align: left;
+  color: var(--c-text-2);
+  font-weight: 600;
+  background: var(--c-surface-2);
+}
+.subpage-head + table { margin-top: 0; }
+.back-btn { margin-bottom: .5rem; }
+@keyframes subpage-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* Layout ------------------------------------------------------- */
 main {
   max-width: 1200px;
@@ -297,8 +367,19 @@ main {
   border: 1px solid var(--c-border-2);
   box-shadow: var(--shadow-sm);
   margin-bottom: 1.25rem;
+  /* Smooth fade/slide-in whenever a panel becomes visible (tab switch). */
+  animation: panel-in .32s ease;
 }
 .panel + .panel { margin-top: 0; }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Respect users who prefer reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .panel, .subpage { animation: none; }
+  .submenu { transition: none; }
+}
 .panel h2 {
   display: flex;
   align-items: center;
@@ -323,6 +404,18 @@ main {
   align-items: end;
 }
 .row--compact { grid-template-columns: repeat(auto-fit, minmax(180px, 220px)); max-width: 480px; }
+
+/* Stacked single-column form (one field per row, typical sign-up layout) */
+.form-stacked {
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  max-width: 420px;
+}
+.form-stacked > button {
+  align-self: stretch;
+  width: 100%;
+  margin-top: .25rem;
+}
 
 /* Uniform control height inside form rows */
 .row label,
@@ -377,6 +470,10 @@ form > button {
 form > button[type="submit"] { margin-top: 1rem; }
 
 /* Tables ------------------------------------------------------- */
+/* Space between a filter row and the table it controls. */
+.row + table,
+.row + p + table { margin-top: 1rem; }
+
 table {
   width: 100%;
   border-collapse: separate;
@@ -449,8 +546,9 @@ img.preview { background: var(--c-surface-2); }
 /* Analytics charts: clean light surface (override the dark camera canvas
    background) so the line/doughnut charts and their legends are readable. */
 #ana-trend, #ana-breakdown,
-#sana-trend, #sana-breakdown {
-  background: var(--c-surface);
+#sana-trend, #sana-breakdown,
+#monthly-chart {
+  background: #ffffff;
   border-color: var(--c-border);
 }
 

@@ -81,10 +81,12 @@ CREATE TABLE IF NOT EXISTS COURSE (
     course_code VARCHAR(20)     NOT NULL UNIQUE,
     course_name VARCHAR(255)    NOT NULL,
     status      VARCHAR(20)     NOT NULL DEFAULT 'active'
-                                CHECK (status IN ('active', 'inactive'))
+                                CHECK (status IN ('active', 'inactive')),
+    teacher_id  INTEGER         REFERENCES USER_ACCOUNT(AccountID)  -- assigned lecturer (U26)
 );
 
 ALTER TABLE COURSE ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE COURSE ADD COLUMN IF NOT EXISTS teacher_id INTEGER REFERENCES USER_ACCOUNT(AccountID);
 
 -- ------------------------------------------------------------
 -- 6. COURSE_ENROLLMENT  (student ↔ course membership)

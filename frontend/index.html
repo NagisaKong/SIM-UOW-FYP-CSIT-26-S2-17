@@ -10,7 +10,7 @@
 
 <body class="centered">
   <form id="login-form" class="card">
-    <h1>Face Recognition Attendance System Demo</h1>
+    <h1>Face Recognition Attendance System</h1>
     <p class="muted">FYP-26-S2-17</p>
     <label>Email<input type="email" name="email" required value="alice@demo.local"></label>
     <label>Password<input type="password" name="password" required value="demo123"></label>
@@ -35,7 +35,7 @@
         });
         localStorage.setItem("token", res.token);
         localStorage.setItem("user", JSON.stringify(res.user));
-        const dest = {admin: "admin.html", teacher: "teacher.html", student: "student.html"};
+        const dest = { admin: "admin.html", teacher: "teacher.html", student: "student.html" };
         location.href = dest[res.user.role] || "student.html";
       } catch (ex) {
         err.textContent = ex.message;

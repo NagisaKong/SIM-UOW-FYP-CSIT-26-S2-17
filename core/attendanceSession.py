@@ -401,6 +401,7 @@ def teacher_course_roster(
 class CourseBody(BaseModel):
     course_code: str
     course_name: str
+    teacher_id: int | None = None
 
 
 class CourseStatusBody(BaseModel):
@@ -431,9 +432,13 @@ def admin_list_courses(
     sql = """
         SELECT c.courseid, c.course_code, c.course_name,
                COALESCE(c.status,'active') AS status,
+               c.teacher_id,
+               tpi.full_name AS teacher_name,
                (SELECT COUNT(*) FROM attendance_session s
                   WHERE s.courseid = c.courseid AND s.status='active') AS active_sessions
-        FROM course c ORDER BY c.courseid
+        FROM course c
+        LEFT JOIN personal_info tpi ON tpi.accountid = c.teacher_id
+        ORDER BY c.courseid
     """
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
         cur.execute(sql)
@@ -449,9 +454,21 @@ def admin_create_course(
         cur.execute("SELECT 1 FROM course WHERE course_code = %s", (body.course_code,))
         if cur.fetchone():
             raise HTTPException(409, f"Course code {body.course_code} already exists")
+        if body.teacher_id is not None:
+            cur.execute(
+                """SELECT up.role FROM user_account ua
+                   JOIN user_profiles up ON up.profileid = ua.profileid
+                   WHERE ua.accountid = %s""",
+                (body.teacher_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Assigned teacher account not found")
+            if row[0] != "teacher":
+                raise HTTPException(400, "Assigned account must be a teacher")
         cur.execute(
-            "INSERT INTO course (course_code, course_name) VALUES (%s, %s) RETURNING courseid",
-            (body.course_code, body.course_name),
+            "INSERT INTO course (course_code, course_name, teacher_id) VALUES (%s, %s, %s) RETURNING courseid",
+            (body.course_code, body.course_name, body.teacher_id),
         )
         course_id = cur.fetchone()[0]
     return {"success": True, "course_id": course_id}
