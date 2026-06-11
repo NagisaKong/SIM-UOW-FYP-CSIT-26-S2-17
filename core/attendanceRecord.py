@@ -237,21 +237,30 @@ class AttendanceRecord:
         }
 
     # ── U04 viewAttendanceRecord ─────────────────────────────────────
+    # Returns every session of the courses the student is enrolled in,
+    # including upcoming (not-yet-started) ones that have no attendance
+    # record yet — those come back with status / record_id = NULL so the
+    # UI can show them and disable the appeal action.
     def viewAttendanceRecord(self, account_id: int) -> dict[str, Any]:
         sql = """
             SELECT r.attendancerecordid AS record_id,
-                   r.attendancesessionid AS session_id,
-                   s.start_time, s.end_time,
+                   s.attendancesessionid AS session_id,
+                   s.start_time, s.end_time, s.status AS session_status,
                    c.course_code, c.course_name,
                    r.status, r.marked_at
-            FROM attendance_record r
-            JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+            FROM attendance_session s
             JOIN course c ON c.courseid = s.courseid
-            WHERE r.accountid = %s
+            JOIN course_enrollment e
+              ON e.courseid = s.courseid
+             AND e.accountid = %s
+             AND e.status = 'active'
+            LEFT JOIN attendance_record r
+              ON r.attendancesessionid = s.attendancesessionid
+             AND r.accountid = %s
             ORDER BY s.start_time DESC
         """
         with _db(self.database_url) as c, c.cursor() as cur:
-            cur.execute(sql, (account_id,))
+            cur.execute(sql, (account_id, account_id))
             return {"success": True, "records": _dict_rows(cur)}
 
     # ── U27 viewStudentGraphicalReport ───────────────────────────────

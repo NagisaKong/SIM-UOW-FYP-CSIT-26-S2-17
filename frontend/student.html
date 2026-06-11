@@ -18,8 +18,7 @@
   </header>
 
   <div class="tabs">
-    <button class="tab-btn active" data-tab="checkin">Check-in</button>
-    <button class="tab-btn" data-tab="attendance">My Attendance</button>
+    <button class="tab-btn active" data-tab="attendance">My Attendance</button>
     <button class="tab-btn" data-tab="analytics">Analytics</button>
     <button class="tab-btn" data-tab="appeals">My Appeals</button>
     <button class="tab-btn" data-tab="leave">Leave Application</button>
@@ -27,44 +26,8 @@
   </div>
 
   <main>
-    <section id="tab-checkin" class="panel">
-      <h2>Automated Attendance Check-in</h2>
-
-      <p class="muted">
-        Note:
-      </p>
-
-      <ol class="checkin-steps muted small">
-        <li>Enter and remain in the classroom as normal. No login or manual check-in action is required.</li>
-        <li>When the teacher triggers a check-in, the classroom camera captures the faces present and the
-          system runs the SCRFD&nbsp;+&nbsp;ArcFace recognition pipeline against the registered facial registry.</li>
-        <li>The system records your attendance status for that check-in automatically.</li>
-        <li>The teacher may trigger additional check-ins during the session to verify continued presence;
-          your status is updated accordingly.</li>
-        <li>At the end of the session the system assigns your final status (Present / Late / Left Early / Absent).
-          You can review it under <b>My Attendance</b>, and you will be notified if marked Late or Absent.</li>
-      </ol>
-
-      <div class="row" style="align-items:center;justify-content:space-between;margin-top:1rem">
-        <h3 style="margin:0">Live Session Status</h3>
-        <button id="checkin-refresh" class="secondary small">Refresh</button>
-      </div>
-      <p class="muted small" id="checkin-msg"></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Course</th>
-            <th>Started</th>
-            <th>Session</th>
-            <th>My Status</th>
-          </tr>
-        </thead>
-        <tbody id="active-body"></tbody>
-      </table>
-    </section>
-
-    <section id="tab-attendance" class="panel" style="display:none">
-      <h2>Attendance Records</h2>
+    <section id="tab-attendance" class="panel">
+      <h2>My Attendance</h2>
 
       <div id="monthly-summary" class="row" style="align-items:center;gap:1.5rem;margin-bottom:1rem">
         <div style="max-width:260px">
@@ -92,17 +55,6 @@
         </thead>
         <tbody id="att-body"></tbody>
       </table>
-
-      <!-- U07 Session details -->
-      <div id="session-detail" style="display:none;margin-top:1.5rem;padding:1rem;
-           border:1px solid var(--c-border);border-radius:var(--radius);background:var(--c-surface-2)">
-        <div class="row" style="align-items:center;justify-content:space-between">
-          <h3 style="margin:0">Session Details</h3>
-          <button class="secondary small"
-            onclick="document.getElementById('session-detail').style.display='none'">Close</button>
-        </div>
-        <div id="session-detail-body" style="margin-top:.5rem"></div>
-      </div>
     </section>
 
     <section id="tab-analytics" class="panel" style="display:none">
@@ -124,56 +76,80 @@
     </section>
 
     <section id="tab-appeals" class="panel" style="display:none">
-      <h2>Submit Appeal</h2>
-      <form id="appeal-form">
-        <label>Record ID<input type="number" name="record_id" required></label>
-        <label>Reason<textarea name="reason" rows="3" required></textarea></label>
-        <button type="submit">Submit</button>
+      <!-- List view (default) -->
+      <div id="appeals-list" class="subpage">
+        <div class="subpage-head">
+          <h2>My Appeals</h2>
+          <button type="button" id="show-appeal-form">+ Submit Appeal</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Record</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="appeal-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Submit Appeal form view -->
+      <div id="appeals-form-view" class="subpage" hidden>
+        <button type="button" class="secondary back-btn" id="back-appeals">← Back to Appeals</button>
+        <h2 style="margin-top:1rem">Submit Appeal</h2>
+        <form id="appeal-form" class="row form-stacked">
+          <label>Session to appeal
+            <select name="record_id" id="appeal-record" required></select>
+          </label>
+          <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+          <button type="submit">Submit</button>
+        </form>
         <p id="appeal-msg" class="error"></p>
-      </form>
-      <h3 style="margin-top:1.5rem">My Appeals</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Record</th>
-            <th>Reason</th>
-            <th>Status</th>
-            <th>Created</th>
-          </tr>
-        </thead>
-        <tbody id="appeal-body"></tbody>
-      </table>
+      </div>
     </section>
 
     <section id="tab-leave" class="panel" style="display:none">
-      <h2>Submit Leave Application</h2>
-      <p class="muted small">Request leave for an upcoming (scheduled) session. A reason is required;
-        supporting documentation is optional. The assigned teacher will review it.</p>
-      <form id="leave-form">
-        <label>Upcoming session
-          <select name="session_id" id="leave-session" required></select>
-        </label>
-        <label>Reason<textarea name="reason" rows="3" required></textarea></label>
-        <label>Supporting document URL (optional)
-          <input type="url" name="supporting_doc_url" placeholder="https://...">
-        </label>
-        <button type="submit">Submit Application</button>
+      <!-- List view (default) -->
+      <div id="leave-list" class="subpage">
+        <div class="subpage-head">
+          <h2>My Leave Applications</h2>
+          <button type="button" id="show-leave-form">+ New Leave Application</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Start</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Reviewer Comment</th>
+            </tr>
+          </thead>
+          <tbody id="leave-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Submit Leave Application form view -->
+      <div id="leave-form-view" class="subpage" hidden>
+        <button type="button" class="secondary back-btn" id="back-leave">← Back to Leave Applications</button>
+        <h2 style="margin-top:1rem">Submit Leave Application</h2>
+        <p class="muted small">Request leave for an upcoming (scheduled) session. A reason is required;
+          supporting documentation is optional. The assigned teacher will review it.</p>
+        <form id="leave-form" class="row form-stacked">
+          <label>Upcoming session
+            <select name="session_id" id="leave-session" required></select>
+          </label>
+          <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+          <label>Supporting document URL (optional)
+            <input type="url" name="supporting_doc_url" placeholder="https://...">
+          </label>
+          <button type="submit">Submit Application</button>
+        </form>
         <p id="leave-msg" class="error"></p>
-      </form>
-      <h3 style="margin-top:1.5rem">My Leave Applications</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Session</th>
-            <th>Start</th>
-            <th>Reason</th>
-            <th>Status</th>
-            <th>Reviewer Comment</th>
-          </tr>
-        </thead>
-        <tbody id="leave-body"></tbody>
-      </table>
+      </div>
     </section>
 
     <section id="tab-face" class="panel" style="display:none">

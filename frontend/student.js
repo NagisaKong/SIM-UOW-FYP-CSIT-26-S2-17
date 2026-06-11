@@ -6,12 +6,13 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["checkin", "attendance", "analytics", "appeals", "leave", "face"].forEach(name => {
+    ["attendance", "analytics", "appeals", "leave", "face"].forEach(name => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
     if (btn.dataset.tab === "analytics") loadStudentAnalytics();
-    if (btn.dataset.tab === "leave") loadLeave();
+    if (btn.dataset.tab === "appeals") showAppealsView("list");
+    if (btn.dataset.tab === "leave") { showLeaveView("list"); loadLeave(); }
   });
 });
 
@@ -93,38 +94,85 @@ async function loadAttendance() {
       return;
     }
     for (const r of res.records) {
-      body.append(el("tr", {},
+      const tr = el("tr", {},
         el("td", {}, `${r.course_code} — ${r.course_name}`),
         el("td", {}, fmt(r.start_time)),
-        el("td", {}, el("span", {class: "status-" + r.status}, r.status)),
-        el("td", {}, fmt(r.marked_at)),
+        el("td", {}, statusCell(r)),
+        el("td", {}, r.marked_at ? fmt(r.marked_at) : "—"),
         el("td", {},
           el("button", {
             class: "secondary",
-            onclick: () => viewSessionDetail(r.session_id),
+            onclick: () => toggleSessionDetail(tr, r.session_id),
           }, "Details"),
-          el("button", {
-            class: "secondary",
-            onclick: () => {
-              document.querySelector('[data-tab="appeals"]').click();
-              document.querySelector('#appeal-form [name="record_id"]').value = r.record_id;
-            }
-          }, "Appeal"),
+          appealButton(r),
         ),
-      ));
+      );
+      body.append(tr);
     }
   } catch (e) {
     body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
   }
 }
 
-// ── Session details (U07) ─────────────────────────────────────
-async function viewSessionDetail(sessionId) {
-  const box = document.getElementById("session-detail");
-  const bodyEl = document.getElementById("session-detail-body");
-  box.style.display = "";
-  bodyEl.innerHTML = "Loading…";
-  box.scrollIntoView({behavior: "smooth", block: "nearest"});
+// ── Attendance row helpers ────────────────────────────────────
+// Status cell: show the recorded attendance status, or a muted label for
+// sessions that have no record yet (e.g. not-yet-started classes).
+function statusCell(r) {
+  if (r.status) return el("span", {class: "status-" + r.status}, r.status);
+  const labels = {
+    scheduled: "Not started",
+    active: "In progress",
+    cancelled: "Cancelled",
+    ended: "—",
+  };
+  return el("span", {class: "muted"}, labels[r.session_status] || "—");
+}
+
+// Appeal is only available for a finished record where the student was NOT
+// marked present — disabled for upcoming/not-started sessions and for
+// sessions the student already attended (present).
+function appealButton(r) {
+  const appealable = r.record_id != null && r.status && r.status !== "present";
+  const attrs = {class: "secondary"};
+  if (appealable) {
+    attrs.onclick = () => {
+      document.querySelector('[data-tab="appeals"]').click();
+      document.getElementById("appeal-msg").textContent = "";
+      showAppealsView("form");
+      loadAppealableSessions(r.record_id);
+    };
+  } else {
+    attrs.disabled = "";
+  }
+  return el("button", attrs, "Appeal");
+}
+
+// ── Session details (U07) — inline slide-out below the clicked row ─────
+function closeDetailRow(detailTr) {
+  const slide = detailTr.querySelector(".detail-slide");
+  if (!slide) { detailTr.remove(); return; }
+  slide.classList.remove("open");
+  slide.addEventListener("transitionend", () => detailTr.remove(), {once: true});
+}
+
+async function toggleSessionDetail(tr, sessionId) {
+  const next = tr.nextElementSibling;
+  // Clicking again on an already-open row collapses it.
+  if (next && next.classList.contains("detail-row")
+      && next.dataset.for === String(sessionId)) {
+    closeDetailRow(next);
+    return;
+  }
+  // Only one detail open at a time.
+  document.querySelectorAll("#att-body .detail-row").forEach(closeDetailRow);
+
+  const content = el("div", {class: "detail-content"}, "Loading…");
+  const slide = el("div", {class: "detail-slide"}, content);
+  const detailTr = el("tr", {class: "detail-row"}, el("td", {colspan: 5}, slide));
+  detailTr.dataset.for = String(sessionId);
+  tr.after(detailTr);
+  requestAnimationFrame(() => slide.classList.add("open"));
+
   try {
     const res = await api(`/student/sessions/${sessionId}`);
     const s = res.session;
@@ -137,18 +185,62 @@ async function viewSessionDetail(sessionId) {
         ? `<span class="status-${s.attendance_status}">${s.attendance_status}</span>`
         : "—"],
       ["Check-in timestamp", checkedIn ? fmt(s.marked_at)
-        : '<span class="muted">Absent — No check-in recorded</span>'],
+        : '<span class="muted">No check-in recorded</span>'],
     ];
-    bodyEl.innerHTML = rows.map(([k, v]) =>
+    content.innerHTML = rows.map(([k, v]) =>
       `<div style="display:flex;gap:.75rem;padding:.25rem 0;border-bottom:1px solid var(--c-border-2)">
          <div style="min-width:160px;color:var(--c-text-2)">${k}</div><div>${v}</div></div>`
     ).join("");
   } catch (e) {
-    bodyEl.innerHTML = `<span class="error">${e.message}</span>`;
+    content.innerHTML = `<span class="error">${e.message}</span>`;
   }
 }
 
 // ── Appeals ───────────────────────────────────────────────────
+function showAppealsView(view) {
+  document.getElementById("appeals-list").hidden = view !== "list";
+  document.getElementById("appeals-form-view").hidden = view !== "form";
+}
+document.getElementById("show-appeal-form").addEventListener("click", () => {
+  document.getElementById("appeal-msg").textContent = "";
+  showAppealsView("form");
+  loadAppealableSessions();
+});
+document.getElementById("back-appeals").addEventListener("click", () => showAppealsView("list"));
+
+// Populate the appeal form's session dropdown with the student's sessions
+// that can be appealed (have a record and were NOT marked present). If there
+// are none, show a placeholder and disable submission.
+async function loadAppealableSessions(selectedRecordId) {
+  const sel = document.getElementById("appeal-record");
+  const submitBtn = document.querySelector('#appeal-form button[type="submit"]');
+  try {
+    const res = await api("/student/attendance");
+    const records = (res.records || []).filter(
+      r => r.record_id != null && r.status && r.status !== "present");
+    if (!records.length) {
+      sel.innerHTML = '<option value="">No courses available to appeal</option>';
+      sel.disabled = true;
+      submitBtn.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    submitBtn.disabled = false;
+    sel.innerHTML = "";
+    for (const r of records) {
+      const o = document.createElement("option");
+      o.value = r.record_id;
+      o.textContent = `${r.course_code} — ${fmt(r.start_time)} (${r.status})`;
+      sel.appendChild(o);
+    }
+    if (selectedRecordId != null) sel.value = String(selectedRecordId);
+  } catch (e) {
+    sel.innerHTML = `<option value="">${e.message}</option>`;
+    sel.disabled = true;
+    submitBtn.disabled = true;
+  }
+}
+
 document.getElementById("appeal-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("appeal-msg");
@@ -167,6 +259,7 @@ document.getElementById("appeal-form").addEventListener("submit", async (e) => {
     msg.textContent = "Appeal submitted.";
     e.target.reset();
     loadAppeals();
+    showAppealsView("list");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -274,6 +367,16 @@ function renderStudentBreakdown(b) {
 document.getElementById("sana-refresh").addEventListener("click", loadStudentAnalytics);
 
 // ── Leave Application (U28) ───────────────────────────────────
+function showLeaveView(view) {
+  document.getElementById("leave-list").hidden = view !== "list";
+  document.getElementById("leave-form-view").hidden = view !== "form";
+}
+document.getElementById("show-leave-form").addEventListener("click", () => {
+  document.getElementById("leave-msg").textContent = "";
+  showLeaveView("form");
+});
+document.getElementById("back-leave").addEventListener("click", () => showLeaveView("list"));
+
 async function loadLeave() {
   // Populate the upcoming-session dropdown.
   const sel = document.getElementById("leave-session");
@@ -336,6 +439,7 @@ document.getElementById("leave-form").addEventListener("submit", async (e) => {
     msg.textContent = "Leave application submitted.";
     e.target.reset();
     loadMyLeave();
+    showLeaveView("list");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -460,42 +564,5 @@ faceSubmitBtn.addEventListener("click", async () => {
 
 window.addEventListener("pagehide", stopFaceCam);
 
-// ── Automated Check-in: live session status ───────────────────
-// U03: attendance is recorded automatically by the teacher-activated
-// classroom camera scan. The student does not check in manually; this view
-// just shows which of their sessions are currently being scanned and the
-// status the system has recorded for them so far.
-const ciMsg = document.getElementById("checkin-msg");
-
-async function loadActiveSessions() {
-  const body = document.getElementById("active-body");
-  body.innerHTML = "";
-  ciMsg.textContent = "";
-  try {
-    const res = await api("/student/sessions/active");
-    const sessions = res.sessions || [];
-    if (!sessions.length) {
-      body.append(el("tr", {}, el("td", {colspan: 4, class: "muted"},
-        "No class is currently being scanned. Your attendance will be recorded automatically once a teacher starts a session.")));
-      return;
-    }
-    for (const s of sessions) {
-      body.append(el("tr", {},
-        el("td", {}, `${s.course_code} — ${s.course_name}`),
-        el("td", {}, fmt(s.start_time)),
-        el("td", {}, `#${s.session_id}`),
-        el("td", {}, s.my_status
-          ? el("span", {class: "status-" + s.my_status}, s.my_status)
-          : el("span", {class: "muted"}, "awaiting detection")),
-      ));
-    }
-  } catch (e) {
-    body.append(el("tr", {}, el("td", {colspan: 4, class: "error"}, e.message)));
-  }
-}
-
-document.getElementById("checkin-refresh").addEventListener("click", loadActiveSessions);
-
-loadActiveSessions();
 loadAttendance();
 loadAppeals();

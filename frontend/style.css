@@ -227,14 +227,6 @@ header.topbar h1 {
   align-items: center;
   gap: .55rem;
 }
-header.topbar h1::before {
-  content: "";
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--c-primary), var(--c-accent));
-  box-shadow: 0 4px 12px rgba(42, 75, 127, .35);
-}
 header.topbar > div {
   display: flex;
   align-items: center;
@@ -282,6 +274,24 @@ header.topbar #who { font-size: 13px; }
   height: 2px;
   background: var(--c-primary);
   border-radius: 2px;
+}
+/* Incomplete / work-in-progress feature — highlighted yellow so it is
+   visually distinct from finished features. Add the `incomplete` class
+   to any `.tab-btn` to flag the feature as not yet done. */
+.tabs button.tab-btn.incomplete {
+  background: #fde68a;
+  color: #92400e;
+}
+.tabs button.tab-btn.incomplete:hover {
+  background: #fcd34d;
+  color: #78350f;
+}
+.tabs button.tab-btn.incomplete.active {
+  background: #fbbf24;
+  color: #78350f;
+}
+.tabs button.tab-btn.incomplete.active::after {
+  background: #d97706;
 }
 
 /* Slide-out sub-menu (e.g. Courses sub-pages) ------------------ */
@@ -503,6 +513,23 @@ tbody tr { transition: background var(--transition); }
 tbody tr:hover { background: var(--c-surface-2); }
 td button { padding: .35rem .65rem; font-size: 12px; }
 td button + button { margin-left: .35rem; }
+td button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Inline slide-out detail row (e.g. student My Attendance details) */
+.detail-row:hover { background: transparent; }
+.detail-row > td { padding: 0; background: var(--c-surface-2); }
+.detail-slide {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .25s ease;
+}
+.detail-slide.open { grid-template-rows: 1fr; }
+.detail-slide > .detail-content {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 1rem;
+}
+.detail-slide.open > .detail-content { padding: .85rem 1rem; }
 
 /* Status / badges --------------------------------------------- */
 .status-present,

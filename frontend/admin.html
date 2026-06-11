@@ -24,9 +24,9 @@
     <button class="tab-btn" data-tab="attendance">Attendance</button>
     <button class="tab-btn" data-tab="appeals">Appeals</button>
     <button class="tab-btn" data-tab="att-config">Attendance Config</button>
-    <button class="tab-btn" data-tab="ai-config">Model Management</button>
-    <button class="tab-btn" data-tab="ensemble">Ensemble Configuration</button>
-    <button class="tab-btn" data-tab="behaviour">Behaviour Analysis</button>
+    <button class="tab-btn incomplete" data-tab="ai-config">Model Management</button>
+    <button class="tab-btn incomplete" data-tab="ensemble">Ensemble Configuration</button>
+    <button class="tab-btn incomplete" data-tab="behaviour">Behaviour Analysis</button>
   </div>
 
   <main>
@@ -248,41 +248,51 @@
 
       <!-- Sub-page: Class Sessions -->
       <div id="sub-sessions" class="subpage" hidden>
-        <h3>Schedule Class Session</h3>
-        <p class="muted small">Set the date and time for a course session. Students enrolled in the course can check in
-          during the active window.</p>
-        <form id="session-form" class="row">
-          <label>Course
-            <select name="course_id" id="session-course-select" required></select>
-          </label>
-          <label>Start time<input name="start_time" type="datetime-local" required></label>
-          <label>End time<input name="end_time" type="datetime-local"></label>
-          <label>Status
-            <select name="status">
-              <option value="scheduled">scheduled</option>
-              <option value="active">active</option>
-              <option value="ended">ended</option>
-              <option value="cancelled">cancelled</option>
-            </select>
-          </label>
-          <button type="submit">Schedule Session</button>
-        </form>
-        <p id="session-msg" class="error"></p>
+        <!-- List view (default) -->
+        <div id="sessions-list">
+          <div class="subpage-head">
+            <h3>Scheduled Sessions</h3>
+            <button type="button" id="show-session-form">+ Schedule Session</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Course</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+        </div>
 
-        <h3 style="margin-top:1rem">Scheduled Sessions</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Course</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="sessions-body"></tbody>
-        </table>
+        <!-- Schedule Class Session form view -->
+        <div id="sessions-form-view" hidden>
+          <button type="button" class="secondary back-btn" id="back-sessions">← Back to Sessions</button>
+          <h3 style="margin-top:1rem">Schedule Class Session</h3>
+          <p class="muted small">Set the date and time for a course session. Students enrolled in the course can check in
+            during the active window.</p>
+          <form id="session-form" class="row form-stacked">
+            <label>Course
+              <select name="course_id" id="session-course-select" required></select>
+            </label>
+            <label>Start time<input name="start_time" type="datetime-local" required></label>
+            <label>End time<input name="end_time" type="datetime-local"></label>
+            <label>Status
+              <select name="status">
+                <option value="scheduled">scheduled</option>
+                <option value="active">active</option>
+                <option value="ended">ended</option>
+                <option value="cancelled">cancelled</option>
+              </select>
+            </label>
+            <button type="submit">Schedule Session</button>
+          </form>
+          <p id="session-msg" class="error"></p>
+        </div>
       </div>
     </section>
 

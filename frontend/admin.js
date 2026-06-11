@@ -38,8 +38,9 @@ function showCourseSub(name) {
   ["manage", "enroll", "sessions"].forEach(sub => {
     document.getElementById("sub-" + sub).hidden = sub !== name;
   });
-  // Always land on the course list, not the Add Course form.
+  // Always land on the list view, not the add/schedule form.
   if (name === "manage") showManageView("list");
+  if (name === "sessions") showSessionsView("list");
 }
 document.querySelectorAll("#courses-submenu .submenu-btn").forEach(btn => {
   btn.addEventListener("click", () => showCourseSub(btn.dataset.sub));
@@ -522,6 +523,17 @@ async function updateSession(id, patch) {
   } catch (ex) { alert(ex.message); }
 }
 
+// ── Class Sessions: list ↔ Schedule Session form sub-pages ────
+function showSessionsView(view) {
+  document.getElementById("sessions-list").hidden = view !== "list";
+  document.getElementById("sessions-form-view").hidden = view !== "form";
+}
+document.getElementById("show-session-form").addEventListener("click", () => {
+  document.getElementById("session-msg").textContent = "";
+  showSessionsView("form");
+});
+document.getElementById("back-sessions").addEventListener("click", () => showSessionsView("list"));
+
 document.getElementById("session-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("session-msg");
@@ -543,6 +555,7 @@ document.getElementById("session-form").addEventListener("submit", async (e) => 
     msg.textContent = "Session scheduled.";
     e.target.reset();
     loadSessions();
+    showSessionsView("list");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
