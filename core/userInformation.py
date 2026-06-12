@@ -82,13 +82,27 @@ def _decode_token(token: str) -> dict:
 
 
 # ── FastAPI dependencies (public — imported by other core modules) ──
-def get_current_user(authorization: str | None = Header(default=None)) -> CurrentUser:
+def get_current_user(
+    request: Request, authorization: str | None = Header(default=None)
+) -> CurrentUser:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
     data = _decode_token(token)
+    account_id = int(data["sub"])
+    # U20: deactivation must take effect immediately, so a still-valid JWT
+    # is not enough — the account row must exist and be active.
+    with psycopg2.connect(request.app.state.cfg.database_url) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM user_account WHERE accountid = %s", (account_id,)
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="Account no longer exists")
+    if row[0] != "active":
+        raise HTTPException(status_code=403, detail="This account has been deactivated")
     return CurrentUser(
-        account_id=int(data["sub"]),
+        account_id=account_id,
         role=data.get("role", "student"),
         email=data.get("email", ""),
     )
@@ -129,7 +143,8 @@ class UserInformation:
     # Helper used by login — DB lookup + password verify + transparent rehash
     def validateUserAccount(self, email: str, password: str) -> CurrentUser | None:
         sql = """
-            SELECT ua.accountid, up.role, ua.email, ua.password_hash, pi.full_name
+            SELECT ua.accountid, up.role, ua.email, ua.password_hash, pi.full_name,
+                   ua.status
             FROM user_account ua
             JOIN user_profiles up ON up.profileid = ua.profileid
             LEFT JOIN personal_info pi ON pi.accountid = ua.accountid
@@ -141,9 +156,11 @@ class UserInformation:
             row = cur.fetchone()
         if not row:
             return None
-        account_id, role, em, pw_hash, full_name = row
+        account_id, role, em, pw_hash, full_name, status = row
         if not _verify_password(password, pw_hash):
             return None
+        if status != "active":
+            raise HTTPException(status_code=403, detail="This account has been deactivated")
         if _needs_rehash(pw_hash):
             try:
                 with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
@@ -209,7 +226,7 @@ class UserInformation:
 
     def _list_users(self) -> list[dict[str, Any]]:
         sql = """
-            SELECT ua.accountid, ua.email, up.role, up.status,
+            SELECT ua.accountid, ua.email, up.role, ua.status,
                    pi.full_name, pi.student_id, pi.staff_id, ua.created_at
             FROM user_account ua
             JOIN user_profiles up ON up.profileid = ua.profileid
@@ -329,14 +346,12 @@ class UserInformation:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
-                        """
-                        UPDATE user_profiles SET status = %s
-                        WHERE profileid = (
-                            SELECT profileid FROM user_account WHERE accountid = %s
-                        )
-                        """,
+                        "UPDATE user_account SET status = %s, updated_at = NOW() "
+                        "WHERE accountid = %s",
                         (status, account_id),
                     )
+                    if cur.rowcount == 0:
+                        raise HTTPException(404, "User not found")
                 conn.commit()
             except Exception:
                 conn.rollback()

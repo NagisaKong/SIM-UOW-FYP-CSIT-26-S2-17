@@ -26,9 +26,15 @@ CREATE TABLE IF NOT EXISTS USER_ACCOUNT (
     ProfileID     INTEGER         NOT NULL REFERENCES USER_PROFILES(ProfileID),
     email         VARCHAR(255)    NOT NULL UNIQUE,
     password_hash VARCHAR(255)    NOT NULL,
+    -- U20: per-account activate/deactivate switch (USER_PROFILES.status is
+    -- role-wide because all accounts of a role share one profile row).
+    status        VARCHAR(20)     NOT NULL DEFAULT 'active'
+                                  CHECK (status IN ('active', 'inactive')),
     created_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE USER_ACCOUNT ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
 
 CREATE INDEX IF NOT EXISTS idx_user_account_profile ON USER_ACCOUNT(ProfileID);
 
