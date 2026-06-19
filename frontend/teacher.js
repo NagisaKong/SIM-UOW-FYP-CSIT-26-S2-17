@@ -367,11 +367,17 @@ window.addEventListener("pagehide", stopScanCamera);
 // ──────────────────────────────────────────────────────────────
 // U13 Roster tab
 // ──────────────────────────────────────────────────────────────
+// Toggle the roster list ↔ per-student history sub-pages (Admin-style).
+function showRosterView(view) {
+  document.getElementById("roster-list-view").hidden = view !== "list";
+  document.getElementById("roster-detail-view").hidden = view !== "detail";
+}
+
 async function loadRoster() {
   const cid = document.getElementById("roster-course").value;
   const tbody = document.getElementById("roster-body");
   tbody.innerHTML = "";
-  document.getElementById("student-history").style.display = "none";
+  showRosterView("list");
   if (!cid) return;
   const res = await api(`/teacher/courses/${cid}/students`);
   for (const s of res.students || []) {
@@ -390,7 +396,7 @@ async function loadRoster() {
 
 async function viewStudentHistory(accountId, name, courseId) {
   const res = await api(`/teacher/students/${accountId}/attendance?course_id=${courseId}`);
-  document.getElementById("student-history").style.display = "";
+  showRosterView("detail");
   document.getElementById("student-history-title").textContent = `Attendance History — ${name}`;
   const sm = res.summary || {};
   document.getElementById("student-history-summary").textContent =
@@ -411,6 +417,7 @@ async function viewStudentHistory(accountId, name, courseId) {
 }
 
 document.getElementById("roster-course").addEventListener("change", loadRoster);
+document.getElementById("back-roster").addEventListener("click", () => showRosterView("list"));
 
 // ──────────────────────────────────────────────────────────────
 // U30 Analytics tab

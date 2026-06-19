@@ -133,27 +133,34 @@
 
     <!-- U13 Roster + Per-student history -->
     <section id="tab-roster" class="panel" style="display:none">
-      <h2>Class Roster</h2>
-      <div class="row row--compact">
-        <label>Course
-          <select id="roster-course"></select>
-        </label>
+      <!-- list sub-page -->
+      <div id="roster-list-view" class="subpage">
+        <h2>Class Roster</h2>
+        <div class="row row--compact">
+          <label>Course
+            <select id="roster-course"></select>
+          </label>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Student ID</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Attended / Sessions</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="roster-body"></tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Student ID</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Attended / Sessions</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="roster-body"></tbody>
-      </table>
 
-      <div id="student-history" style="display:none;margin-top:1.5rem">
-        <h3 id="student-history-title">Attendance History</h3>
+      <!-- per-student history sub-page -->
+      <div id="roster-detail-view" class="subpage" hidden>
+        <button type="button" class="secondary back-btn" id="back-roster">← Back to Roster</button>
+        <div class="subpage-head" style="margin-top:1rem">
+          <h2 id="student-history-title">Attendance History</h2>
+        </div>
         <p id="student-history-summary" class="small muted"></p>
         <table>
           <thead>
@@ -240,7 +247,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=4"></script>
-  <script src="teacher.js?v=2"></script>
+  <script src="teacher.js?v=3"></script>
 </body>
 
 </html>
