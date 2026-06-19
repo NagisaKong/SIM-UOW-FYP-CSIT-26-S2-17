@@ -47,15 +47,36 @@ import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
-# Preload torch's bundled CUDA/cuDNN DLLs so onnxruntime-gpu can find them.
-# InsightFace (SCRFD + ArcFace) builds its onnxruntime session before torch is
-# otherwise imported; without this, onnxruntime-gpu fails to load cublasLt64_12.dll
-# and silently falls back to CPU. Importing torch here loads those DLLs into the
-# process first, enabling CUDAExecutionProvider. Harmless if torch is CPU-only.
-try:
-    import torch  # noqa: F401
-except ImportError:
-    pass
+# Make the pip-installed NVIDIA CUDA/cuDNN DLLs discoverable by onnxruntime-gpu.
+# InsightFace (SCRFD + ArcFace) builds its onnxruntime session here, which loads
+# onnxruntime_providers_cuda.dll -> cublasLt64_12.dll / cudnn64_9.dll. Those ship
+# in the ``nvidia-*-cu12`` wheels under ``site-packages/nvidia/*/bin`` but are not
+# on the Windows DLL search path by default, so onnxruntime-gpu silently falls
+# back to CPU. Prepend those dirs to PATH before the session is built. No-op when
+# the wheels are absent (CPU-only machines), so this is safe for the whole team.
+def _register_cuda_libs() -> None:
+    import glob
+    import site
+
+    roots = list(site.getsitepackages())
+    if hasattr(site, "getusersitepackages"):
+        roots.append(site.getusersitepackages())
+
+    bin_dirs: list[str] = []
+    for root in roots:
+        bin_dirs += glob.glob(os.path.join(root, "nvidia", "*", "bin"))
+    if not bin_dirs:
+        return
+
+    os.environ["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + os.environ.get("PATH", "")
+    for d in bin_dirs:
+        try:
+            os.add_dll_directory(d)  # type: ignore[attr-defined]  # Windows-only
+        except (AttributeError, OSError):
+            pass
+
+
+_register_cuda_libs()
 
 # Load .env once when this module is imported (was in config.py).
 try:
