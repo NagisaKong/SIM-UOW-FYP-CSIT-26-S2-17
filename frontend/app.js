@@ -1,6 +1,6 @@
 // Shared front-end utilities.
 // Point this at your running FastAPI host:
-const API_BASE = "http://127.0.0.1:8001";
+const API_BASE = "http://127.0.0.1:8000";
 
 function authHeader() {
   const token = localStorage.getItem("token");
