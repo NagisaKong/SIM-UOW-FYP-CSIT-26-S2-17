@@ -20,6 +20,9 @@ _REPO_ROOT = Path(__file__).resolve().parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import os
+
+import psycopg2
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +30,36 @@ from fastapi.middleware.cors import CORSMiddleware
 from core import all_routers
 from core.attendancePipeline import AIConfig, AttendancePipeline
 from core.attendanceSession import purge_expired_recordings
+
+
+# ── Connection timezone patch ─────────────────────────────────────────
+# Supabase's connection pooler (Supavisor) ignores database/role-level
+# `ALTER ... SET timezone` and startup `options`, so pooled sessions always
+# come up as UTC. That makes timestamps render in UTC everywhere they are
+# stringified directly (notification emails, CSV report export, …).
+#
+# A per-session `SET TIME ZONE` is honoured by the pooler, so we wrap
+# psycopg2.connect once here to apply it to every connection the app opens
+# (every module calls psycopg2.connect directly). Configurable via
+# APP_TIMEZONE; defaults to the demo/deployment locale.
+_APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Singapore")
+_orig_pg_connect = psycopg2.connect
+
+
+def _connect_with_timezone(*args, **kwargs):
+    conn = _orig_pg_connect(*args, **kwargs)
+    try:
+        prev_autocommit = conn.autocommit
+        conn.autocommit = True  # make the SET stick at session level
+        with conn.cursor() as cur:
+            cur.execute("SET TIME ZONE %s", (_APP_TIMEZONE,))
+        conn.autocommit = prev_autocommit
+    except Exception as exc:  # noqa: BLE001 — never let tz setup break a connection
+        print(f"[timezone] could not set session tz to {_APP_TIMEZONE}: {exc}")
+    return conn
+
+
+psycopg2.connect = _connect_with_timezone
 
 
 @asynccontextmanager

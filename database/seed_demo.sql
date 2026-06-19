@@ -102,9 +102,9 @@ BEGIN
     INSERT INTO user_account (profileid, email, password_hash, status)
         VALUES (p_teacher, 'ian@demo.local', v_pwd, 'inactive') RETURNING accountid INTO a_ian;
     INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'alice@demo.local', v_pwd, 'active') RETURNING accountid INTO a_alice;
+        VALUES (p_student, 'zyu010@mymail.sim.edu.sg', v_pwd, 'active') RETURNING accountid INTO a_alice;
     INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'bob@demo.local', v_pwd, 'active')   RETURNING accountid INTO a_bob;
+        VALUES (p_student, 'jzhang092@mymail.sim.edu.sg', v_pwd, 'active') RETURNING accountid INTO a_bob;
     INSERT INTO user_account (profileid, email, password_hash, status)
         VALUES (p_student, 'carol@demo.local', v_pwd, 'active') RETURNING accountid INTO a_carol;
     INSERT INTO user_account (profileid, email, password_hash, status)
@@ -122,8 +122,8 @@ BEGIN
         (a_tara,  'Tara Wong',  NULL,     'T00001'),
         (a_tom,   'Tom Chen',   NULL,     'T00002'),
         (a_ian,   'Ian Lee',    NULL,     'T00003'),
-        (a_alice, 'Alice Tan',  'S00001', NULL),
-        (a_bob,   'Bob Lim',    'S00002', NULL),
+        (a_alice, 'yu zhanghao',  'S00001', NULL),
+        (a_bob,   'zhang jiqian', 'S00002', NULL),
         (a_carol, 'Carol Ng',   'S00003', NULL),
         (a_david, 'David Koh',  'S00004', NULL),
         (a_eve,   'Eve Sim',    'S00005', NULL),
