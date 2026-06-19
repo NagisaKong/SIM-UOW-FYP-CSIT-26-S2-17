@@ -385,8 +385,12 @@ def teacher_course_roster(
 ):
     sql = """
         SELECT e.accountid, pi.full_name, pi.student_id, ua.email, e.status,
+               -- Count attendance only within ENDED sessions so the ratio
+               -- stays consistent with the denominator. An in-progress
+               -- (active) session's provisional 'present' must not inflate
+               -- the numerator above the completed-session count.
                COUNT(r.attendancerecordid)
-                 FILTER (WHERE r.status IN ('present','late')) AS attended,
+                 FILTER (WHERE r.status IN ('present','late') AND s.status='ended') AS attended,
                COUNT(s.attendancesessionid)
                  FILTER (WHERE s.status='ended') AS sessions_completed
         FROM course_enrollment e

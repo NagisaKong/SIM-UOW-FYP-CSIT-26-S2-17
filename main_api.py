@@ -6,7 +6,7 @@ router from core/, and starts uvicorn.
 Run:
     python main_api.py
     # or:
-    uvicorn main_api:app --host 127.0.0.1 --port 8001
+    uvicorn main_api:app --host 127.0.0.1 --port 8000
 """
 
 from __future__ import annotations
@@ -123,4 +123,4 @@ for r in all_routers:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

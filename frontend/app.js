@@ -6,7 +6,7 @@
 //   3. window.API_BASE — set it via an inline <script> before app.js if you want
 //      a hard-coded value.
 //   4. Auto: same protocol + hostname as the current page, on the API port below
-//      (default 8001, override with window.API_PORT). Falls back to 127.0.0.1
+//      (default 8000, override with window.API_PORT). Falls back to 127.0.0.1
 //      when opened directly from disk (file://).
 const API_BASE = (() => {
   const fromQuery = new URLSearchParams(location.search).get("api");
@@ -15,7 +15,7 @@ const API_BASE = (() => {
   const override = localStorage.getItem("apiBase") || window.API_BASE;
   if (override) return override.replace(/\/+$/, "");
 
-  const port = window.API_PORT || "8001";
+  const port = window.API_PORT || "8000";
   const host = location.hostname || "127.0.0.1";
   const proto = location.protocol === "file:" ? "http:" : location.protocol;
   return `${proto}//${host}:${port}`;
