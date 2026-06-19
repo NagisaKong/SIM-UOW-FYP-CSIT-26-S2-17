@@ -1,6 +1,25 @@
 // Shared front-end utilities.
-// Point this at your running FastAPI host:
-const API_BASE = "http://127.0.0.1:8000";
+//
+// API base resolution (first match wins):
+//   1. ?api=http://host:port in the URL — saved to localStorage for later visits.
+//   2. localStorage "apiBase" — a previously saved override.
+//   3. window.API_BASE — set it via an inline <script> before app.js if you want
+//      a hard-coded value.
+//   4. Auto: same protocol + hostname as the current page, on the API port below
+//      (default 8000, override with window.API_PORT). Falls back to 127.0.0.1
+//      when opened directly from disk (file://).
+const API_BASE = (() => {
+  const fromQuery = new URLSearchParams(location.search).get("api");
+  if (fromQuery) localStorage.setItem("apiBase", fromQuery.replace(/\/+$/, ""));
+
+  const override = localStorage.getItem("apiBase") || window.API_BASE;
+  if (override) return override.replace(/\/+$/, "");
+
+  const port = window.API_PORT || "8000";
+  const host = location.hostname || "127.0.0.1";
+  const proto = location.protocol === "file:" ? "http:" : location.protocol;
+  return `${proto}//${host}:${port}`;
+})();
 
 function authHeader() {
   const token = localStorage.getItem("token");
