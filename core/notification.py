@@ -93,6 +93,9 @@ class Notification:
                      COUNT(*) AS total
               FROM attendance_record r
               JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+              JOIN course_enrollment e
+                ON e.accountid = r.accountid AND e.courseid = s.courseid
+               AND e.status = 'active'
               WHERE s.status = 'ended'
                 AND NOT EXISTS (
                   SELECT 1 FROM leave_application la
@@ -108,6 +111,7 @@ class Notification:
             FROM per_student ps
             JOIN user_account ua ON ua.accountid = ps.accountid
             LEFT JOIN personal_info pi ON pi.accountid = ps.accountid
+            WHERE ua.status = 'active'
         """
         consec_sql = """
             SELECT r.accountid, COUNT(*) AS streak
@@ -145,6 +149,7 @@ class Notification:
                     FROM user_account ua
                     LEFT JOIN personal_info pi ON pi.accountid = ua.accountid
                     WHERE ua.accountid = ANY(%s)
+                      AND ua.status = 'active'
                     """,
                     (list(streaks.keys()),),
                 )
@@ -183,9 +188,16 @@ class Notification:
             JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             JOIN user_account ua ON ua.accountid = r.accountid
+            -- Only currently-enrolled, active accounts get emailed:
+            -- skip students who have since withdrawn or been deactivated
+            -- (a stale late/absent record must not trigger a notification).
+            JOIN course_enrollment e
+              ON e.accountid = r.accountid AND e.courseid = c.courseid
+             AND e.status = 'active'
             LEFT JOIN personal_info pi ON pi.accountid = r.accountid
             WHERE r.attendancesessionid = %s
               AND r.status IN ('late', 'absent')
+              AND ua.status = 'active'
         """
         with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
             cur.execute(sql, (session_id,))

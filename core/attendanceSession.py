@@ -275,9 +275,16 @@ class AttendanceSession:
             JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             JOIN user_account ua ON ua.accountid = r.accountid
+            -- Only currently-enrolled, active accounts get emailed:
+            -- skip students who have since withdrawn or been deactivated
+            -- (a stale late/absent record must not trigger a notification).
+            JOIN course_enrollment e
+              ON e.accountid = r.accountid AND e.courseid = c.courseid
+             AND e.status = 'active'
             LEFT JOIN personal_info pi ON pi.accountid = r.accountid
             WHERE r.attendancesessionid = %s
               AND r.status IN ('late', 'absent')
+              AND ua.status = 'active'
         """
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(sql, (session_id,))
