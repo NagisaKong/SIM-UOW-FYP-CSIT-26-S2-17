@@ -1,0 +1,21 @@
+# Ruff configuration for FYP-26-S2-17.
+# CI runs `ruff check core main_api.py` — see .github/workflows/ci.yml
+
+line-length = 120
+target-version = "py311"
+
+# Vendored upstream code (NVIDIA StyleGAN3) — keep pristine for upstream sync.
+extend-exclude = [
+    "core/training/dnnlib",
+    "core/training/legacy.py",
+    "core/training/torch_utils",
+]
+
+[lint.per-file-ignores]
+# main_api.py deliberately manipulates sys.path before importing
+# `core.*` so the file can be run as a script (python main_api.py)
+# as well as a module. The imports after that block trigger E402.
+"main_api.py" = ["E402"]
+# synthetic_gen.py manipulates sys.path to import the vendored
+# dnnlib/legacy modules as top-level packages.
+"core/training/synthetic_gen.py" = ["E402"]

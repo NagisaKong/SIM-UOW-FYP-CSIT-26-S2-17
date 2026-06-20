@@ -14,8 +14,6 @@ Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace a
 
 ## Team
 
-12345
-
 | Name | Role |
 |------|------|
 | YU, ZHANGHAO | Project Leader / Producer |
@@ -71,7 +69,7 @@ Classroom Camera (Browser Fullscreen)
 | Database | PostgreSQL |
 | AI — Detection | SCRFD (InsightFace), MTCNN |
 | AI — Recognition | ArcFace (InsightFace), FaceNet |
-| AI — Enhancement | GAN (Super-Resolution / Image Enhancement) |
+| AI — Enhancement | StyleGAN / StarGAN, GAN (Super-Resolution / Image Enhancement) |
 | Image Processing | OpenCV |
 | Deployment | Docker, Vercel (frontend), Railway (backend) |
 | CI/CD | GitHub Actions |
@@ -81,14 +79,49 @@ Classroom Camera (Browser Fullscreen)
 ## Project Structure
 
 ```
-FYP-26-S2-17/
-├── frontend/          # React web application
-├── backend/           # FastAPI REST API
-├── ai/                # AI pipeline (detection, recognition, GAN, ensemble)
-├── database/          # Schema and migrations
-├── .github/workflows/ # CI/CD pipelines
-├── docker-compose.yml
-└── README.md
+SIM-UOW-FYP-CSIT-26-S2-17/
+│
+├── main_api.py                     # Entry point: FastAPI app + register blueprints + run()
+│
+├── core/
+│   ├── __init__.py                 # Aggregate and export 9 blueprints
+│   │
+│   ├── config.py                   # Shared config (AIConfig, env loading) — not a business class
+│   ├── database_manager.py         # Shared DB utilities (connection pool + pgvector) — not a business class
+│   │
+│   ├── userInformation.py          # Class 1  (U01,U02,U10,U11,U17,U18,U20)
+│   │
+│   ├── attendanceRecord.py         # Class 2  (U03,U04,U12,U13,U16,U27,U30,U34)
+│   │
+│   ├── notification.py             # Class 3  (U05,U29)
+│   │
+│   ├── facialImage.py              # Class 4  (U06,U09,U19,U21)
+│   │
+│   ├── attendanceSession.py        # Class 5  (U07,U15,U26)
+│   │
+│   ├── attendanceAppeal.py         # Class 6  (U08,U28,U31)
+│   │
+│   ├── report.py                   # Class 7  (U14)
+│   │
+│   ├── inClassBehaviour.py         # Class 8  (U32,U33,U35)
+│   │
+│   └── trainConfiguration.py       # Class 9  (U22,U23,U24,U25)
+│
+├── database/
+│   ├── schema.sql
+│   └── seed_demo.sql
+│
+├── frontend/
+│   ├── admin.html / admin.js
+│   ├── teacher.html / teacher.js
+│   ├── student.html / student.js
+│   ├── index.html / app.js
+│   └── style.css
+│
+├── requirements.txt
+├── ruff.toml
+├── demo.bat
+└── README.md / LICENSE / CONTRIBUTING.md
 ```
 
 ---
@@ -98,7 +131,7 @@ FYP-26-S2-17/
 |--------|---------|
 | `main` | Production-ready code, auto-deployed via CD |
 | `develop` | Integration branch for completed features |
-
+| `feature/XXX` | new features, branched from `develop` |
 ---
 
 ## User Roles
@@ -124,7 +157,3 @@ FYP-26-S2-17/
 ## License
 
 This project is developed for academic purposes under CSIT321 at the University of Wollongong (SIM campus). All rights reserved by the project team.
-
-
-
-123
