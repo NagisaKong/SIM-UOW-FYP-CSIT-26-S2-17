@@ -10,17 +10,17 @@
 
 <body class="centered">
   <form id="login-form" class="card">
-    <h1>Face Recognition Attendance System Demo</h1>
+    <h1>Face Recognition Attendance System</h1>
     <p class="muted">FYP-26-S2-17</p>
-    <label>Email<input type="email" name="email" required value="alice@demo.local"></label>
+    <label>Email<input type="email" name="email" required value="admin@demo.local"></label>
     <label>Password<input type="password" name="password" required value="demo123"></label>
     <button type="submit">Login</button>
     <p id="login-error" class="error"></p>
     <p class="muted small">
-      Demo accounts — admin@demo.local, alice@demo.local, bob@demo.local (password: <code>demo123</code>)
+      Demo accounts — admin@demo.local tom@demo.local (password: <code>demo123</code>)
     </p>
   </form>
-  <script src="app.js"></script>
+  <script src="app.js?v=4"></script>
   <script>
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -35,7 +35,8 @@
         });
         localStorage.setItem("token", res.token);
         localStorage.setItem("user", JSON.stringify(res.user));
-        location.href = res.user.role === "admin" ? "admin.html" : "student.html";
+        const dest = { admin: "admin.html", teacher: "teacher.html", student: "student.html" };
+        location.href = dest[res.user.role] || "student.html";
       } catch (ex) {
         err.textContent = ex.message;
       }
