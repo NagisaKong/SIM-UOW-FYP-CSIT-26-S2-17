@@ -21,9 +21,11 @@ from core.userInformation import CurrentUser, require_role
 def _db(database_url: str):
     conn = psycopg2.connect(database_url)
     try:
-        yield conn; conn.commit()
+        yield conn
+        conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -49,13 +51,17 @@ class Report:
     ) -> bytes:
         clauses, params = [], []
         if session_id is not None:
-            clauses.append("s.attendancesessionid = %s"); params.append(session_id)
+            clauses.append("s.attendancesessionid = %s")
+            params.append(session_id)
         if course_id is not None:
-            clauses.append("s.courseid = %s"); params.append(course_id)
+            clauses.append("s.courseid = %s")
+            params.append(course_id)
         if date_from:
-            clauses.append("s.start_time >= %s"); params.append(date_from)
+            clauses.append("s.start_time >= %s")
+            params.append(date_from)
         if date_to:
-            clauses.append("s.start_time <= %s"); params.append(date_to)
+            clauses.append("s.start_time <= %s")
+            params.append(date_to)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = f"""
             SELECT c.course_code, c.course_name,

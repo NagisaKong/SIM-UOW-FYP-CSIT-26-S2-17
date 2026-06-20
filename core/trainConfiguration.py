@@ -32,9 +32,11 @@ from core.userInformation import CurrentUser, require_role
 def _db(database_url: str):
     conn = psycopg2.connect(database_url)
     try:
-        yield conn; conn.commit()
+        yield conn
+        conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

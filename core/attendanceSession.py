@@ -26,9 +26,11 @@ from core.userInformation import CurrentUser, require_role
 def _db(database_url: str):
     conn = psycopg2.connect(database_url)
     try:
-        yield conn; conn.commit()
+        yield conn
+        conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -54,7 +56,8 @@ def purge_expired_recordings(database_url: str) -> dict[str, int]:
             for _rid, path in expired:
                 if path and os.path.isfile(path):
                     with contextlib.suppress(OSError):
-                        os.remove(path); removed_files += 1
+                        os.remove(path)
+                        removed_files += 1
             cur.execute("DELETE FROM session_recording WHERE expires_at < NOW()")
             deleted_rows = cur.rowcount
             # Detection snapshots are only needed while the recording exists.
@@ -357,11 +360,13 @@ def teacher_list_sessions(
 ):
     clauses, params = [], []
     if course_id is not None:
-        clauses.append("s.courseid = %s"); params.append(course_id)
+        clauses.append("s.courseid = %s")
+        params.append(course_id)
     if status:
         if status not in ("scheduled", "active", "ended", "cancelled"):
             raise HTTPException(400, "Invalid status")
-        clauses.append("s.status = %s"); params.append(status)
+        clauses.append("s.status = %s")
+        params.append(status)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     sql = f"""
         SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
@@ -649,13 +654,16 @@ def admin_update_session(
 ):
     fields, params = [], []
     if body.start_time is not None:
-        fields.append("start_time = %s"); params.append(body.start_time)
+        fields.append("start_time = %s")
+        params.append(body.start_time)
     if body.end_time is not None:
-        fields.append("end_time = %s"); params.append(body.end_time)
+        fields.append("end_time = %s")
+        params.append(body.end_time)
     if body.status is not None:
         if body.status not in ("scheduled", "active", "ended", "cancelled"):
             raise HTTPException(400, "Invalid status")
-        fields.append("status = %s"); params.append(body.status)
+        fields.append("status = %s")
+        params.append(body.status)
     if not fields:
         raise HTTPException(400, "No fields to update")
     params.append(session_id)

@@ -271,9 +271,11 @@ class AttendanceRecord:
         clauses = ["r.accountid = %s"]
         params: list[Any] = [account_id]
         if date_from:
-            clauses.append("s.start_time >= %s"); params.append(date_from)
+            clauses.append("s.start_time >= %s")
+            params.append(date_from)
         if date_to:
-            clauses.append("s.start_time <= %s"); params.append(date_to)
+            clauses.append("s.start_time <= %s")
+            params.append(date_to)
         where = " AND ".join(clauses)
         trend_sql = f"""
             SELECT s.start_time::date AS bucket,
@@ -296,7 +298,8 @@ class AttendanceRecord:
             WHERE {where}
         """
         with _db(self.database_url) as c, c.cursor() as cur:
-            cur.execute(trend_sql, params); trend = _dict_rows(cur)
+            cur.execute(trend_sql, params)
+            trend = _dict_rows(cur)
             cur.execute(breakdown_sql, params)
             breakdown = _dict_rows(cur)[0] if cur.description else {}
         for row in trend:
@@ -317,11 +320,14 @@ class AttendanceRecord:
         clauses = ["s.courseid = %s"]
         params: list[Any] = [course_id]
         if date_from:
-            clauses.append("s.start_time >= %s"); params.append(date_from)
+            clauses.append("s.start_time >= %s")
+            params.append(date_from)
         if date_to:
-            clauses.append("s.start_time <= %s"); params.append(date_to)
+            clauses.append("s.start_time <= %s")
+            params.append(date_to)
         if account_id is not None:
-            clauses.append("r.accountid = %s"); params.append(account_id)
+            clauses.append("r.accountid = %s")
+            params.append(account_id)
         where = " AND ".join(clauses)
         trend_sql = f"""
             SELECT s.start_time::date AS bucket,
@@ -344,7 +350,8 @@ class AttendanceRecord:
             WHERE {where}
         """
         with _db(self.database_url) as c, c.cursor() as cur:
-            cur.execute(trend_sql, params); trend = _dict_rows(cur)
+            cur.execute(trend_sql, params)
+            trend = _dict_rows(cur)
             cur.execute(breakdown_sql, params)
             breakdown = _dict_rows(cur)[0] if cur.description else {}
         for row in trend:
@@ -400,7 +407,8 @@ class AttendanceRecord:
         clauses = ["r.accountid = %s"]
         params: list[Any] = [account_id]
         if course_id is not None:
-            clauses.append("s.courseid = %s"); params.append(course_id)
+            clauses.append("s.courseid = %s")
+            params.append(course_id)
         where = " AND ".join(clauses)
         sql = f"""
             SELECT r.attendancerecordid AS record_id,
@@ -499,16 +507,20 @@ class AttendanceRecord:
         # Build a parameterised UPDATE so we only touch the supplied fields.
         sets, params = [], []
         if consecutive_threshold is not None:
-            sets.append("absence_threshold = %s"); params.append(int(consecutive_threshold))
+            sets.append("absence_threshold = %s")
+            params.append(int(consecutive_threshold))
         if minimum_rate is not None:
-            sets.append("minimum_attendance_rate = %s"); params.append(float(minimum_rate))
+            sets.append("minimum_attendance_rate = %s")
+            params.append(float(minimum_rate))
         if late_grace_seconds is not None:
-            sets.append("late_grace_seconds = %s"); params.append(int(late_grace_seconds))
+            sets.append("late_grace_seconds = %s")
+            params.append(int(late_grace_seconds))
         if detection_interval_seconds is not None:
             sets.append("detection_interval_seconds = %s")
             params.append(int(detection_interval_seconds))
         if updated_by is not None:
-            sets.append("updated_by = %s"); params.append(updated_by)
+            sets.append("updated_by = %s")
+            params.append(updated_by)
         if sets:
             sets.append("updated_at = NOW()")
             try:

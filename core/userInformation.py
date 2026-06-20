@@ -316,11 +316,14 @@ class UserInformation:
                     if cur.fetchone():
                         sets, params = [], []
                         if full_name is not None:
-                            sets.append("full_name = %s"); params.append(full_name)
+                            sets.append("full_name = %s")
+                            params.append(full_name)
                         if student_id is not None:
-                            sets.append("student_id = %s"); params.append(student_id or None)
+                            sets.append("student_id = %s")
+                            params.append(student_id or None)
                         if staff_id is not None:
-                            sets.append("staff_id = %s"); params.append(staff_id or None)
+                            sets.append("staff_id = %s")
+                            params.append(staff_id or None)
                         if sets:
                             params.append(account_id)
                             cur.execute(

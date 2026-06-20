@@ -404,9 +404,12 @@ def _normalise(v: np.ndarray) -> np.ndarray:
 def bbox_iou(a: np.ndarray, b: np.ndarray) -> float:
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
-    ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
-    ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
-    iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
     inter = iw * ih
     if inter == 0:
         return 0.0
@@ -769,8 +772,10 @@ class ArcFaceRecognizer:
         h, w = frame.shape[:2]
         pad = 0.2
         bw, bh = x2 - x1, y2 - y1
-        cx1 = max(0, int(x1 - pad * bw)); cy1 = max(0, int(y1 - pad * bh))
-        cx2 = min(w, int(x2 + pad * bw)); cy2 = min(h, int(y2 + pad * bh))
+        cx1 = max(0, int(x1 - pad * bw))
+        cy1 = max(0, int(y1 - pad * bh))
+        cx2 = min(w, int(x2 + pad * bw))
+        cy2 = min(h, int(y2 + pad * bh))
         crop = frame[cy1:cy2, cx1:cx2]
         if crop.size == 0:
             return None
@@ -808,8 +813,10 @@ class FaceNetRecognizer:
         if bw < 20 or bh < 20:
             return None
         pad = 0.1
-        cx1 = max(0, int(x1 - pad * bw)); cy1 = max(0, int(y1 - pad * bh))
-        cx2 = min(w, int(x2 + pad * bw)); cy2 = min(h, int(y2 + pad * bh))
+        cx1 = max(0, int(x1 - pad * bw))
+        cy1 = max(0, int(y1 - pad * bh))
+        cx2 = min(w, int(x2 + pad * bw))
+        cy2 = min(h, int(y2 + pad * bh))
         crop = frame[cy1:cy2, cx1:cx2]
         if crop.size == 0:
             return None

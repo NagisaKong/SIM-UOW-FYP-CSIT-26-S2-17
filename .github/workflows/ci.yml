@@ -29,7 +29,7 @@ jobs:
         run: pip install ruff
 
       - name: Ruff check
-        run: ruff check ai api
+        run: ruff check core main_api.py
 
   # ────────────────────────────────────────────────────────────────
   # 2. Database schema — verify schema.sql applies cleanly
@@ -132,9 +132,9 @@ jobs:
 
       - name: Import smoke test
         run: |
-          python -c "from api.main_api import app; print('FastAPI app OK:', app.title)"
-          python -c "from ai.attendance_pipeline import AttendancePipeline; print('pipeline import OK')"
-          python -c "from ai.database_manager import EmbeddingRepo; import os; EmbeddingRepo(os.environ['DATABASE_URL']).ping(); print('DB ping OK')"
+          python -c "from main_api import app; print('FastAPI app OK:', app.title)"
+          python -c "from core.attendancePipeline import AttendancePipeline; print('pipeline import OK')"
+          python -c "from core.attendancePipeline import EmbeddingRepo; import os; EmbeddingRepo(os.environ['DATABASE_URL']).ping(); print('DB ping OK')"
 
       - name: Run tests
         run: |
