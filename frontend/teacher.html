@@ -6,6 +6,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teacher — FYP Attendance</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* ── Multi-camera classroom scan grid ─────────────────────── */
+    .scan-cams { align-items: flex-start; }
+    .scan-cam-tile {
+      display: flex; flex-direction: column; align-items: center; gap: .2rem;
+    }
+    /* Override the global .camera-frame video rule so several tiles fit. */
+    .camera-frame .scan-cam-video {
+      width: 300px; max-width: 42vw; height: auto; aspect-ratio: 4 / 3;
+      object-fit: cover; background: #0b1020; border-radius: var(--radius, 8px);
+      display: block;
+    }
+    .scan-cam-label {
+      font-size: .72rem; color: var(--c-text-2, #666);
+      max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* ── Camera picker (choose which cameras to scan with) ────── */
+    .scan-cam-picker {
+      width: 100%; max-width: 520px; margin: 0 auto;
+      border: 1px solid var(--c-border-2, #e2e2e2); border-radius: var(--radius, 8px);
+      padding: .6rem .75rem; background: var(--c-surface, #fff);
+    }
+    .scan-cam-picker__head {
+      display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .4rem;
+    }
+    .scan-cam-list { display: flex; flex-direction: column; gap: .3rem; }
+    .scan-cam-pick {
+      display: flex; align-items: center; gap: .45rem; font-size: .85rem; cursor: pointer;
+    }
+    .scan-cam-pick input { margin: 0; }
+    .scan-cam-pick .tag {
+      font-size: .65rem; padding: 1px 5px; border-radius: 4px;
+      background: var(--c-warning-bg, #fff3cd); color: var(--c-warning, #b8860b);
+    }
+  </style>
 </head>
 
 <body>
@@ -79,20 +114,42 @@
           Each snapshot runs SCRFD&nbsp;+&nbsp;ArcFace and records who is present.
           When you finalize, the system assigns each student a final status.
         </p>
-        <div class="camera-stage">
+        <div class="camera-stage camera-stage--wide">
           <div class="camera-frame">
-            <video id="scan-cam" autoplay playsinline muted width="320" height="240"></video>
+            <div id="scan-cams" class="scan-cams"
+                 style="display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;width:100%">
+              <p id="scan-cams-empty" class="muted small" style="margin:0">Camera preview will appear here after you start the scan.</p>
+            </div>
             <canvas id="scan-canvas" width="320" height="240" style="display:none"></canvas>
           </div>
-          <div class="camera-actions">
-            <button id="scan-start">Start Scan</button>
-            <button id="scan-capture" disabled>Capture Snapshot</button>
-            <label class="small"><input type="checkbox" id="scan-auto"> Auto every
-              <input type="number" id="scan-interval" value="15" min="3" max="86400"
-                     style="width:5rem"> s</label>
-            <label class="small"><input type="checkbox" id="scan-countdown-toggle" checked> Show countdown</label>
-            <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
-            <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+
+          <div id="scan-cam-picker" class="scan-cam-picker">
+            <div class="scan-cam-picker__head">
+              <strong class="small">Cameras to use</strong>
+              <button type="button" id="scan-cam-refresh" class="secondary small">Detect cameras</button>
+            </div>
+            <div id="scan-cam-list" class="scan-cam-list">
+              <p class="muted small" style="margin:0">Click “Detect cameras” to list your connected cameras, then tick the ones to use.</p>
+            </div>
+          </div>
+
+          <div class="camera-actions scan-actions"
+               style="display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:.75rem">
+            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+              <button id="scan-start">Start Scan</button>
+              <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
+            </div>
+            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+              <button id="scan-capture" disabled>Capture Snapshot</button>
+              <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+            </div>
+            <div class="scan-actions__col scan-actions__col--checks"
+                 style="display:flex;flex-direction:column;justify-content:center;gap:.5rem">
+              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox" id="scan-auto"> Auto every
+                <input type="number" id="scan-interval" value="15" min="3" max="86400"
+                       style="width:5rem"> s</label>
+              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox" id="scan-countdown-toggle" checked> Show countdown</label>
+            </div>
           </div>
           <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
           <p id="scan-msg" class="small camera-msg"></p>
@@ -247,7 +304,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=4"></script>
-  <script src="teacher.js?v=3"></script>
+  <script src="teacher.js?v=5"></script>
 </body>
 
 </html>

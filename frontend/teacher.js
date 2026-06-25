@@ -207,7 +207,10 @@ document.getElementById("live-refresh").addEventListener("click", refreshLive);
 // ──────────────────────────────────────────────────────────────
 // U03 Classroom camera scan (teacher-activated detection windows)
 // ──────────────────────────────────────────────────────────────
-const scanCam = document.getElementById("scan-cam");
+const scanCamsHost = document.getElementById("scan-cams");
+const scanCamsEmpty = document.getElementById("scan-cams-empty");
+const scanCamList = document.getElementById("scan-cam-list");
+const scanCamRefresh = document.getElementById("scan-cam-refresh");
 const scanCanvas = document.getElementById("scan-canvas");
 const scanStart = document.getElementById("scan-start");
 const scanCapture = document.getElementById("scan-capture");
@@ -218,7 +221,8 @@ const scanInterval = document.getElementById("scan-interval");
 const scanCountdownToggle = document.getElementById("scan-countdown-toggle");
 const scanCountdownEl = document.getElementById("scan-countdown");
 const scanMsg = document.getElementById("scan-msg");
-let scanStream = null;
+// One entry per opened camera: {deviceId, stream, video, label}.
+let scanCams = [];
 let scanTimer = null;
 let scanBusy = false;
 let scanCountdown = 0;
@@ -241,15 +245,103 @@ function currentSessionId() {
 
 function stopScanCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-  if (scanStream) scanStream.getTracks().forEach(t => t.stop());
-  scanStream = null;
-  scanCam.srcObject = null;
+  for (const cam of scanCams) cam.stream.getTracks().forEach(t => t.stop());
+  scanCams = [];
+  scanCamsHost.innerHTML = "";
+  scanCamsHost.append(scanCamsEmpty);
+  scanCamsEmpty.style.display = "";
   scanStart.disabled = false;
   scanCapture.disabled = true;
   scanFinalize.disabled = true;
   scanStop.disabled = true;
   updateCountdownDisplay();
 }
+
+// Cameras whose label looks like a virtual/streaming device — unchecked by
+// default so e.g. OBS Virtual Camera isn't used for attendance unless asked.
+const VIRTUAL_CAM_RE = /\b(obs|virtual|snap|manycam|xsplit|droidcam|ndi)\b/i;
+
+// Probe for camera permission (so labels are exposed), then render a checkbox
+// per connected camera. Returns the number of cameras found.
+async function listScanCameras() {
+  let probe = null;
+  try {
+    probe = await navigator.mediaDevices.getUserMedia({video: true});
+  } catch (e) {
+    scanCamList.innerHTML = "";
+    scanCamList.append(el("p", {class: "error small", style: "margin:0"},
+      "Camera permission denied or no camera found."));
+    return 0;
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d => d.kind === "videoinput");
+  probe.getTracks().forEach(t => t.stop());
+
+  scanCamList.innerHTML = "";
+  if (!cams.length) {
+    scanCamList.append(el("p", {class: "muted small", style: "margin:0"}, "No cameras detected."));
+    return 0;
+  }
+  cams.forEach((cam, i) => {
+    const label = cam.label || `Camera ${i + 1}`;
+    const isVirtual = VIRTUAL_CAM_RE.test(label);
+    const cb = el("input", {type: "checkbox", value: cam.deviceId});
+    cb.checked = !isVirtual; // default: real cameras on, virtual ones off
+    const row = el("label", {class: "scan-cam-pick"},
+      cb, el("span", {}, label),
+      isVirtual ? el("span", {class: "tag"}, "virtual") : null);
+    scanCamList.append(row);
+  });
+  return cams.length;
+}
+
+// deviceIds of the cameras the teacher has ticked.
+function selectedScanCameraIds() {
+  return Array.from(scanCamList.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+}
+
+// Open only the given cameras and show a live tile for each. Returns the
+// number successfully opened.
+async function openSelectedScanCameras(deviceIds) {
+  scanCamsHost.innerHTML = "";
+  scanCams = [];
+  for (let i = 0; i < deviceIds.length; i++) {
+    const deviceId = deviceIds[i];
+    // Recover a friendly label from the picker checkbox, if present.
+    const cb = scanCamList.querySelector(`input[value="${CSS.escape(deviceId)}"]`);
+    const label = (cb && cb.parentElement.querySelector("span")?.textContent) || `Camera ${i + 1}`;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {deviceId: {exact: deviceId}, width: 640, height: 480},
+      });
+      const video = el("video", {autoplay: "", playsinline: "", class: "scan-cam-video"});
+      video.muted = true;
+      video.srcObject = stream;
+      const tile = el("div", {class: "scan-cam-tile"},
+        video, el("span", {class: "scan-cam-label"}, label));
+      scanCamsHost.append(tile);
+      scanCams.push({deviceId, stream, video, label});
+    } catch (e) {
+      // A camera may refuse to open (busy, shared USB bandwidth, etc.) —
+      // skip it but keep opening the rest.
+      console.warn(`Could not open ${label}:`, e);
+    }
+  }
+  return scanCams.length;
+}
+
+scanCamRefresh.addEventListener("click", async () => {
+  scanCamRefresh.disabled = true;
+  scanMsg.style.color = "#555";
+  scanMsg.textContent = "Detecting cameras…";
+  try {
+    const n = await listScanCameras();
+    scanMsg.textContent = n ? `${n} camera${n > 1 ? "s" : ""} found — tick the ones to use.` : "";
+  } finally {
+    scanCamRefresh.disabled = false;
+  }
+});
 
 function updateCountdownDisplay() {
   // Only show while auto-scanning is actively running and the toggle is on.
@@ -266,10 +358,36 @@ scanStart.addEventListener("click", async () => {
     scanMsg.textContent = "Select an active session first.";
     return;
   }
-  scanMsg.textContent = "";
+  // If cameras haven't been detected yet, list them and let the teacher pick
+  // first (so OBS / virtual cams can be excluded) before actually opening.
+  if (!scanCamList.querySelector('input[type="checkbox"]')) {
+    scanMsg.style.color = "#555";
+    scanMsg.textContent = "Detecting cameras…";
+    const n = await listScanCameras();
+    if (n) {
+      scanMsg.style.color = "#555";
+      scanMsg.textContent = "Tick the cameras to use, then press Start Scan again.";
+    }
+    return;
+  }
+  const ids = selectedScanCameraIds();
+  if (!ids.length) {
+    scanMsg.style.color = "#c0392b";
+    scanMsg.textContent = "Select at least one camera to use.";
+    return;
+  }
+  scanMsg.style.color = "#555";
+  scanMsg.textContent = "Opening cameras…";
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
-    scanCam.srcObject = scanStream;
+    const opened = await openSelectedScanCameras(ids);
+    if (opened === 0) {
+      scanMsg.style.color = "#c0392b";
+      scanMsg.textContent = "No camera could be opened.";
+      stopScanCamera();
+      return;
+    }
+    scanMsg.style.color = "#16a34a";
+    scanMsg.textContent = `${opened} camera${opened > 1 ? "s" : ""} ready.`;
     scanStart.disabled = true;
     scanCapture.disabled = false;
     scanFinalize.disabled = false;
@@ -278,34 +396,46 @@ scanStart.addEventListener("click", async () => {
   } catch (e) {
     scanMsg.style.color = "#c0392b";
     scanMsg.textContent = "Unable to open camera: " + e.message;
+    stopScanCamera();
   }
 });
 
+// Grab one frame from a single camera and POST it as a scan snapshot.
+// Each camera's snapshot is an independent, additive presence record, so we
+// simply send one request per camera and let the backend accumulate them.
+async function snapshotOneCamera(cam, sessionId) {
+  const v = cam.video;
+  const w = v.videoWidth || 640, h = v.videoHeight || 480;
+  scanCanvas.width = w; scanCanvas.height = h;
+  scanCanvas.getContext("2d").drawImage(v, 0, 0, w, h);
+  const blob = await new Promise(res => scanCanvas.toBlob(res, "image/jpeg", 0.92));
+  const fd = new FormData();
+  fd.append("file", blob, "snapshot.jpg");
+  return api(`/teacher/sessions/${sessionId}/scan`, {method: "POST", body: fd});
+}
+
 async function captureSnapshot() {
   const id = currentSessionId();
-  if (!scanStream || !id || scanBusy) return;
+  if (!scanCams.length || !id || scanBusy) return;
   scanBusy = true;
-  const w = scanCam.videoWidth || 640, h = scanCam.videoHeight || 480;
-  scanCanvas.width = w; scanCanvas.height = h;
-  scanCanvas.getContext("2d").drawImage(scanCam, 0, 0, w, h);
-  await new Promise(resolve => {
-    scanCanvas.toBlob(async (blob) => {
-      const fd = new FormData();
-      fd.append("file", blob, "snapshot.jpg");
-      try {
-        const res = await api(`/teacher/sessions/${id}/scan`, {method: "POST", body: fd});
-        scanMsg.style.color = "#16a34a";
-        scanMsg.textContent = `✓ ${res.message}`;
-        refreshLive();
-      } catch (ex) {
-        scanMsg.style.color = "#c0392b";
-        scanMsg.textContent = "✗ " + ex.message;
-      } finally {
-        scanBusy = false;
-        resolve();
-      }
-    }, "image/jpeg", 0.92);
-  });
+  let ok = 0, fail = 0;
+  // Sequential: the capture canvas is shared, and it avoids hammering the
+  // backend with N simultaneous uploads.
+  for (const cam of scanCams) {
+    try {
+      await snapshotOneCamera(cam, id);
+      ok++;
+    } catch (ex) {
+      fail++;
+      console.warn(`Scan failed for ${cam.label}:`, ex);
+    }
+  }
+  scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
+  scanMsg.textContent =
+    `Captured ${scanCams.length} camera${scanCams.length > 1 ? "s" : ""}` +
+    ` · ${ok} ok${fail ? `, ${fail} failed` : ""}`;
+  refreshLive();
+  scanBusy = false;
 }
 
 scanCapture.addEventListener("click", captureSnapshot);
@@ -328,7 +458,7 @@ function startAutoSnapshots() {
 }
 
 scanAuto.addEventListener("change", () => {
-  if (scanAuto.checked && scanStream) {
+  if (scanAuto.checked && scanCams.length) {
     startAutoSnapshots();
   } else if (scanTimer) {
     clearInterval(scanTimer); scanTimer = null;
@@ -339,7 +469,7 @@ scanAuto.addEventListener("change", () => {
 scanCountdownToggle.addEventListener("change", updateCountdownDisplay);
 // Restart the cadence if the interval is changed mid-scan.
 scanInterval.addEventListener("change", () => {
-  if (scanAuto.checked && scanStream) startAutoSnapshots();
+  if (scanAuto.checked && scanCams.length) startAutoSnapshots();
 });
 
 scanFinalize.addEventListener("click", async () => {

@@ -83,12 +83,18 @@ function renderMonthlySummary(records) {
 }
 
 // ── Attendance list ───────────────────────────────────────────
+let attRecords = [];
+
 async function loadAttendance() {
   const body = document.getElementById("att-body");
   body.innerHTML = "";
   try {
     const res = await api("/student/attendance");
+    attRecords = res.records || [];
     renderMonthlySummary(res.records || []);
+    if (document.getElementById("att-calendar-view").style.display !== "none") {
+      renderAttCalendar();
+    }
     if (!res.records.length) {
       body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No records yet.")));
       return;
@@ -113,6 +119,140 @@ async function loadAttendance() {
     body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
   }
 }
+
+// ── Attendance calendar view ──────────────────────────────────
+// `calCursor` is the first day of the month currently shown.
+let calCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Map an attendance record to a coloured chip class.
+function calChipClass(r) {
+  if (r.status === "present" || r.status === "late" || r.status === "absent") {
+    return r.status;
+  }
+  return "pending"; // scheduled / active / no record yet
+}
+
+// Bucket records by local calendar day (YYYY-M-D key).
+function recordsByDay() {
+  const map = {};
+  for (const r of attRecords) {
+    if (!r.start_time) continue;
+    const d = new Date(r.start_time);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    (map[key] ||= []).push(r);
+  }
+  return map;
+}
+
+function renderAttCalendar() {
+  const host = document.getElementById("att-calendar-view");
+  host.innerHTML = "";
+  const y = calCursor.getFullYear(), m = calCursor.getMonth();
+  const monthName = calCursor.toLocaleString("en-US", {month: "long", year: "numeric"});
+  const byDay = recordsByDay();
+  const today = new Date();
+
+  // Header with month label + prev/next navigation.
+  const head = el("div", {class: "cal-head"},
+    el("button", {class: "cal-nav", title: "Previous month",
+      onclick: () => { calCursor = new Date(y, m - 1, 1); renderAttCalendar(); }}, "‹"),
+    el("h3", {}, monthName),
+    el("button", {class: "cal-nav", title: "Next month",
+      onclick: () => { calCursor = new Date(y, m + 1, 1); renderAttCalendar(); }}, "›"),
+  );
+
+  const grid = el("div", {class: "cal-grid"});
+  for (const d of DOW) grid.append(el("div", {class: "cal-dow"}, d));
+
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  // Leading blanks so day 1 lands under the right weekday.
+  for (let i = 0; i < firstDow; i++) grid.append(el("div", {class: "cal-cell cal-empty"}));
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const isToday = today.getFullYear() === y && today.getMonth() === m && today.getDate() === day;
+    const cell = el("div", {class: "cal-cell" + (isToday ? " cal-today" : "")},
+      el("div", {class: "cal-date"}, String(day)));
+    const recs = byDay[`${y}-${m}-${day}`] || [];
+    if (recs.length) {
+      const events = el("div", {class: "cal-events"});
+      for (const r of recs) {
+        const status = r.status || r.session_status || "scheduled";
+        const chip = el("div", {
+          class: "cal-chip " + calChipClass(r),
+          title: `${r.course_code} — ${r.course_name}\n${fmt(r.start_time)}\nStatus: ${status}\n(click for details)`,
+          onclick: () => showSessionModal(r.session_id),
+        }, r.course_code || "Class");
+        events.append(chip);
+      }
+      cell.append(events);
+    }
+    grid.append(cell);
+  }
+
+  // Trailing blanks to complete the final week row.
+  const trailing = (7 - ((firstDow + daysInMonth) % 7)) % 7;
+  for (let i = 0; i < trailing; i++) grid.append(el("div", {class: "cal-cell cal-empty"}));
+
+  host.append(el("div", {class: "cal"}, head, grid));
+}
+
+// Session detail popup, opened from a calendar chip. Mirrors the inline
+// detail shown in the list view but as a centred modal.
+async function showSessionModal(sessionId) {
+  const body = el("div", {class: "cal-modal-body"}, "Loading…");
+  const close = () => backdrop.remove();
+  const modal = el("div", {class: "cal-modal", onclick: (e) => e.stopPropagation()},
+    el("div", {class: "cal-modal-head"},
+      el("h3", {}, "Session details"),
+      el("button", {class: "cal-modal-close", title: "Close", onclick: close}, "×"),
+    ),
+    body,
+  );
+  const backdrop = el("div", {class: "cal-modal-backdrop", onclick: close}, modal);
+  document.body.append(backdrop);
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); }
+  });
+
+  try {
+    const res = await api(`/student/sessions/${sessionId}`);
+    const s = res.session;
+    const checkedIn = s.marked_at && s.attendance_status && s.attendance_status !== "absent";
+    const rows = [
+      ["Course", `${s.course_code} — ${s.course_name}`],
+      ["Date & time", `${fmt(s.start_time)}${s.end_time ? " – " + fmt(s.end_time) : ""}`],
+      ["Session status", s.session_status],
+      ["Attendance status", s.attendance_status
+        ? `<span class="status-${s.attendance_status}">${s.attendance_status}</span>`
+        : "—"],
+      ["Check-in timestamp", checkedIn ? fmt(s.marked_at)
+        : '<span class="muted">No check-in recorded</span>'],
+    ];
+    body.innerHTML = rows.map(([k, v]) =>
+      `<div class="cal-modal-row"><div class="k">${k}</div><div>${v}</div></div>`
+    ).join("");
+  } catch (e) {
+    body.innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+// View toggle: List ↔ Calendar.
+function setAttView(view) {
+  const isCal = view === "calendar";
+  document.getElementById("att-list-view").style.display = isCal ? "none" : "";
+  document.getElementById("att-calendar-view").style.display = isCal ? "" : "none";
+  const listBtn = document.getElementById("att-view-list");
+  const calBtn = document.getElementById("att-view-calendar");
+  listBtn.classList.toggle("active", !isCal);
+  listBtn.classList.toggle("secondary", isCal);
+  calBtn.classList.toggle("active", isCal);
+  calBtn.classList.toggle("secondary", !isCal);
+  if (isCal) renderAttCalendar();
+}
+document.getElementById("att-view-list").addEventListener("click", () => setAttView("list"));
+document.getElementById("att-view-calendar").addEventListener("click", () => setAttView("calendar"));
 
 // ── Attendance row helpers ────────────────────────────────────
 // Status cell: show the recorded attendance status, or a muted label for

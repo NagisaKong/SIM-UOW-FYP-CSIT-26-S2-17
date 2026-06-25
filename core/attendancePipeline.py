@@ -392,6 +392,14 @@ class FrameResult:
     detections: list[Detection]
 
 
+class MultipleFacesError(Exception):
+    """Raised during enrolment when more than one face is in the photo."""
+
+    def __init__(self, count: int):
+        self.count = count
+        super().__init__(f"{count} faces detected")
+
+
 # ════════════════════════════════════════════════════════════════════════
 # 5. Pure helpers
 # ════════════════════════════════════════════════════════════════════════
@@ -1026,6 +1034,7 @@ class AttendancePipeline:
 
     def enrol_student(
         self, account_id: int, images: list[np.ndarray],
+        reject_multiple: bool = False,
     ) -> dict[str, int]:
         vectors: dict[str, list[np.ndarray]] = {ARCFACE_MODEL_NAME: []}
         if self._facenet is not None:
@@ -1035,6 +1044,8 @@ class AttendancePipeline:
             scrfd_dets = self._scrfd.detect(frame_in)
             if not scrfd_dets:
                 continue
+            if reject_multiple and len(scrfd_dets) > 1:
+                raise MultipleFacesError(len(scrfd_dets))
             best = max(
                 scrfd_dets,
                 key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),

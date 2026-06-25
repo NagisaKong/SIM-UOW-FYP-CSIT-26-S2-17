@@ -6,6 +6,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Student — FYP Attendance</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* ── Attendance view toggle ───────────────────────────────── */
+    .att-view-toggle { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    .att-view-toggle button.active { font-weight: 600; }
+
+    /* ── Attendance calendar (My Attendance) ──────────────────── */
+    .cal { border: 1px solid var(--c-border-2, #e2e2e2); border-radius: var(--radius, 8px); overflow: hidden; }
+    .cal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--c-danger, #d23b3b); color: #fff; padding: .6rem 1rem;
+    }
+    .cal-head h3 { margin: 0; font-size: 1.1rem; font-weight: 600; color: #fff; }
+    .cal-nav {
+      background: transparent; border: 0; color: #fff; cursor: pointer;
+      font-size: 1.3rem; line-height: 1; padding: .25rem .6rem; border-radius: 4px;
+    }
+    .cal-nav:hover { background: rgba(255,255,255,.18); }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+    .cal-dow {
+      text-align: center; padding: .5rem 0; font-weight: 600;
+      color: var(--c-danger, #d23b3b); border-bottom: 1px solid var(--c-border-2, #e2e2e2);
+    }
+    .cal-cell {
+      min-height: 92px; border-right: 1px solid var(--c-border-2, #eee);
+      border-bottom: 1px solid var(--c-border-2, #eee); padding: .3rem; position: relative;
+    }
+    .cal-cell:nth-child(7n) { border-right: 0; }
+    .cal-cell.cal-empty { background: var(--c-surface-2, #fafafa); }
+    .cal-cell.cal-today { background: #fff7ed; }
+    .cal-date { font-size: .9rem; text-align: right; color: #444; padding: 0 .15rem; }
+    .cal-events { display: flex; flex-direction: column; gap: 3px; margin-top: .25rem; }
+    .cal-chip {
+      font-size: .72rem; font-weight: 600; color: #fff; padding: 2px 6px;
+      border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: default;
+    }
+    .cal-chip.present { background: #6cb33f; }
+    .cal-chip.late    { background: #e3a008; }
+    .cal-chip.absent  { background: #d23b3b; }
+    .cal-chip.pending { background: #9aa0a6; }
+    .cal-chip { cursor: pointer; transition: filter .12s; }
+    .cal-chip:hover { filter: brightness(1.08); }
+
+    /* ── Session detail modal (calendar click) ────────────────── */
+    .cal-modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;
+    }
+    .cal-modal {
+      background: var(--c-surface, #fff); border-radius: var(--radius, 8px);
+      max-width: 440px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,.25); overflow: hidden;
+    }
+    .cal-modal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--c-danger, #d23b3b); color: #fff; padding: .7rem 1rem;
+    }
+    .cal-modal-head h3 { margin: 0; font-size: 1rem; color: #fff; }
+    .cal-modal-close {
+      background: transparent; border: 0; color: #fff; font-size: 1.4rem;
+      line-height: 1; cursor: pointer; padding: 0 .3rem;
+    }
+    .cal-modal-body { padding: 1rem; }
+    .cal-modal-row {
+      display: flex; gap: .75rem; padding: .35rem 0; border-bottom: 1px solid var(--c-border-2, #eee);
+    }
+    .cal-modal-row:last-child { border-bottom: 0; }
+    .cal-modal-row > .k { min-width: 150px; color: var(--c-text-2, #666); }
+    @media (max-width: 640px) {
+      .cal-cell { min-height: 64px; }
+      .cal-dow { font-size: .8rem; }
+      .cal-chip { font-size: .6rem; }
+    }
+  </style>
 </head>
 
 <body>
@@ -43,18 +116,27 @@
         </div>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Course</th>
-            <th>Start</th>
-            <th>Status</th>
-            <th>Marked At</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="att-body"></tbody>
-      </table>
+      <div class="att-view-toggle">
+        <button type="button" id="att-view-calendar" class="active">Calendar</button>
+        <button type="button" id="att-view-list" class="secondary">List</button>
+      </div>
+
+      <div id="att-calendar-view"></div>
+
+      <div id="att-list-view" style="display:none">
+        <table>
+          <thead>
+            <tr>
+              <th>Course</th>
+              <th>Start</th>
+              <th>Status</th>
+              <th>Marked At</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="att-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="tab-analytics" class="panel" style="display:none">
@@ -189,7 +271,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=4"></script>
-  <script src="student.js?v=2"></script>
+  <script src="student.js?v=3"></script>
 </body>
 
 </html>
