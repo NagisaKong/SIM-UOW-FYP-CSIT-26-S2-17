@@ -3,7 +3,8 @@
 -- ============================================================
 -- Goal: keep the key accounts the demo script relies on
 --   (admin@demo.local / tara@demo.local / alice@demo.local /
---    bob@demo.local, all password "demo123") while populating
+--    bob@demo.local, all sharing the password whose Argon2id hash is
+--    injected via the `demo_password_hash` psql variable) while populating
 --   EVERY data state the system can ever produce, so every screen
 --   (Users, Courses, Sessions, Live, Roster, Analytics, Reports,
 --    Appeals, Leave, Face DB, Behaviour) has realistic content.
@@ -32,15 +33,37 @@
 -- This script is fully idempotent: it deletes prior demo rows in
 -- FK-safe order, then re-inserts deterministic data. Safe to re-run.
 --
--- Apply after schema.sql:
+-- Apply after schema.sql. The demo-account password hash is NOT hardcoded:
+-- it must be injected at apply time via the `demo_password_hash` psql
+-- variable, so every deployment chooses its own password.
+--
+--   # 1. generate an Argon2id hash for your chosen demo password:
+--   HASH=$(python -c "from argon2 import PasswordHasher, Type; \
+--     print(PasswordHasher(type=Type.ID, memory_cost=65536, time_cost=3, \
+--     parallelism=4).hash('YOUR_DEMO_PASSWORD'))")
+--
+--   # 2. apply the seed:
 --   psql -f database/schema.sql
---   psql -f database/seed_demo.sql
+--   psql -v demo_password_hash="$HASH" -f database/seed_demo.sql
 -- ============================================================
+
+-- Fail loudly if the password hash variable was not provided.
+\if :{?demo_password_hash}
+\else
+  \echo '>>> ERROR: psql variable `demo_password_hash` is not set.'
+  \echo '>>> Generate an Argon2id hash and re-run with:'
+  \echo '>>>   psql -v demo_password_hash="<argon2id-hash>" -f database/seed_demo.sql'
+  \quit
+\endif
+
+-- Stash the injected hash in a session GUC so the DO block can read it
+-- (psql does not interpolate :variables inside dollar-quoted blocks).
+SELECT set_config('app.demo_password_hash', :'demo_password_hash', false);
 
 DO $seed$
 DECLARE
-    -- Argon2id hash of "demo123"  (m=64MiB, t=3, p=4)
-    v_pwd  TEXT := '$argon2id$v=19$m=65536,t=3,p=4$kcuYsgHPtrS6bcbMLnBV3g$yz7Zr4N8WiPCfId5+d+m03tiB8WYXMFj4aMPGty7ceI';
+    -- Argon2id password hash for all demo accounts, injected at apply time.
+    v_pwd  TEXT := current_setting('app.demo_password_hash');
 
     p_student INT;
     p_teacher INT;
