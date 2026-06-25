@@ -108,6 +108,21 @@ def _env_int(key: str, default: int) -> int:
     return int(v) if v else default
 
 
+def _env_det_size(key: str, default: int) -> tuple[int, int]:
+    """SCRFD detection input size. Accepts a single int (square, e.g. "1280")
+    or "WxH" (e.g. "1280x1280"). Larger = better at detecting small / distant
+    faces, at the cost of more compute per frame."""
+    v = os.getenv(key)
+    if not v:
+        return (default, default)
+    v = v.strip().lower()
+    if "x" in v:
+        w, h = v.split("x", 1)
+        return (int(w), int(h))
+    s = int(v)
+    return (s, s)
+
+
 @dataclass
 class AIConfig:
     """Prototype AI configuration.
@@ -126,7 +141,12 @@ class AIConfig:
     device: str = field(default_factory=lambda: os.getenv("AI_DEVICE", "cpu"))
 
     # ── Detection ───────────────────────────────────────────────────────
-    det_size: tuple[int, int] = (640, 640)
+    # Larger det_size lets SCRFD see smaller / farther faces. Default 1280
+    # (vs the old 640) roughly doubles the usable range for a 1080p camera.
+    # Override with AI_DET_SIZE (e.g. "960", "1280", or "1920x1080").
+    det_size: tuple[int, int] = field(
+        default_factory=lambda: _env_det_size("AI_DET_SIZE", 1280)
+    )
     det_thresh: float = field(default_factory=lambda: _env_float("AI_DET_THRESH", 0.5))
     use_mtcnn: bool = field(default_factory=lambda: _env_bool("AI_USE_MTCNN", True))
 

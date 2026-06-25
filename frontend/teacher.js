@@ -312,8 +312,10 @@ async function openSelectedScanCameras(deviceIds) {
     const cb = scanCamList.querySelector(`input[value="${CSS.escape(deviceId)}"]`);
     const label = (cb && cb.parentElement.querySelector("span")?.textContent) || `Camera ${i + 1}`;
     try {
+      // Request full HD so distant faces keep enough pixels to be detected;
+      // `ideal` lets the browser fall back if the camera can't do 1080p.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {deviceId: {exact: deviceId}, width: 640, height: 480},
+        video: {deviceId: {exact: deviceId}, width: {ideal: 1920}, height: {ideal: 1080}},
       });
       const video = el("video", {autoplay: "", playsinline: "", class: "scan-cam-video"});
       video.muted = true;

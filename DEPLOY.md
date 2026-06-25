@@ -33,6 +33,11 @@ Production stack: **Vercel** (static frontend) + **Railway** (FastAPI backend, C
    AI_USE_FACENET=false
    AI_USE_ENHANCER=false
 
+   # Face detection range (see "Detection range tuning" below)
+   AI_DET_SIZE=1280
+   # AI_DET_THRESH=0.5
+   # AI_ANTISPOOF_MIN_FACE_PX=50
+
    # SMTP (notifications) — copy from local .env
    SMTP_HOST=smtp.gmail.com
    SMTP_PORT=587
@@ -46,6 +51,25 @@ Production stack: **Vercel** (static frontend) + **Railway** (FastAPI backend, C
    `HOST=0.0.0.0`.
 4. Deploy. Confirm the healthcheck at `https://<backend>.railway.app/health`
    returns `{"success": true, ...}`. `/docs` is disabled in production (expected).
+
+### Detection range tuning (far / small faces)
+
+The classroom-scan frontend captures at **1080p**, but detection range is still
+governed by these knobs. Symptom to watch for: faces beyond ~2–3 m stop being
+detected.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `AI_DET_SIZE` | `1280` | SCRFD input size. Bigger = detects smaller/farther faces. Accepts `1280` (square) or `1920x1080`. **Main lever for range.** Larger = slower + more memory. |
+| `AI_DET_THRESH` | `0.5` | Detection confidence cutoff. Lower (e.g. `0.4`) recalls more far/blurry faces, at the cost of more false positives. |
+| `AI_ANTISPOOF_MIN_FACE_PX` | `50` | Faces smaller than this (in pixels) are discarded. Lower (e.g. `30`) keeps more distant faces. |
+
+Guidance:
+- On **CPU**, `AI_DET_SIZE=1280` is ~3–4× slower per frame than the old `640`.
+  If snapshots feel slow, drop to `960`. Since scanning is interval snapshots
+  (not live video), this is usually acceptable.
+- For long rooms (4 m+), prefer a **GPU** (`AI_DEVICE=cuda`, `AI_CTX_ID=0`) so
+  you can run `AI_DET_SIZE=1920` without a big latency hit.
 
 ## 2. Frontend → Vercel
 
