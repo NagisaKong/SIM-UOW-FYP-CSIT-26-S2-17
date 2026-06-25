@@ -29,7 +29,18 @@ from pydantic import BaseModel
 
 
 # ── JWT / hashing config (private) ───────────────────────────────────
-_SECRET_KEY = os.getenv("JWT_SECRET", "fyp-demo-change-me")
+# A weak/known secret lets anyone forge admin tokens. In production we refuse
+# to start unless JWT_SECRET is set to a strong (>=32 char) random value.
+# Generate one with:  python -c "import secrets; print(secrets.token_hex(32))"
+_DEFAULT_SECRET = "fyp-demo-change-me"
+_SECRET_KEY = os.getenv("JWT_SECRET", _DEFAULT_SECRET)
+_IS_PROD = os.getenv("APP_ENV", "development").lower() in {"production", "prod"}
+if _IS_PROD and (_SECRET_KEY == _DEFAULT_SECRET or len(_SECRET_KEY) < 32):
+    raise RuntimeError(
+        "JWT_SECRET must be set to a strong random value (>=32 chars) in "
+        'production. Generate one with: '
+        "python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 _ALGORITHM = "HS256"
 _TOKEN_TTL_HOURS = 12
 _ph = PasswordHasher(type=Type.ID, memory_cost=65536, time_cost=3, parallelism=4)

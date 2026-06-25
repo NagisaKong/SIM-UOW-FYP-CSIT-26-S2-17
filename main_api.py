@@ -78,6 +78,21 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# ── Environment ───────────────────────────────────────────────────────
+# APP_ENV controls production-only hardening (docs exposure, CORS, JWT).
+_IS_PROD = os.getenv("APP_ENV", "development").lower() in {"production", "prod"}
+
+# CORS: never use a wildcard with credentials. Restrict to the frontend
+# origin(s). Configure via ALLOWED_ORIGINS (comma-separated) in production,
+# e.g. "https://your-app.vercel.app". Defaults to the local dev frontend.
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ALLOWED_ORIGINS", "http://127.0.0.1:5500,http://localhost:5500"
+    ).split(",")
+    if o.strip()
+]
+
 app = FastAPI(
     title="SIM-UOW Face Attendance System API",
     description=(
@@ -86,15 +101,44 @@ app = FastAPI(
     ),
     version="3.0.0",
     lifespan=lifespan,
+    # Hide interactive API docs / schema in production to reduce attack surface.
+    docs_url=None if _IS_PROD else "/docs",
+    redoc_url=None if _IS_PROD else "/redoc",
+    openapi_url=None if _IS_PROD else "/openapi.json",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Security response headers ─────────────────────────────────────────
+# Applied to every response. In production we send a strict policy (the API
+# only returns JSON and docs are disabled); in development we relax CSP so
+# the Swagger UI at /docs keeps working.
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    # Stop MIME-sniffing, deny framing (clickjacking), limit referrer leakage,
+    # and disable powerful browser features this API never needs.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if _IS_PROD:
+        # HSTS only over HTTPS (Railway terminates TLS). 1 year + preload.
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains; preload"
+        )
+        # Lock the API down to its own origin; no framing at all.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        )
+    return response
 
 
 @app.get("/")
@@ -123,4 +167,8 @@ for r in all_routers:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Cloud platforms (Railway, etc.) inject the port via $PORT and require
+    # binding to 0.0.0.0. Locally this still defaults to 127.0.0.1:8000.
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
