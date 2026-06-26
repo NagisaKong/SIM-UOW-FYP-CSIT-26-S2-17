@@ -12,6 +12,15 @@
     .scan-cam-tile {
       display: flex; flex-direction: column; align-items: center; gap: .2rem;
     }
+    /* Stage wraps the video + the detection-box overlay canvas. */
+    .scan-cam-stage { position: relative; line-height: 0; }
+    .scan-cam-overlay {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none; border-radius: var(--radius, 8px);
+      /* The global `canvas { background:#0f172a }` rule would otherwise make
+         this overlay opaque and hide the video underneath. */
+      background: transparent !important; border: 0 !important;
+    }
     /* Override the global .camera-frame video rule so several tiles fit. */
     .camera-frame .scan-cam-video {
       width: 300px; max-width: 42vw; height: auto; aspect-ratio: 4 / 3;
@@ -40,6 +49,16 @@
       font-size: .65rem; padding: 1px 5px; border-radius: 4px;
       background: var(--c-warning-bg, #fff3cd); color: var(--c-warning, #b8860b);
     }
+    /* ── Live detection summary (count + names) ───────────────── */
+    .scan-detected { width: 100%; text-align: center; margin-top: .35rem; min-height: 1.2em; }
+    .scan-detected .chip {
+      display: inline-block; font-size: .78rem; margin: 2px;
+      padding: 2px 8px; border-radius: 999px;
+      background: var(--c-success-bg, #e7f6e7); color: var(--c-success, #16a34a);
+    }
+    .scan-detected .count { font-weight: 600; margin-right: .35rem; }
+    .scan-detected .scan-stats { font-weight: 600; margin-bottom: .25rem; }
+    .scan-detected .scan-names { line-height: 1.8; }
   </style>
 </head>
 
@@ -153,6 +172,7 @@
           </div>
           <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
           <p id="scan-msg" class="small camera-msg"></p>
+          <div id="scan-detected" class="scan-detected"></div>
         </div>
       </div>
 
@@ -304,7 +324,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=4"></script>
-  <script src="teacher.js?v=6"></script>
+  <script src="teacher.js?v=13"></script>
 </body>
 
 </html>

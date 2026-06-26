@@ -227,6 +227,12 @@ let scanTimer = null;
 let scanBusy = false;
 let scanCountdown = 0;
 
+// Live box preview (detection-only, no attendance recording).
+let previewTimer = null;
+let previewBusy = false;
+const PREVIEW_INTERVAL_MS = 1000;
+const previewCanvas = document.createElement("canvas"); // off-screen, separate from capture
+
 // Default the auto-snapshot interval to the admin-configured detection
 // interval (U03/U34). Falls back to the input's existing value on error.
 async function loadScanConfig() {
@@ -245,11 +251,14 @@ function currentSessionId() {
 
 function stopScanCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  stopPreviewLoop();
   for (const cam of scanCams) cam.stream.getTracks().forEach(t => t.stop());
   scanCams = [];
   scanCamsHost.innerHTML = "";
   scanCamsHost.append(scanCamsEmpty);
   scanCamsEmpty.style.display = "";
+  const detectedHost = document.getElementById("scan-detected");
+  if (detectedHost) detectedHost.innerHTML = "";
   scanStart.disabled = false;
   scanCapture.disabled = true;
   scanFinalize.disabled = true;
@@ -319,11 +328,16 @@ async function openSelectedScanCameras(deviceIds) {
       });
       const video = el("video", {autoplay: "", playsinline: "", class: "scan-cam-video"});
       video.muted = true;
+      video.setAttribute("muted", "");      // belt-and-suspenders for autoplay
       video.srcObject = stream;
+      const overlay = el("canvas", {class: "scan-cam-overlay"});
+      const stage = el("div", {class: "scan-cam-stage"}, video, overlay);
       const tile = el("div", {class: "scan-cam-tile"},
-        video, el("span", {class: "scan-cam-label"}, label));
+        stage, el("span", {class: "scan-cam-label"}, label));
       scanCamsHost.append(tile);
-      scanCams.push({deviceId, stream, video, label});
+      // Autoplay can fail to kick in for srcObject streams; start it explicitly.
+      video.play().catch(err => console.warn(`video.play() failed for ${label}:`, err));
+      scanCams.push({deviceId, stream, video, overlay, label});
     } catch (e) {
       // A camera may refuse to open (busy, shared USB bandwidth, etc.) —
       // skip it but keep opening the rest.
@@ -394,6 +408,7 @@ scanStart.addEventListener("click", async () => {
     scanCapture.disabled = false;
     scanFinalize.disabled = false;
     scanStop.disabled = false;
+    startPreviewLoop(); // real-time boxes
     if (scanAuto.checked) startAutoSnapshots();
   } catch (e) {
     scanMsg.style.color = "#c0392b";
@@ -416,22 +431,77 @@ async function snapshotOneCamera(cam, sessionId) {
   return api(`/teacher/sessions/${sessionId}/scan`, {method: "POST", body: fd});
 }
 
+// Draw the detected face boxes returned for one camera onto its overlay.
+// Box coords are in the uploaded frame's pixels; the canvas is sized to the
+// frame so CSS scales it onto the displayed video automatically.
+function drawScanBoxes(cam, res) {
+  const overlay = cam.overlay;
+  if (!overlay) return;
+  const fw = res.frame_width || cam.video.videoWidth || 1280;
+  const fh = res.frame_height || cam.video.videoHeight || 720;
+  overlay.width = fw; overlay.height = fh;
+  const ctx = overlay.getContext("2d");
+  ctx.clearRect(0, 0, fw, fh);
+  const fontPx = Math.max(16, Math.round(fw / 45));
+  ctx.lineWidth = Math.max(2, Math.round(fw / 350));
+  ctx.font = `bold ${fontPx}px sans-serif`;
+  ctx.textBaseline = "alphabetic";
+  for (const b of (res.boxes || [])) {
+    const [x1, y1, x2, y2] = b.bbox;
+    const color = b.recognised ? "#16a34a" : "#e3a008";
+    ctx.strokeStyle = color;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    const text = b.recognised ? `${b.label} ${b.score}` : "Unknown";
+    const tw = ctx.measureText(text).width;
+    const ty = y1 > fontPx + 4 ? y1 : y2 + fontPx + 4; // keep label on-screen
+    ctx.fillStyle = color;
+    ctx.fillRect(x1, ty - fontPx - 2, tw + 10, fontPx + 6);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(text, x1 + 5, ty);
+  }
+}
+
+// Render the "Detected N: name1, name2…" summary from the union of all
+// cameras' recognised students in the latest snapshot cycle.
+function renderScanDetected(map, totalFaces) {
+  const host = document.getElementById("scan-detected");
+  host.innerHTML = "";
+  // Stats line: total faces in frame vs. recognised students.
+  host.append(el("div", {class: "scan-stats small"},
+    `Faces in frame: ${totalFaces} · Recognised: ${map.size}`));
+  if (!map.size) {
+    host.append(el("div", {class: "muted small"}, "No students recognised."));
+    return;
+  }
+  const names = el("div", {class: "scan-names"});
+  for (const name of map.values()) names.append(el("span", {class: "chip"}, name));
+  host.append(names);
+}
+
 async function captureSnapshot() {
   const id = currentSessionId();
   if (!scanCams.length || !id || scanBusy) return;
   scanBusy = true;
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0, totalFaces = 0;
+  const detected = new Map(); // account_id -> display name (union across cameras)
   // Sequential: the capture canvas is shared, and it avoids hammering the
   // backend with N simultaneous uploads.
   for (const cam of scanCams) {
     try {
-      await snapshotOneCamera(cam, id);
+      const res = await snapshotOneCamera(cam, id);
+      drawScanBoxes(cam, res);
+      totalFaces += res.faces_in_frame || (res.boxes ? res.boxes.length : 0);
+      for (const d of (res.detected || [])) {
+        detected.set(d.account_id, d.full_name || d.student_id || `acc#${d.account_id}`);
+      }
       ok++;
     } catch (ex) {
       fail++;
+      if (cam.overlay) cam.overlay.getContext("2d").clearRect(0, 0, cam.overlay.width, cam.overlay.height);
       console.warn(`Scan failed for ${cam.label}:`, ex);
     }
   }
+  renderScanDetected(detected, totalFaces);
   scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
   scanMsg.textContent =
     `Captured ${scanCams.length} camera${scanCams.length > 1 ? "s" : ""}` +
@@ -441,6 +511,55 @@ async function captureSnapshot() {
 }
 
 scanCapture.addEventListener("click", captureSnapshot);
+
+// ── Live box preview ──────────────────────────────────────────
+// Polls a detection-only endpoint per camera and redraws the boxes, giving a
+// near-real-time overlay without writing any attendance rows.
+async function previewOneCamera(cam) {
+  const v = cam.video;
+  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+  previewCanvas.width = w; previewCanvas.height = h;
+  previewCanvas.getContext("2d").drawImage(v, 0, 0, w, h);
+  const blob = await new Promise(r => previewCanvas.toBlob(r, "image/jpeg", 0.7));
+  const fd = new FormData();
+  fd.append("file", blob, "preview.jpg");
+  return api("/teacher/preview-detect", {method: "POST", body: fd});
+}
+
+async function previewTick() {
+  if (previewBusy || !scanCams.length) return;
+  previewBusy = true;
+  const detected = new Map(); // label -> name (deduped across cameras)
+  let totalFaces = 0;
+  for (const cam of scanCams) {
+    try {
+      const res = await previewOneCamera(cam);
+      drawScanBoxes(cam, res);
+      totalFaces += res.faces_in_frame || 0;
+      for (const b of (res.boxes || [])) {
+        if (b.recognised) detected.set(b.label, b.label);
+      }
+    } catch (e) {
+      // Transient errors (busy model, network) — skip this round silently.
+    }
+  }
+  renderScanDetected(detected, totalFaces);
+  previewBusy = false;
+}
+
+function startPreviewLoop() {
+  stopPreviewLoop();
+  const loop = async () => {
+    await previewTick();
+    if (scanCams.length) previewTimer = setTimeout(loop, PREVIEW_INTERVAL_MS);
+  };
+  previewTimer = setTimeout(loop, 300);
+}
+
+function stopPreviewLoop() {
+  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+  previewBusy = false;
+}
 
 function startAutoSnapshots() {
   if (scanTimer) clearInterval(scanTimer);

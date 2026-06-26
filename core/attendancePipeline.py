@@ -123,6 +123,39 @@ def _env_det_size(key: str, default: int) -> tuple[int, int]:
     return (s, s)
 
 
+def _env_tiles(key: str, default: tuple[int, int]) -> tuple[int, int]:
+    """Detection tiling grid. "2x2" = 2 cols × 2 rows; a single int "2" = 2x2.
+    1x1 (default) disables tiling."""
+    v = os.getenv(key)
+    if not v:
+        return default
+    v = v.strip().lower()
+    if "x" in v:
+        c, r = v.split("x", 1)
+        return (max(1, int(c)), max(1, int(r)))
+    n = max(1, int(v))
+    return (n, n)
+
+
+def _onnx_providers(ctx_id: int) -> list[str]:
+    """ONNX Runtime execution providers for InsightFace. ctx_id >= 0 requests
+    GPU: prefer CUDA with CPU fallback, but only if the installed runtime
+    actually exposes CUDA — a CPU-only `onnxruntime` wheel will not, so we fall
+    back to CPU rather than silently pretending to use the GPU."""
+    if ctx_id < 0:
+        return ["CPUExecutionProvider"]
+    try:
+        import onnxruntime as ort
+        avail = set(ort.get_available_providers())
+    except Exception:
+        return ["CPUExecutionProvider"]
+    providers = []
+    if "CUDAExecutionProvider" in avail:
+        providers.append("CUDAExecutionProvider")
+    providers.append("CPUExecutionProvider")
+    return providers
+
+
 @dataclass
 class AIConfig:
     """Prototype AI configuration.
@@ -149,6 +182,16 @@ class AIConfig:
     )
     det_thresh: float = field(default_factory=lambda: _env_float("AI_DET_THRESH", 0.5))
     use_mtcnn: bool = field(default_factory=lambda: _env_bool("AI_USE_MTCNN", True))
+    # Tiled detection for long range: split each frame into cols×rows tiles and
+    # run the detector on each, so distant (small) faces become large enough to
+    # detect. Multiplies detection compute by cols*rows. "2x2" ≈ doubles range.
+    # Default 1x1 = off (keeps CPU deployments fast). Set AI_DETECT_TILES=2x2.
+    detect_tiles: tuple[int, int] = field(
+        default_factory=lambda: _env_tiles("AI_DETECT_TILES", (1, 1))
+    )
+    detect_tile_overlap: float = field(
+        default_factory=lambda: _env_float("AI_DETECT_TILE_OVERLAP", 0.15)
+    )
 
     # ── Recognition ─────────────────────────────────────────────────────
     arcface_threshold: float = field(
@@ -697,34 +740,84 @@ def maybe_enhance(
 # ════════════════════════════════════════════════════════════════════════
 # 7. Detectors
 # ════════════════════════════════════════════════════════════════════════
+def _build_face_analysis(cfg: AIConfig):
+    """Construct the shared InsightFace app (SCRFD detection + ArcFace
+    recognition) with explicit providers, and log which device each model
+    actually runs on so a CPU-only onnxruntime install can't hide as 'GPU'."""
+    from insightface.app import FaceAnalysis  # deferred
+
+    providers = _onnx_providers(cfg.ctx_id)
+    app = FaceAnalysis(
+        name="buffalo_l",
+        allowed_modules=["detection", "recognition"],
+        providers=providers,
+    )
+    app.prepare(ctx_id=cfg.ctx_id, det_size=cfg.det_size, det_thresh=cfg.det_thresh)
+    try:
+        active = {
+            task: m.session.get_providers()[0]
+            for task, m in app.models.items()
+            if getattr(m, "session", None) is not None
+        }
+        on_gpu = any("CUDA" in p for p in active.values())
+        print(f"[insightface] ctx_id={cfg.ctx_id} requested={providers} "
+              f"active={active} -> {'GPU' if on_gpu else 'CPU'}")
+        if cfg.ctx_id >= 0 and not on_gpu:
+            print("[insightface] WARNING: GPU requested but running on CPU. "
+                  "Install onnxruntime-gpu (and a matching CUDA/cuDNN) — the "
+                  "plain `onnxruntime` wheel is CPU-only.")
+    except Exception:
+        pass
+    return app
+
+
 class ScrfdDetector:
     name = "scrfd"
 
     def __init__(self, cfg: AIConfig, shared_app=None):
-        if shared_app is None:
-            from insightface.app import FaceAnalysis  # deferred
+        self.app = shared_app if shared_app is not None else _build_face_analysis(cfg)
 
-            self.app = FaceAnalysis(
-                name="buffalo_l",
-                allowed_modules=["detection", "recognition"],
-            )
-            self.app.prepare(
-                ctx_id=cfg.ctx_id, det_size=cfg.det_size,
-                det_thresh=cfg.det_thresh,
-            )
-        else:
-            self.app = shared_app
+    @staticmethod
+    def _to_detection(f, ox: int = 0, oy: int = 0) -> Detection:
+        """Wrap an InsightFace face as a Detection, shifting bbox/kps by the
+        tile origin (ox, oy) so tiled coords map back to the full frame. The
+        face's `raw.normed_embedding` is alignment-invariant, so recognition
+        still works from a tile crop."""
+        bbox = f.bbox.astype(int).copy()
+        bbox[0] += ox; bbox[1] += oy; bbox[2] += ox; bbox[3] += oy
+        kps = None
+        if getattr(f, "kps", None) is not None:
+            kps = np.asarray(f.kps, dtype=float).copy()
+            kps[:, 0] += ox; kps[:, 1] += oy
+        return Detection(bbox=bbox, det_score=float(f.det_score),
+                         kps=kps, source="scrfd", raw=f)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
-        faces = self.app.get(frame)
+        return [self._to_detection(f) for f in self.app.get(frame)]
+
+    def detect_tiled(
+        self, frame: np.ndarray, cols: int = 1, rows: int = 1, overlap: float = 0.15,
+    ) -> list[Detection]:
+        """Run detection on a cols×rows grid of (overlapping) tiles and merge.
+        Overlapping tiles avoid missing faces straddling a tile boundary;
+        duplicate detections are deduplicated later by fuse_detections."""
+        if cols <= 1 and rows <= 1:
+            return self.detect(frame)
+        h, w = frame.shape[:2]
+        tw, th = w / cols, h / rows
+        ox_pad, oy_pad = int(tw * overlap), int(th * overlap)
         out: list[Detection] = []
-        for f in faces:
-            out.append(Detection(
-                bbox=f.bbox.astype(int),
-                det_score=float(f.det_score),
-                kps=np.asarray(f.kps) if getattr(f, "kps", None) is not None else None,
-                source="scrfd", raw=f,
-            ))
+        for r in range(rows):
+            for c in range(cols):
+                x0 = max(0, int(c * tw) - ox_pad)
+                y0 = max(0, int(r * th) - oy_pad)
+                x1 = min(w, int((c + 1) * tw) + ox_pad)
+                y1 = min(h, int((r + 1) * th) + oy_pad)
+                tile = frame[y0:y1, x0:x1]
+                if tile.size == 0:
+                    continue
+                for f in self.app.get(tile):
+                    out.append(self._to_detection(f, x0, y0))
         return out
 
 
@@ -780,16 +873,7 @@ class ArcFaceRecognizer:
 
     def __init__(self, cfg: AIConfig, shared_app=None):
         if shared_app is None:
-            from insightface.app import FaceAnalysis  # deferred
-
-            self.app = FaceAnalysis(
-                name="buffalo_l",
-                allowed_modules=["detection", "recognition"],
-            )
-            self.app.prepare(
-                ctx_id=cfg.ctx_id, det_size=cfg.det_size,
-                det_thresh=cfg.det_thresh,
-            )
+            self.app = _build_face_analysis(cfg)
         else:
             self.app = shared_app
 
@@ -1030,7 +1114,10 @@ class AttendancePipeline:
 
     def process_frame(self, frame: np.ndarray) -> FrameResult:
         frame_in, was_enhanced = maybe_enhance(frame, self.enhancer, self.cfg)
-        scrfd_dets = self._scrfd.detect(frame_in)
+        cols, rows = self.cfg.detect_tiles
+        scrfd_dets = self._scrfd.detect_tiled(
+            frame_in, cols, rows, self.cfg.detect_tile_overlap,
+        )
         mtcnn_dets = self._mtcnn.detect(frame_in) if self._mtcnn is not None else []
         min_px = self.cfg.anti_spoof_min_face_px
         dets = [

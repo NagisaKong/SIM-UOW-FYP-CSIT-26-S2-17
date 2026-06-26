@@ -225,6 +225,22 @@ class AttendanceRecord:
                     })
 
         faces = len(result.predictions)
+
+        # Per-face boxes (for the teacher's live overlay during testing).
+        # bbox is in pixel coords of the uploaded frame; the frontend scales
+        # it to the displayed video using frame_width/frame_height.
+        boxes = []
+        for p in result.predictions:
+            x1, y1, x2, y2 = (int(v) for v in p.bbox)
+            label = (p.student_id or p.full_name or f"acc#{p.account_id}") if p.recognised else "Unknown"
+            boxes.append({
+                "bbox": [x1, y1, x2, y2],
+                "recognised": bool(p.recognised),
+                "label": label,
+                "score": round(float(p.score), 3),
+            })
+        frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
+
         return {
             "success": True,
             "session_id": session_id,
@@ -232,8 +248,37 @@ class AttendanceRecord:
             "faces_in_frame": faces,
             "detected_count": len(detected),
             "detected": detected,
+            "boxes": boxes,
+            "frame_width": frame_w,
+            "frame_height": frame_h,
             "message": f"Snapshot recorded: {len(detected)}/{len(roster)} enrolled student(s) detected "
                        f"({faces} face(s) in frame)",
+        }
+
+    # ── Live preview (detection only — no DB write) ──────────────────
+    # Runs the recognition pipeline and returns face boxes so the teacher's
+    # UI can draw them in near-real-time, WITHOUT recording any presence_check
+    # rows. Safe to poll frequently; attendance is still driven by the proper
+    # scan snapshots (recordDetectionSnapshot).
+    def detectFacesPreview(self, image: np.ndarray) -> dict[str, Any]:
+        result = self.pipeline.process_frame(image)
+        boxes = []
+        for p in result.predictions:
+            x1, y1, x2, y2 = (int(v) for v in p.bbox)
+            label = (p.student_id or p.full_name or f"acc#{p.account_id}") if p.recognised else "Unknown"
+            boxes.append({
+                "bbox": [x1, y1, x2, y2],
+                "recognised": bool(p.recognised),
+                "label": label,
+                "score": round(float(p.score), 3),
+            })
+        frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
+        return {
+            "success": True,
+            "faces_in_frame": len(result.predictions),
+            "boxes": boxes,
+            "frame_width": frame_w,
+            "frame_height": frame_h,
         }
 
     # ── U04 viewAttendanceRecord ─────────────────────────────────────
@@ -614,6 +659,18 @@ async def teacher_scan_snapshot(
 ):
     img = await _bytes_to_cv2(file)
     return _svc(request).recordDetectionSnapshot(session_id, img, camera_id)
+
+
+# Teacher: live preview — detection-only, returns face boxes without recording
+# any attendance. Used by the UI to draw real-time boxes; poll-friendly.
+@router.post("/teacher/preview-detect")
+async def teacher_preview_detect(
+    request: Request,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    img = await _bytes_to_cv2(file)
+    return _svc(request).detectFacesPreview(img)
 
 
 # Teacher: U12 — live roster
