@@ -77,3 +77,33 @@ function el(tag, attrs = {}, ...children) {
   }
   return e;
 }
+
+// On phones the horizontal tab bar is cramped; mirror it into a <select>
+// dropdown (shown only on narrow screens via CSS). Selecting an option just
+// clicks the matching tab button, so each page's existing tab logic runs
+// unchanged. Stays in sync when a tab is activated by other means.
+function setupMobileTabs() {
+  const tabs = document.querySelector(".tabs");
+  if (!tabs || tabs.nextElementSibling?.classList.contains("tabs-select")) return;
+  const buttons = [...tabs.querySelectorAll(".tab-btn")];
+  if (!buttons.length) return;
+
+  const select = el("select", {class: "tabs-select", "aria-label": "Navigation"});
+  for (const b of buttons) {
+    const opt = el("option", {value: b.dataset.tab}, b.textContent.trim());
+    if (b.classList.contains("active")) opt.selected = true;
+    select.append(opt);
+  }
+  select.addEventListener("change", () => {
+    const b = buttons.find(x => x.dataset.tab === select.value);
+    if (b) b.click();
+  });
+  buttons.forEach(b => b.addEventListener("click", () => { select.value = b.dataset.tab; }));
+  tabs.insertAdjacentElement("afterend", select);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", setupMobileTabs);
+} else {
+  setupMobileTabs();
+}

@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Student — FYP Attendance</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
   <style>
     /* ── Attendance view toggle ───────────────────────────────── */
     .att-view-toggle { display: flex; gap: .5rem; margin-bottom: 1rem; }
@@ -23,7 +23,9 @@
       font-size: 1.3rem; line-height: 1; padding: .25rem .6rem; border-radius: 4px;
     }
     .cal-nav:hover { background: rgba(255,255,255,.18); }
-    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+    /* minmax(0,1fr) lets the 7 columns shrink to fit the screen — otherwise
+       the chips' min-content width pushes the calendar wider than the phone. */
+    .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
     .cal-dow {
       text-align: center; padding: .5rem 0; font-weight: 600;
       color: var(--c-danger, #d23b3b); border-bottom: 1px solid var(--c-border-2, #e2e2e2);
@@ -74,9 +76,17 @@
     .cal-modal-row:last-child { border-bottom: 0; }
     .cal-modal-row > .k { min-width: 150px; color: var(--c-text-2, #666); }
     @media (max-width: 640px) {
-      .cal-cell { min-height: 64px; }
-      .cal-dow { font-size: .8rem; }
-      .cal-chip { font-size: .6rem; }
+      .cal-cell { min-height: 60px; padding: 2px; }
+      .cal-dow { font-size: .72rem; padding: .35rem 0; }
+      .cal-date { font-size: .72rem; padding: 0; }
+      .cal-events { gap: 2px; margin-top: 2px; }
+      .cal-chip { font-size: .56rem; padding: 1px 3px; border-radius: 4px; }
+    }
+    @media (max-width: 400px) {
+      .cal-cell { min-height: 52px; }
+      .cal-dow { font-size: .64rem; }
+      .cal-date { font-size: .66rem; }
+      .cal-chip { font-size: .5rem; padding: 1px 2px; }
     }
   </style>
 </head>
@@ -270,7 +280,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
   <script src="student.js?v=3"></script>
 </body>
 

@@ -332,6 +332,12 @@ header.topbar #who {
   display: none;
 }
 
+/* Mobile navigation dropdown — built from .tabs by app.js, shown only on
+   narrow screens (see the responsive block below). */
+.tabs-select {
+  display: none;
+}
+
 .tabs button.tab-btn {
   position: relative;
   flex: none;
@@ -967,11 +973,28 @@ img.preview {
 /* Responsive --------------------------------------------------- */
 @media (max-width: 720px) {
   header.topbar {
-    padding: .75rem 1rem;
+    padding: .7rem 1rem;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+  }
+  header.topbar h1 {
+    font-size: .98rem;
   }
 
+  /* Replace the horizontal tab bar with the dropdown on phones. */
   .tabs {
-    padding: .5rem .75rem;
+    display: none;
+  }
+  .tabs-select {
+    display: block;
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--c-border-2);
+    border-radius: 0;
+    background: var(--c-surface);
+    padding: .7rem .9rem;
+    font-weight: 600;
+    color: var(--c-primary);
   }
 
   main {
@@ -989,5 +1012,64 @@ img.preview {
   th,
   td {
     padding: .55rem .65rem;
+  }
+
+  /* Wide data tables: let each table scroll horizontally inside the panel
+     instead of forcing the whole page wider than the screen. */
+  .panel table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel table thead th,
+  .panel table tbody td {
+    white-space: nowrap;
+  }
+  /* Inline detail / slide-out rows should still wrap normally. */
+  .panel table .detail-row td,
+  .panel table .detail-content,
+  .panel table .detail-content * {
+    white-space: normal;
+  }
+
+  /* Prevent iOS from auto-zooming when focusing a small-font input. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  header.topbar {
+    padding: .6rem .8rem;
+  }
+  header.topbar h1 {
+    font-size: .9rem;
+  }
+  /* The email/identity label eats width on tiny screens — hide it; the
+     dashboard heading already says which role you're in. */
+  header.topbar #who {
+    display: none;
+  }
+
+  main {
+    padding: .85rem .6rem 2rem;
+  }
+  .panel {
+    padding: .9rem;
+    border-radius: var(--radius);
+  }
+  .panel h2 {
+    font-size: 1.15rem;
+  }
+
+  /* Filter / control rows: stack their inputs full-width so nothing is
+     squashed below a usable size. */
+  .att-filters > input,
+  .att-filters > select,
+  .att-filters > label {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
   }
 }
