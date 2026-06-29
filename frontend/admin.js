@@ -747,11 +747,64 @@ async function loadFaces() {
 }
 
 // ── Attendance ────────────────────────────────────────────────
+let attAllRecords = [];
+
 async function loadAttendance() {
+  const res = await api("/admin/attendance");
+  attAllRecords = res.records || [];
+
+  // Populate the status filter with the distinct statuses present.
+  const sel = document.getElementById("att-f-status");
+  const current = sel.value;
+  const statuses = [...new Set(attAllRecords.map(r => r.status).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">All statuses</option>' +
+    statuses.map(s => `<option value="${s}">${s}</option>`).join("");
+  sel.value = current; // keep selection across reloads
+
+  renderAttendance();
+}
+
+// Case-insensitive substring match; empty query always matches.
+function attMatch(query, ...fields) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return fields.some(f => String(f ?? "").toLowerCase().includes(q));
+}
+
+// Local YYYY-MM-DD for a timestamp (so date comparisons are calendar-day based).
+function localDateKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Inclusive date-range filter. Empty from/to = open-ended; from === to = a
+// single day (a point). YYYY-MM-DD strings compare correctly as text.
+function attInDateRange(ts, from, to) {
+  if (!from && !to) return true;
+  if (!ts) return false;
+  const ds = localDateKey(ts);
+  if (from && ds < from) return false;
+  if (to && ds > to) return false;
+  return true;
+}
+
+function renderAttendance() {
   const body = document.getElementById("att-body");
   body.innerHTML = "";
-  const res = await api("/admin/attendance");
-  for (const r of res.records) {
+  const fCourse = document.getElementById("att-f-course").value;
+  const fStudent = document.getElementById("att-f-student").value;
+  const fDateFrom = document.getElementById("att-f-date-from").value;
+  const fDateTo = document.getElementById("att-f-date-to").value;
+  const fStatus = document.getElementById("att-f-status").value;
+
+  const rows = attAllRecords.filter(r =>
+    attMatch(fCourse, r.course_code, r.course_name) &&
+    attMatch(fStudent, r.full_name, r.student_id, r.accountid) &&
+    attInDateRange(r.start_time, fDateFrom, fDateTo) &&
+    (!fStatus || r.status === fStatus)
+  );
+
+  for (const r of rows) {
     body.append(el("tr", {},
       el("td", {}, r.attendancesessionid),
       el("td", {}, `${r.course_code} — ${r.course_name}`),
@@ -761,7 +814,24 @@ async function loadAttendance() {
       el("td", {}, fmt(r.marked_at)),
     ));
   }
+  if (!rows.length) {
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No matching records.")));
+  }
+  document.getElementById("att-f-count").textContent =
+    `${rows.length} / ${attAllRecords.length}`;
 }
+
+// Wire up the filter controls (live filtering).
+["att-f-course", "att-f-student"].forEach(id =>
+  document.getElementById(id).addEventListener("input", renderAttendance));
+["att-f-date-from", "att-f-date-to", "att-f-status"].forEach(id =>
+  document.getElementById(id).addEventListener("change", renderAttendance));
+document.getElementById("att-f-clear").addEventListener("click", () => {
+  ["att-f-course", "att-f-student", "att-f-date-from", "att-f-date-to"]
+    .forEach(id => document.getElementById(id).value = "");
+  document.getElementById("att-f-status").value = "";
+  renderAttendance();
+});
 
 // ── Appeals ───────────────────────────────────────────────────
 async function loadAppeals() {

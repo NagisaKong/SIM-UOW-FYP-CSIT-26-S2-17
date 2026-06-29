@@ -1199,15 +1199,27 @@ class AttendancePipeline:
     def _group_anchors(
         groups: list[FaceGroup], detections: list[Detection],
     ) -> list[Detection]:
+        # Prefer a SCRFD detection whenever one overlaps the group: SCRFD
+        # carries ArcFace's embedding for free via raw.normed_embedding, and
+        # FaceNet can crop from any bbox. Picking by raw det_score alone makes
+        # MTCNN (probabilities ~0.99) always win over SCRFD (~0.8-0.9), which
+        # leaves ArcFace with a raw=None box, forces a fragile re-detect that
+        # fails, and silently degrades the ensemble to FaceNet-only. Only fall
+        # back to the best MTCNN box for faces SCRFD missed entirely.
         anchors: list[Detection] = []
         for g in groups:
-            best: tuple[float, Detection | None] = (-1.0, None)
+            scrfd_best: tuple[float, Detection | None] = (-1.0, None)
+            mtcnn_best: tuple[float, Detection | None] = (-1.0, None)
             for d in detections:
                 if bbox_iou(d.bbox, g.bbox) == 0:
                     continue
-                score = d.det_score + (0.1 if d.source == "scrfd" else 0.0)
-                if score > best[0]:
-                    best = (score, d)
-            if best[1] is not None:
-                anchors.append(best[1])
+                bucket = scrfd_best if d.source == "scrfd" else mtcnn_best
+                if d.det_score > bucket[0]:
+                    if d.source == "scrfd":
+                        scrfd_best = (d.det_score, d)
+                    else:
+                        mtcnn_best = (d.det_score, d)
+            pick = scrfd_best[1] if scrfd_best[1] is not None else mtcnn_best[1]
+            if pick is not None:
+                anchors.append(pick)
         return anchors

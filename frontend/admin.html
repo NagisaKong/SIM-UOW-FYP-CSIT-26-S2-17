@@ -323,6 +323,21 @@
 
     <section id="tab-attendance" class="panel" style="display:none">
       <h2>Attendance Overview</h2>
+
+      <div class="att-filters" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.75rem">
+        <input type="search" id="att-f-course" placeholder="🔍 Course" style="flex:1;min-width:140px">
+        <input type="search" id="att-f-student" placeholder="🔍 Student / ID" style="flex:1;min-width:140px">
+        <label class="small" style="display:flex;align-items:center;gap:.3rem">From
+          <input type="date" id="att-f-date-from" style="min-width:140px"></label>
+        <label class="small" style="display:flex;align-items:center;gap:.3rem">To
+          <input type="date" id="att-f-date-to" style="min-width:140px"></label>
+        <select id="att-f-status" style="min-width:120px">
+          <option value="">All statuses</option>
+        </select>
+        <button type="button" id="att-f-clear" class="secondary">Clear</button>
+        <span id="att-f-count" class="muted small"></span>
+      </div>
+
       <table>
         <thead>
           <tr>
@@ -448,7 +463,7 @@
   </main>
 
   <script src="app.js?v=4"></script>
-  <script src="admin.js?v=2"></script>
+  <script src="admin.js?v=5"></script>
 </body>
 
 </html>
