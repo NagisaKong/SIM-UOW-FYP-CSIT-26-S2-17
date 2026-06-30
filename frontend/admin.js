@@ -14,7 +14,10 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "faces") { showFacesView("list"); loadFaces(); }
     if (btn.dataset.tab === "courses") loadCourses();
     if (btn.dataset.tab === "attendance") loadAttendance();
-    if (btn.dataset.tab === "appeals") loadAppeals();
+    if (btn.dataset.tab === "appeals") {
+      showAppealsView("list");
+      loadAppeals();
+    }
     if (btn.dataset.tab === "att-config") loadAttConfig();
     if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "ai-config") {}
@@ -835,30 +838,114 @@ document.getElementById("att-f-clear").addEventListener("click", () => {
 
 // ── Appeals ───────────────────────────────────────────────────
 async function loadAppeals() {
-  const body = document.getElementById("appeals-body");
-  body.innerHTML = "";
-  const res = await api("/admin/appeals");
-  for (const a of res.appeals) {
-    const canReview = a.status === "pending";
-    body.append(el("tr", {},
-      el("td", {}, a.appealid),
-      el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
-      el("td", {}, a.attendancerecordid),
-      el("td", {}, a.reason),
-      el("td", {}, el("span", {class: "badge"}, a.status)),
-      el("td", {}, fmt(a.created_at)),
-      el("td", {},
-        canReview ? el("button", {
-          onclick: () => reviewAppeal(a.appealid, "approved"),
-        }, "Approve") : null,
-        canReview ? el("button", {
-          class: "danger",
-          onclick: () => reviewAppeal(a.appealid, "rejected"),
-        }, "Reject") : null,
-      ),
-    ));
+  try {
+    const res = await api("/admin/appeals");
+    const appeals = res.appeals || [];
+    const body = document.getElementById("appeals-body");
+    body.innerHTML = "";
+
+    appeals.forEach(app => {
+      const tr = document.createElement("tr");
+
+      tr.appendChild(el("td", {}, app.appealid));
+      tr.appendChild(el("td", {}, app.student_id || "-"));
+      tr.appendChild(el("td", {}, app.full_name || "-"));
+      tr.appendChild(el("td", {}, app.attendancerecordid));
+      tr.appendChild(el("td", {}, app.reason || ""));
+      tr.appendChild(el("td", {}, app.status));
+
+      const actionsTd = document.createElement("td");
+      actionsTd.style.whiteSpace = "nowrap"; 
+      actionsTd.style.display = "flex";
+      actionsTd.style.gap = "8px";
+      actionsTd.style.alignItems = "center";
+
+      const viewBtn = el("button", { class: "primary small", style: "margin: 0;" }, "View");
+      viewBtn.addEventListener("click", () => openAppealDetail(app));
+      actionsTd.appendChild(viewBtn);
+
+      if (app.status === "pending") {
+        const approveBtn = el("button", { class: "success small", style: "margin: 0;" }, "Approve");
+        approveBtn.addEventListener("click", () => handleAppeal(app.appealid, "approved"));
+        actionsTd.appendChild(approveBtn);
+
+        const rejectBtn = el("button", { class: "danger small", style: "margin: 0;" }, "Reject");
+        rejectBtn.addEventListener("click", () => handleAppeal(app.appealid, "rejected"));
+        actionsTd.appendChild(rejectBtn);
+      }
+
+      tr.appendChild(actionsTd);
+      body.appendChild(tr);
+    });
+  } catch (e) {
+    console.error(e);
   }
 }
+
+async function handleAppeal(appealId, status) {
+  if (!confirm(`Are you sure you want to set this appeal to ${status}?`)) return;
+  try {
+    await api(`/admin/appeals/${appealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: status })
+    });
+    
+    showAppealsView("list");
+    loadAppeals();
+  } catch (e) {
+    alert("Error updating appeal: " + e.message);
+    console.error(e);
+  }
+}
+
+function openAppealDetail(appeal) {
+  document.getElementById("detail-appeal-id").textContent = appeal.appealid || "-";
+  document.getElementById("detail-student-id").textContent = appeal.student_id || "-";
+  document.getElementById("detail-full-name").textContent = appeal.full_name || "-";
+  document.getElementById("detail-record-id").textContent = appeal.attendancerecordid || "-";
+  document.getElementById("detail-reason").textContent = appeal.reason || "-";
+
+  document.getElementById("detail-created-at").textContent = fmt(appeal.created_at);
+  document.getElementById("detail-reviewed-at").textContent = appeal.reviewed_at ? fmt(appeal.reviewed_at) : "Not reviewed yet";
+
+  const statusEl = document.getElementById("detail-status");
+  const currentStatus = appeal.status || "pending";
+  statusEl.textContent = currentStatus.toUpperCase();
+  
+  if (currentStatus === "approved") {
+    statusEl.style.background = "#e6f4ea";
+    statusEl.style.color = "#137333";
+    statusEl.style.border = "1px solid #c2e7cd";
+  } else if (currentStatus === "rejected") {
+    statusEl.style.background = "#fce8e6";
+    statusEl.style.color = "#c5221f";
+    statusEl.style.border = "1px solid #f9d2cd";
+  } else {
+    // pending
+    statusEl.style.background = "#fef7e0";
+    statusEl.style.color = "#b06000";
+    statusEl.style.border = "1px solid #fbe4a2";
+  }
+
+  showAppealsView("detail");
+}
+
+function showAppealsView(view) {
+  const listView = document.getElementById("appeals-list-view");
+  const detailView = document.getElementById("appeals-detail-view");
+  if (view === "list") {
+    listView.style.display = "";
+    detailView.style.display = "none";
+  } else if (view === "detail") {
+    listView.style.display = "none";
+    detailView.style.display = "";
+  }
+}
+
+document.getElementById("btn-back-to-appeals").addEventListener("click", () => {
+  showAppealsView("list");
+});
 
 async function reviewAppeal(id, status) {
   await api(`/admin/appeals/${id}`, {
