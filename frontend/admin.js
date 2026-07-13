@@ -854,24 +854,29 @@ async function loadAppeals() {
       tr.appendChild(el("td", {}, app.reason || ""));
       tr.appendChild(el("td", {}, app.status));
 
+      // Keep the <td> a real table cell (display:flex on a td detaches it
+      // from row-height calculation and misaligns it when other cells wrap);
+      // lay the buttons out in an inner flex wrapper instead.
       const actionsTd = document.createElement("td");
-      actionsTd.style.whiteSpace = "nowrap"; 
-      actionsTd.style.display = "flex";
-      actionsTd.style.gap = "8px";
-      actionsTd.style.alignItems = "center";
+      actionsTd.style.whiteSpace = "nowrap";
+      const actionsWrap = document.createElement("div");
+      actionsWrap.style.display = "flex";
+      actionsWrap.style.gap = "8px";
+      actionsWrap.style.alignItems = "center";
+      actionsTd.appendChild(actionsWrap);
 
       const viewBtn = el("button", { class: "primary small", style: "margin: 0;" }, "View");
       viewBtn.addEventListener("click", () => openAppealDetail(app));
-      actionsTd.appendChild(viewBtn);
+      actionsWrap.appendChild(viewBtn);
 
       if (app.status === "pending") {
         const approveBtn = el("button", { class: "success small", style: "margin: 0;" }, "Approve");
         approveBtn.addEventListener("click", () => handleAppeal(app.appealid, "approved"));
-        actionsTd.appendChild(approveBtn);
+        actionsWrap.appendChild(approveBtn);
 
         const rejectBtn = el("button", { class: "danger small", style: "margin: 0;" }, "Reject");
         rejectBtn.addEventListener("click", () => handleAppeal(app.appealid, "rejected"));
-        actionsTd.appendChild(rejectBtn);
+        actionsWrap.appendChild(rejectBtn);
       }
 
       tr.appendChild(actionsTd);
