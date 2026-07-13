@@ -88,7 +88,9 @@ _IS_PROD = os.getenv("APP_ENV", "development").lower() in {"production", "prod"}
 _ALLOWED_ORIGINS = [
     o.strip()
     for o in os.getenv(
-        "ALLOWED_ORIGINS", "http://127.0.0.1:5500,http://localhost:5500"
+        "ALLOWED_ORIGINS",
+        "http://127.0.0.1:5050,http://localhost:5050,"
+        "http://127.0.0.1:5500,http://localhost:5500",
     ).split(",")
     if o.strip()
 ]
