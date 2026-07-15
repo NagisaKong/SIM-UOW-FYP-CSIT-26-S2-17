@@ -5,41 +5,66 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FYP Attendance — Login</title>
-<<<<<<< HEAD
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 
   <style>
     .password-box {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 8px;
     }
 
     .password-box input {
       flex: 1;
+      padding-right: 38px;
     }
 
-    .show-password-btn {
-      padding: 8px 10px;
-      cursor: pointer;
+    .toggle-password-btn {
+      position: absolute;
+      right: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      margin: 0;
       border: none;
       border-radius: 6px;
-      background-color: #eeeeee;
+      background: transparent;
+      color: #8a94a3;
+      cursor: pointer;
     }
 
-    .show-password-btn:hover {
-      background-color: #dddddd;
+    .toggle-password-btn:hover {
+      color: #444d5c;
+      background: rgba(15, 23, 42, .06);
+    }
+
+    .toggle-password-btn svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+
+    .toggle-password-btn .icon-eye-off {
+      display: none;
+    }
+
+    .toggle-password-btn.showing .icon-eye {
+      display: none;
+    }
+
+    .toggle-password-btn.showing .icon-eye-off {
+      display: block;
     }
   </style>
-=======
-  <link rel="stylesheet" href="style.css?v=4">
->>>>>>> 171340fd1babee4df770c1d84311554b659ff765
 </head>
 
 <body class="centered">
   <form id="login-form" class="card">
     <h1>Face Recognition Attendance System</h1>
-    <p class="muted">FYP-26-S2-17</p >
+    <p class="muted">FYP-26-S2-17</p>
 
     <label>
       Email
@@ -50,40 +75,57 @@
       Password
       <div class="password-box">
         <input id="password-input" type="password" name="password" required value="demo123">
-        <button type="button" id="show-password-btn" class="show-password-btn">Show</button>
+        <button type="button" id="toggle-password-btn" class="toggle-password-btn" aria-label="Show password"
+          title="Show password">
+          <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        </button>
       </div>
     </label>
 
     <button type="submit">Login</button>
-<<<<<<< HEAD
-
-    <p id="login-error" class="error"></p >
-
-    <p class="muted small">
-      Demo accounts — admin@demo.local tom@demo.local (password: <code>demo123</code>)
-    </p >
-=======
     <p id="login-error" class="error"></p>
->>>>>>> 171340fd1babee4df770c1d84311554b659ff765
   </form>
 
   <script src="app.js?v=5"></script>
 
   <script>
     const passwordInput = document.getElementById("password-input");
-    const showPasswordBtn = document.getElementById("show-password-btn");
+    const toggleBtn = document.getElementById("toggle-password-btn");
     let passwordTimer;
 
-    showPasswordBtn.addEventListener("click", () => {
+    function hidePassword() {
+      passwordInput.type = "password";
+      toggleBtn.classList.remove("showing");
+      toggleBtn.setAttribute("aria-label", "Show password");
+      toggleBtn.title = "Show password";
+    }
+
+    toggleBtn.addEventListener("click", () => {
       clearTimeout(passwordTimer);
 
-      passwordInput.type = "text";
-      showPasswordBtn.textContent = "Hide";
+      if (toggleBtn.classList.contains("showing")) {
+        hidePassword();
+        return;
+      }
 
-      passwordTimer = setTimeout(() => {
-        passwordInput.type = "password";
-        showPasswordBtn.textContent = "Show";
-      }, 1500);
+      passwordInput.type = "text";
+      toggleBtn.classList.add("showing");
+      toggleBtn.setAttribute("aria-label", "Hide password");
+      toggleBtn.title = "Hide password";
+
+      // Auto-hide again after a short peek.
+      passwordTimer = setTimeout(hidePassword, 2000);
     });
 
     document.getElementById("login-form").addEventListener("submit", async (e) => {
