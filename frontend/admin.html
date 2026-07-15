@@ -10,7 +10,7 @@
 
 <body>
   <header class="topbar">
-    <h1>Admin Console</h1>
+    <h1>FRAS Admin Console</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -374,45 +374,65 @@
 
       <div id="appeals-detail-view" style="display:none; max-width: 800px; margin: 0 auto;">
         <div style="margin-bottom: 20px;">
-          <button type="button" id="btn-back-to-appeals" class="secondary" style="padding: 8px 16px;">← Back to List</button>
+          <button type="button" id="btn-back-to-appeals" class="secondary" style="padding: 8px 16px;">← Back to
+            List</button>
         </div>
-        
-        <div class="detail-card" style="background: #ffffff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e1e4e8; overflow: hidden;">
-          <div style="background: #f6f8fa; padding: 16px 24px; border-bottom: 1px solid #e1e4e8; display: flex; justify-content: space-between; align-items: center;">
+
+        <div class="detail-card"
+          style="background: #ffffff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e1e4e8; overflow: hidden;">
+          <div
+            style="background: #f6f8fa; padding: 16px 24px; border-bottom: 1px solid #e1e4e8; display: flex; justify-content: space-between; align-items: center;">
             <h3 style="margin: 0; color: #24292e; font-size: 1.1rem; font-weight: 600;">Appeal Request Details</h3>
-            <span id="detail-status" style="padding: 4px 12px; border-radius: 12px; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;"></span>
+            <span id="detail-status"
+              style="padding: 4px 12px; border-radius: 12px; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;"></span>
           </div>
-          
+
           <div style="padding: 24px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Appeal ID</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Appeal
+                ID</span>
               <strong id="detail-appeal-id" style="font-size: 1rem; color: #24292e;">-</strong>
             </div>
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Attendance Record ID</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Attendance
+                Record ID</span>
               <strong id="detail-record-id" style="font-size: 1rem; color: #0366d6;">-</strong>
             </div>
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Student ID</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Student
+                ID</span>
               <strong id="detail-student-id" style="font-size: 1rem; color: #24292e;">-</strong>
             </div>
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Student Name</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Student
+                Name</span>
               <strong id="detail-full-name" style="font-size: 1rem; color: #24292e;">-</strong>
             </div>
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Created At</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Created
+                At</span>
               <span id="detail-created-at" style="color: #24292e; font-weight: 500;">-</span>
             </div>
             <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
-              <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Reviewed At</span>
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Reviewed
+                At</span>
               <span id="detail-reviewed-at" style="color: #24292e; font-weight: 500;">-</span>
             </div>
           </div>
-          
+
           <div style="padding: 0 24px 24px 24px;">
-            <span style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 8px;">Reason for Appeal</span>
-            <div id="detail-reason" style="background: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 16px; color: #24292e; line-height: 1.6; min-height: 60px; white-space: pre-wrap;">-</div>
+            <span
+              style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 8px;">Reason
+              for Appeal</span>
+            <div id="detail-reason"
+              style="background: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 16px; color: #24292e; line-height: 1.6; min-height: 60px; white-space: pre-wrap;">
+              -</div>
           </div>
         </div>
       </div>

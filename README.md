@@ -103,7 +103,7 @@ SIM-UOW-FYP-CSIT-26-S2-17/
 │   │
 │   ├── report.py                   # Class 7  (U14)
 │   │
-│   ├── inClassBehaviour.py         # Class 8  (U32,U33,U35)
+│   ├── behaviourAnalysis.py        # Class 8  (U32,U33,U35 + CR-06 detection service)
 │   │
 │   └── trainConfiguration.py       # Class 9  (U22,U23,U24,U25)
 │

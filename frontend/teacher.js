@@ -2,7 +2,7 @@ const user = requireAuth("teacher");
 document.getElementById("who").textContent = `${user.full_name || user.email} (teacher)`;
 
 // ── Tabs ──────────────────────────────────────────────────────
-const TABS = ["sessions", "live", "roster", "analytics", "reports", "leave"];
+const TABS = ["sessions", "live", "roster", "analytics", "behaviour", "reports", "leave"];
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -14,6 +14,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "live") loadLiveSessions();
     if (btn.dataset.tab === "roster") loadRoster();
     if (btn.dataset.tab === "analytics") loadAnalytics();
+    if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "leave") loadTeacherLeave();
   });
 });
@@ -252,6 +253,7 @@ function currentSessionId() {
 function stopScanCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
   stopPreviewLoop();
+  stopBehaviourLoop();
   for (const cam of scanCams) cam.stream.getTracks().forEach(t => t.stop());
   scanCams = [];
   scanCamsHost.innerHTML = "";
@@ -409,6 +411,7 @@ scanStart.addEventListener("click", async () => {
     scanFinalize.disabled = false;
     scanStop.disabled = false;
     startPreviewLoop(); // real-time boxes
+    startBehaviourLoop(); // CR-06 ~1 fps behaviour sampling (self-stops if disabled)
     if (scanAuto.checked) startAutoSnapshots();
   } catch (e) {
     scanMsg.style.color = "#c0392b";
@@ -559,6 +562,81 @@ function startPreviewLoop() {
 function stopPreviewLoop() {
   if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
   previewBusy = false;
+}
+
+// ── CR-06 behaviour sampling (~1 fps) ─────────────────────────
+// While the classroom scan is running, one frame per second is sent to the
+// behaviour-scan endpoint (drowsiness / phone / heatmap). With several
+// cameras open we rotate round-robin — one camera per tick — so the total
+// upload rate stays at ~1 fps regardless of camera count. The loop stops
+// itself when the course has behaviour analysis disabled (U35) or the
+// backend service is off (AI_BEHAVIOUR=false).
+const BEHAVIOUR_INTERVAL_MS = 1000;
+const behCanvas = document.createElement("canvas"); // off-screen frame grabber
+const behStatusEl = document.getElementById("scan-behaviour");
+let behTimer = null;
+let behBusy = false;
+let behCamIndex = 0;
+
+async function behaviourTick() {
+  if (behBusy || !scanCams.length) return;
+  const sessionId = currentSessionId();
+  if (!sessionId) return;
+  behBusy = true;
+  try {
+    const cam = scanCams[behCamIndex % scanCams.length];
+    behCamIndex++;
+    const v = cam.video;
+    const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+    behCanvas.width = w; behCanvas.height = h;
+    behCanvas.getContext("2d").drawImage(v, 0, 0, w, h);
+    const blob = await new Promise(r => behCanvas.toBlob(r, "image/jpeg", 0.8));
+    const fd = new FormData();
+    fd.append("file", blob, "behaviour.jpg");
+    const res = await api(`/teacher/sessions/${sessionId}/behaviour-scan`, {
+      method: "POST", body: fd,
+    });
+    if (res.enabled === false) {
+      // U35: switched off for this course — no point sampling further.
+      behStatusEl.textContent = "Behaviour analysis: disabled for this course (U35).";
+      stopBehaviourLoop(true);
+      return;
+    }
+    if (res.skipped) return; // backend still busy with the previous frame
+    const drowsy = (res.drowsy_active || []).length;
+    const phone = (res.phone_active || []).length;
+    behStatusEl.textContent =
+      `Behaviour analysis: sampling ~1 fps · drowsy now ${drowsy} · on phone now ${phone}` +
+      (res.events_written ? ` · +${res.events_written} event(s) recorded` : "");
+  } catch (e) {
+    // 503 = AI_BEHAVIOUR off on this server; anything else transient → keep trying.
+    if (/not running|AI_BEHAVIOUR/i.test(e.message)) {
+      behStatusEl.textContent = "Behaviour analysis: service not enabled on this server.";
+      stopBehaviourLoop(true);
+    }
+  } finally {
+    behBusy = false;
+  }
+}
+
+function startBehaviourLoop() {
+  stopBehaviourLoop();
+  behStatusEl.textContent = "Behaviour analysis: starting…";
+  const loop = async () => {
+    await behaviourTick();
+    if (scanCams.length && behTimer !== null) {
+      behTimer = setTimeout(loop, BEHAVIOUR_INTERVAL_MS);
+    }
+  };
+  behTimer = setTimeout(loop, 500);
+}
+
+function stopBehaviourLoop(keepMessage = false) {
+  if (behTimer) { clearTimeout(behTimer); }
+  behTimer = null;
+  behBusy = false;
+  behCamIndex = 0;
+  if (!keepMessage && behStatusEl) behStatusEl.textContent = "";
 }
 
 function startAutoSnapshots() {
@@ -746,6 +824,135 @@ function renderBreakdown(b) {
 
 document.getElementById("ana-refresh").addEventListener("click", loadAnalytics);
 document.getElementById("ana-course").addEventListener("change", loadAnalytics);
+
+// ──────────────────────────────────────────────────────────────
+// U32/U33 Behaviour tab (CR-06)
+// ──────────────────────────────────────────────────────────────
+function fmtDur(seconds) {
+  const s = Number(seconds) || 0;
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// Sessions worth reporting on: currently active or already ended.
+async function loadBehaviourSessions() {
+  const sel = document.getElementById("beh-session");
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— select a session —</option>';
+  const res = await api("/teacher/sessions");
+  for (const s of (res.sessions || []).filter(x => x.status === "active" || x.status === "ended")) {
+    const o = document.createElement("option");
+    o.value = s.attendancesessionid;
+    o.textContent = `#${s.attendancesessionid} ${s.course_code} (${fmt(s.start_time)}) [${s.status}]`;
+    sel.appendChild(o);
+  }
+  if (prev) sel.value = prev;
+}
+
+async function loadBehaviourData() {
+  const id = document.getElementById("beh-session").value;
+  const msg = document.getElementById("beh-msg");
+  const summaryBody = document.getElementById("beh-summary-body");
+  const timelineBody = document.getElementById("beh-timeline-body");
+  summaryBody.innerHTML = "";
+  timelineBody.innerHTML = "";
+  renderBehaviourHeatmap([]);
+  if (!id) { msg.textContent = "Select a session to view its behaviour report."; return; }
+  msg.textContent = "Loading…";
+  try {
+    const [report, heat] = await Promise.all([
+      api(`/teacher/sessions/${id}/behaviour`),
+      api(`/teacher/sessions/${id}/heatmap`),
+    ]);
+
+    const students = report.students || [];
+    if (!students.length) {
+      summaryBody.append(el("tr", {},
+        el("td", {colspan: 5, class: "muted"}, "No behaviour events recorded for this session.")));
+    }
+    for (const s of students) {
+      summaryBody.append(el("tr", {},
+        el("td", {}, s.full_name || `acc#${s.accountid}`),
+        el("td", {}, String(s.drowsy || 0)),
+        el("td", {}, fmtDur(s.drowsy_seconds)),
+        el("td", {}, String(s.phone || 0)),
+        el("td", {}, fmtDur(s.phone_seconds)),
+      ));
+    }
+
+    const timeline = report.timeline || [];
+    if (!timeline.length) {
+      timelineBody.append(el("tr", {},
+        el("td", {colspan: 5, class: "muted"}, "No events.")));
+    }
+    for (const ev of timeline) {
+      const meta = ev.metadata || {};
+      const details = ev.event_type === "drowsiness"
+        ? (meta.reasons || []).join(", ")
+        : (meta.conf != null ? `conf ${meta.conf}` : "");
+      timelineBody.append(el("tr", {},
+        el("td", {}, fmt(ev.detected_at)),
+        el("td", {}, ev.full_name || `acc#${ev.accountid}`),
+        el("td", {}, el("span", {class: "badge"}, ev.event_type)),
+        el("td", {}, fmtDur(ev.duration_seconds)),
+        el("td", {class: "small muted"}, details),
+      ));
+    }
+
+    renderBehaviourHeatmap(heat.zones || []);
+    msg.textContent = report.note || heat.note ||
+      `${students.length} student(s) with events · ${timeline.length} event(s)`;
+  } catch (e) {
+    msg.textContent = "Error: " + e.message;
+  }
+}
+
+// U33: aggregate all snapshots into one grid (mean intensity per cell),
+// then paint cold→warm cells onto the canvas.
+function renderBehaviourHeatmap(zones) {
+  const canvas = document.getElementById("beh-heatmap");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!zones.length) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("No heatmap data for this session.", canvas.width / 2, canvas.height / 2);
+    return;
+  }
+  // Grid size = max index + 1 (backend default is 8×6).
+  const cols = Math.max(...zones.map(z => z.zone_x)) + 1;
+  const rows = Math.max(...zones.map(z => z.zone_y)) + 1;
+  const acc = new Map(); // "x,y" -> {sum, n}
+  for (const z of zones) {
+    const k = `${z.zone_x},${z.zone_y}`;
+    const a = acc.get(k) || {sum: 0, n: 0};
+    a.sum += Number(z.intensity) || 0;
+    a.n += 1;
+    acc.set(k, a);
+  }
+  let peak = 0;
+  for (const a of acc.values()) peak = Math.max(peak, a.sum / a.n);
+  const cw = canvas.width / cols, ch = canvas.height / rows;
+  for (const [k, a] of acc.entries()) {
+    const [x, y] = k.split(",").map(Number);
+    const v = peak > 0 ? (a.sum / a.n) / peak : 0; // 0..1
+    // Cold (hue 220, blue) → warm (hue 0, red).
+    ctx.fillStyle = `hsla(${Math.round(220 - 220 * v)}, 85%, 55%, ${0.25 + 0.65 * v})`;
+    ctx.fillRect(x * cw + 1, y * ch + 1, cw - 2, ch - 2);
+  }
+}
+
+async function loadBehaviourTab() {
+  await loadBehaviourSessions();
+  await loadBehaviourData();
+}
+
+document.getElementById("beh-session").addEventListener("change", loadBehaviourData);
+document.getElementById("beh-refresh").addEventListener("click", loadBehaviourTab);
 
 // ──────────────────────────────────────────────────────────────
 // U14 Reports tab

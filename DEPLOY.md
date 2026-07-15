@@ -32,6 +32,7 @@ Production stack: **Vercel** (static frontend) + **Railway** (FastAPI backend, C
    AI_USE_MTCNN=false
    AI_USE_FACENET=false
    AI_USE_ENHANCER=false
+   AI_BEHAVIOUR=false           # CR-06 behaviour analysis — GPU rig only (see below)
 
    # Face detection range (see "Detection range tuning" below)
    AI_DET_SIZE=1280
@@ -88,6 +89,38 @@ Guidance:
 - On **CPU** (Railway), keep `AI_DETECT_TILES=1x1` — tiling multiplies compute
   and would make snapshots slow. `AI_DET_SIZE=1280` is already ~3–4× slower per
   frame than the old `640`; drop to `960` if snapshots lag.
+
+### Behaviour analysis (CR-06 — GPU rig only)
+
+The classroom behaviour module (drowsiness via MediaPipe FaceMesh, phone use
+via YOLOv8n, activity heatmap) samples ~1 frame/sec from the teacher's scan
+page, which is far too heavy for the Railway CPU plan. Run it only on the
+local GPU machine:
+
+```
+AI_BEHAVIOUR=true            # master switch (default false)
+# Optional tuning (defaults shown):
+# AI_EAR_THRESHOLD=0.21      # eyes-closed EAR cutoff
+# AI_EAR_CONSEC_SECONDS=2.0  # signal must persist this long to count
+# AI_MAR_THRESHOLD=0.6       # yawn cutoff
+# AI_HEADPOSE_PITCH_DEG=30   # head-tilt cutoff (degrees)
+# AI_PHONE_CONF=0.35         # YOLO phone confidence
+# AI_PHONE_CONSEC=3          # consecutive ~1s samples to confirm phone use
+# AI_HEATMAP_GRID=8x6        # heatmap cells (cols x rows)
+# AI_HEATMAP_FLUSH_SECONDS=60
+```
+
+Notes:
+- `pip install mediapipe ultralytics` is required (already in
+  requirements.txt); YOLOv8n weights download automatically on first frame.
+- The per-course toggle (admin → Behaviour Analysis, U35) must also be ON —
+  the frontend sampler stops itself if either switch is off.
+- Privacy: frames are analysed in memory and discarded; only derived event
+  tuples (`behaviour_event`) and grid intensities (`heatmap_snapshot`) are
+  stored. Keep it this way — never add frame persistence to this path.
+- Detection range: FaceMesh needs ≥~64 px faces, so drowsiness detection has a
+  shorter usable range than attendance detection. Place the behaviour camera
+  closer to the students than the long-range attendance camera.
 
 ## 2. Frontend → Vercel
 

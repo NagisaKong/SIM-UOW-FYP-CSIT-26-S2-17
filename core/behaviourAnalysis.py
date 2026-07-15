@@ -31,8 +31,10 @@ and aggregated grid intensities (heatmap_snapshot) are persisted.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -324,42 +326,92 @@ def head_pitch_deg(landmarks_px: dict[int, tuple[float, float]],
 # ════════════════════════════════════════════════════════════════════════
 # 3. Detectors (lazy-loaded; degrade to disabled if package missing)
 # ════════════════════════════════════════════════════════════════════════
+# FaceLandmarker model asset for the MediaPipe Tasks API (newer mediapipe
+# wheels dropped the legacy mp.solutions API). Same 468-landmark topology as
+# FaceMesh, so the EAR/MAR/pose indices above apply to both.
+_FACE_LANDMARKER_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/1/face_landmarker.task"
+)
+
+
 class DrowsinessDetector:
-    """MediaPipe FaceMesh over a single face crop → {ear, mar, pitch}."""
+    """MediaPipe face landmarks over a single face crop → {ear, mar, pitch}.
+
+    Supports both mediapipe APIs: legacy ``mp.solutions.face_mesh`` (older
+    wheels) and the Tasks-API ``FaceLandmarker`` (0.10.30+, where the legacy
+    module was removed; the .task model downloads once on first use)."""
 
     def __init__(self):
-        self._mesh = None
+        self._mp = None
+        self._legacy = None   # mp.solutions FaceMesh instance
+        self._tasks = None    # mp Tasks FaceLandmarker instance
         self._failed = False
 
     def _ensure(self) -> bool:
-        if self._mesh is not None:
+        if self._legacy is not None or self._tasks is not None:
             return True
         if self._failed:
             return False
         try:
             import mediapipe as mp  # type: ignore
 
-            self._mesh = mp.solutions.face_mesh.FaceMesh(
-                static_image_mode=True, max_num_faces=1,
-                refine_landmarks=False, min_detection_confidence=0.4,
+            self._mp = mp
+            if hasattr(mp, "solutions"):  # legacy API
+                self._legacy = mp.solutions.face_mesh.FaceMesh(
+                    static_image_mode=True, max_num_faces=1,
+                    refine_landmarks=False, min_detection_confidence=0.4,
+                )
+                return True
+            # Tasks API — needs the FaceLandmarker model asset on disk.
+            from mediapipe.tasks.python import vision  # type: ignore
+            from mediapipe.tasks.python.core.base_options import BaseOptions  # type: ignore
+
+            model_path = os.getenv("AI_FACEMESH_MODEL", "models/face_landmarker.task")
+            if not os.path.isfile(model_path):
+                os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+                print(f"[behaviour] downloading FaceLandmarker model → {model_path}")
+                urllib.request.urlretrieve(_FACE_LANDMARKER_URL, model_path)
+            self._tasks = vision.FaceLandmarker.create_from_options(
+                vision.FaceLandmarkerOptions(
+                    base_options=BaseOptions(model_asset_path=model_path),
+                    running_mode=vision.RunningMode.IMAGE,
+                    num_faces=1,
+                    min_face_detection_confidence=0.4,
+                )
             )
             return True
-        except Exception as exc:  # noqa: BLE001 — missing wheel, GPU init, …
+        except Exception as exc:  # noqa: BLE001 — missing wheel, download, GPU init, …
             print(f"[behaviour] drowsiness disabled (mediapipe unavailable): {exc}")
             self._failed = True
             return False
 
+    def _landmarks(self, rgb: np.ndarray):
+        """Return the 468-landmark list (objects with .x/.y) or None."""
+        if self._legacy is not None:
+            res = self._legacy.process(rgb)
+            if not res.multi_face_landmarks:
+                return None
+            return res.multi_face_landmarks[0].landmark
+        img = self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB,
+            data=np.ascontiguousarray(rgb),
+        )
+        res = self._tasks.detect(img)
+        if not res.face_landmarks:
+            return None
+        return res.face_landmarks[0]
+
     def observe(self, face_bgr: np.ndarray) -> dict[str, Any] | None:
-        """Return {"ear", "mar", "pitch"} for the crop, or None if no mesh."""
+        """Return {"ear", "mar", "pitch"} for the crop, or None if no face."""
         if not self._ensure():
             return None
         h, w = face_bgr.shape[:2]
         if h < 40 or w < 40:
             return None
-        res = self._mesh.process(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
-        if not res.multi_face_landmarks:
+        lm = self._landmarks(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
+        if lm is None:
             return None
-        lm = res.multi_face_landmarks[0].landmark
         wanted = set(_EYE_LEFT + _EYE_RIGHT + list(_MOUTH_V) + list(_MOUTH_H) + _POSE_IDX)
         px = {i: (lm[i].x * w, lm[i].y * h) for i in wanted}
         arr = {i: np.array(v) for i, v in px.items()}
@@ -475,9 +527,10 @@ class _EpisodeTracker:
             self.meta["reasons"] = sorted(reasons)
 
     def _emit(self, end: float) -> dict[str, Any]:
+        started = end if self.start is None else self.start
         return {
-            "started": self.start,
-            "duration": max(1, int(round(end - (self.start or end)))),
+            "started": started,
+            "duration": max(1, int(round(end - started))),
             "meta": dict(self.meta),
         }
 

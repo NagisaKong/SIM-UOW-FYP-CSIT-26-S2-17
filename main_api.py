@@ -68,6 +68,15 @@ async def lifespan(app: FastAPI):
     print(cfg.log_summary())
     app.state.cfg = cfg
     app.state.pipeline = AttendancePipeline.from_env(cfg)
+    # CR-06 behaviour analysis (drowsiness / phone / heatmap). Opt-in via
+    # AI_BEHAVIOUR=true — detector models load lazily on the first frame.
+    if cfg.behaviour_enabled:
+        from core.behaviourAnalysis import BehaviourAnalysisService
+
+        app.state.behaviour = BehaviourAnalysisService(cfg, cfg.database_url)
+        print("[behaviour] CR-06 analysis service enabled (models load on first frame)")
+    else:
+        app.state.behaviour = None
     # U03 retention: drop class recordings / detection rows past their 30-day expiry.
     try:
         stats = purge_expired_recordings(cfg.database_url)
@@ -163,7 +172,7 @@ def health():
 
 # Mount every business-class router (userInformation, attendanceRecord,
 # notification, facialImage, attendanceSession, attendanceAppeal, report,
-# inClassBehaviour, trainConfiguration).
+# behaviourAnalysis, trainConfiguration).
 for r in all_routers:
     app.include_router(r)
 

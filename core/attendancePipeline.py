@@ -231,6 +231,42 @@ class AIConfig:
         default_factory=lambda: _env_int("AI_EMBEDDING_RETENTION_DAYS", 365)
     )
 
+    # ── Behaviour analysis (CR-06 / U32–U35) ────────────────────────────
+    # Master switch for the BehaviourAnalysisService (MediaPipe FaceMesh +
+    # YOLO phone detection). Default OFF so CPU deployments (Railway) pay
+    # nothing; enable on the GPU rig with AI_BEHAVIOUR=true.
+    behaviour_enabled: bool = field(
+        default_factory=lambda: _env_bool("AI_BEHAVIOUR", False)
+    )
+    # Eyes count as closed below this EAR; a drowsiness episode needs the
+    # signal to persist for ear_consec_seconds before it is recorded.
+    ear_threshold: float = field(
+        default_factory=lambda: _env_float("AI_EAR_THRESHOLD", 0.21)
+    )
+    ear_consec_seconds: float = field(
+        default_factory=lambda: _env_float("AI_EAR_CONSEC_SECONDS", 2.0)
+    )
+    mar_threshold: float = field(
+        default_factory=lambda: _env_float("AI_MAR_THRESHOLD", 0.6)
+    )
+    headpose_pitch_deg: float = field(
+        default_factory=lambda: _env_float("AI_HEADPOSE_PITCH_DEG", 30.0)
+    )
+    phone_conf: float = field(
+        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.35)
+    )
+    # At ~1 fps sampling, N consecutive samples ≈ N seconds of phone use
+    # before an episode is confirmed (debounces YOLO flicker).
+    phone_consec_samples: int = field(
+        default_factory=lambda: _env_int("AI_PHONE_CONSEC", 3)
+    )
+    heatmap_grid: tuple[int, int] = field(
+        default_factory=lambda: _env_tiles("AI_HEATMAP_GRID", (8, 6))
+    )
+    heatmap_flush_seconds: int = field(
+        default_factory=lambda: _env_int("AI_HEATMAP_FLUSH_SECONDS", 60)
+    )
+
     def log_summary(self) -> str:
         return (
             f"AIConfig(ctx_id={self.ctx_id}, device={self.device}, "
@@ -239,7 +275,8 @@ class AIConfig:
             f"facenet(enabled={self.use_facenet}, th={self.facenet_threshold}, "
             f"w={self.facenet_weight}), "
             f"mtcnn={self.use_mtcnn}, enhancer={self.enhancer_kind}"
-            f"{'(on)' if self.use_enhancer else '(off)'})"
+            f"{'(on)' if self.use_enhancer else '(off)'}, "
+            f"behaviour={'on' if self.behaviour_enabled else 'off'})"
         )
 
 
@@ -784,11 +821,15 @@ class ScrfdDetector:
         face's `raw.normed_embedding` is alignment-invariant, so recognition
         still works from a tile crop."""
         bbox = f.bbox.astype(int).copy()
-        bbox[0] += ox; bbox[1] += oy; bbox[2] += ox; bbox[3] += oy
+        bbox[0] += ox
+        bbox[1] += oy
+        bbox[2] += ox
+        bbox[3] += oy
         kps = None
         if getattr(f, "kps", None) is not None:
             kps = np.asarray(f.kps, dtype=float).copy()
-            kps[:, 0] += ox; kps[:, 1] += oy
+            kps[:, 0] += ox
+            kps[:, 1] += oy
         return Detection(bbox=bbox, det_score=float(f.det_score),
                          kps=kps, source="scrfd", raw=f)
 
