@@ -464,35 +464,61 @@
 
     <!-- U08 Review Attendance Appeals -->
     <section id="tab-appeals" class="panel" style="display:none">
-      <h2>Review Attendance Appeals</h2>
-      <p class="muted small">
-        Approving an appeal corrects the student's attendance record for that
-        session to <strong>Present</strong>.
-      </p>
-      <div class="row row--compact">
-        <button id="appeals-refresh">Refresh</button>
+      <div id="tappeals-list-view">
+        <h2>Review Attendance Appeals</h2>
+        <p class="muted small">
+          Open an appeal to read the student's reason and decide. Approving
+          corrects the attendance record for that session to <strong>Present</strong>.
+        </p>
+        <div class="row row--compact">
+          <button id="appeals-refresh">Refresh</button>
+        </div>
+        <p id="tappeals-msg" class="small"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Course / Session</th>
+              <th>Recorded As</th>
+              <th>Submitted</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tappeals-body"></tbody>
+        </table>
       </div>
-      <p id="tappeals-msg" class="small"></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Student</th>
-            <th>Course / Session</th>
-            <th>Recorded As</th>
-            <th>Reason</th>
-            <th>Submitted</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tappeals-body"></tbody>
-      </table>
+
+      <div id="tappeals-detail-view" style="display:none;max-width:720px">
+        <div class="row row--compact">
+          <button id="tappeal-back" class="secondary">← Back to list</button>
+        </div>
+        <h2>Appeal Details</h2>
+        <table>
+          <tbody>
+            <tr><th style="width:180px">Student</th><td id="tappeal-student">-</td></tr>
+            <tr><th>Course / Session</th><td id="tappeal-session">-</td></tr>
+            <tr><th>Recorded As</th><td id="tappeal-record">-</td></tr>
+            <tr><th>Submitted</th><td id="tappeal-created">-</td></tr>
+            <tr><th>Status</th><td id="tappeal-status">-</td></tr>
+            <tr><th>Reviewed At</th><td id="tappeal-reviewed">-</td></tr>
+          </tbody>
+        </table>
+        <h3 style="margin-top:1rem">Reason for Appeal</h3>
+        <p id="tappeal-reason" class="small"
+          style="background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap;min-height:3em">-</p>
+        <div id="tappeal-actions" class="row row--compact" style="margin-top:.5rem">
+          <button id="tappeal-approve">Approve — mark Present</button>
+          <button id="tappeal-reject" class="danger">Reject</button>
+        </div>
+        <p id="tappeal-detail-msg" class="small"></p>
+      </div>
     </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=5"></script>
-  <script src="teacher.js?v=15"></script>
+  <script src="teacher.js?v=16"></script>
 </body>
 
 </html>
