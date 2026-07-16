@@ -435,9 +435,26 @@ async function snapshotOneCamera(cam, sessionId) {
   return api(`/teacher/sessions/${sessionId}/scan`, {method: "POST", body: fd});
 }
 
+// Live behaviour state fed by the ~1 fps behaviour sampler (CR-06): which
+// recognised students are currently confirmed drowsy / on their phone.
+// Entries expire after BEH_STATE_TTL_MS so a stale flag can't stay red
+// forever if the sampler stops (behaviour disabled, service off, error).
+const BEH_STATE_TTL_MS = 8000;
+const behLive = {drowsy: new Set(), phone: new Set(), ts: 0};
+
+function behStateFor(accountId) {
+  if (accountId == null || Date.now() - behLive.ts > BEH_STATE_TTL_MS) return [];
+  const acts = [];
+  if (behLive.drowsy.has(accountId)) acts.push("Sleeping");
+  if (behLive.phone.has(accountId)) acts.push("Using phone");
+  return acts;
+}
+
 // Draw the detected face boxes returned for one camera onto its overlay.
 // Box coords are in the uploaded frame's pixels; the canvas is sized to the
 // frame so CSS scales it onto the displayed video automatically.
+// Colours: green = recognised + attentive, amber = unknown face,
+// red = recognised but flagged sleeping / using phone (label says which).
 function drawScanBoxes(cam, res) {
   const overlay = cam.overlay;
   if (!overlay) return;
@@ -452,10 +469,22 @@ function drawScanBoxes(cam, res) {
   ctx.textBaseline = "alphabetic";
   for (const b of (res.boxes || [])) {
     const [x1, y1, x2, y2] = b.bbox;
-    const color = b.recognised ? "#16a34a" : "#e3a008";
+    let color, text;
+    if (!b.recognised) {
+      color = "#e3a008";
+      text = "Unknown";
+    } else {
+      const acts = behStateFor(b.account_id);
+      if (acts.length) {
+        color = "#dc2626";
+        text = `${b.label} — ${acts.join(" + ")}`;
+      } else {
+        color = "#16a34a";
+        text = `${b.label} ${b.score}`;
+      }
+    }
     ctx.strokeStyle = color;
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    const text = b.recognised ? `${b.label} ${b.score}` : "Unknown";
     const tw = ctx.measureText(text).width;
     const ty = y1 > fontPx + 4 ? y1 : y2 + fontPx + 4; // keep label on-screen
     ctx.fillStyle = color;
@@ -604,6 +633,10 @@ async function behaviourTick() {
       return;
     }
     if (res.skipped) return; // backend still busy with the previous frame
+    // Feed the live overlay state (red boxes on the camera preview).
+    behLive.drowsy = new Set(res.drowsy_active || []);
+    behLive.phone = new Set(res.phone_active || []);
+    behLive.ts = Date.now();
     const drowsy = (res.drowsy_active || []).length;
     const phone = (res.phone_active || []).length;
     behStatusEl.textContent =
@@ -637,6 +670,9 @@ function stopBehaviourLoop(keepMessage = false) {
   behTimer = null;
   behBusy = false;
   behCamIndex = 0;
+  behLive.drowsy.clear();
+  behLive.phone.clear();
+  behLive.ts = 0;
   if (!keepMessage && behStatusEl) behStatusEl.textContent = "";
 }
 

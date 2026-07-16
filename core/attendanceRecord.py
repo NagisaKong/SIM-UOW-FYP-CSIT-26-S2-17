@@ -236,6 +236,7 @@ class AttendanceRecord:
             boxes.append({
                 "bbox": [x1, y1, x2, y2],
                 "recognised": bool(p.recognised),
+                "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
             })
@@ -269,6 +270,7 @@ class AttendanceRecord:
             boxes.append({
                 "bbox": [x1, y1, x2, y2],
                 "recognised": bool(p.recognised),
+                "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
             })
