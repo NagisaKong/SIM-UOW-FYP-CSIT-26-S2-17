@@ -214,6 +214,17 @@ function promptUploadFace(accountId) {
 // ── U23: start a training run and poll its progress ───────────
 const fmtPct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
 
+// Scroll to the U22 form and flash it so the admin sees where step 1 lives.
+function highlightTrainingDataForm() {
+  const form = document.getElementById("training-data-form");
+  if (!form) return;
+  form.scrollIntoView({behavior: "smooth", block: "center"});
+  form.style.transition = "box-shadow .3s, border-radius .3s";
+  form.style.borderRadius = "8px";
+  form.style.boxShadow = "0 0 0 3px var(--c-primary-soft), 0 0 0 5px var(--c-primary)";
+  setTimeout(() => { form.style.boxShadow = ""; }, 2500);
+}
+
 function renderTrainResult(r) {
   const body = document.getElementById("train-result-body");
   body.innerHTML = "";
@@ -264,8 +275,17 @@ document.getElementById('recalibrate-btn').addEventListener('click', async () =>
     statusText.textContent = note;
     statusText.style.color = "#16a34a";
   } catch (error) {
-    statusText.textContent = "Error: " + error.message;
-    statusText.style.color = "#c0392b";
+    document.getElementById("train-progress-wrap").style.display = "none";
+    if (/selectTrainingDataSet|dataset/i.test(error.message)) {
+      statusText.textContent =
+        "Step 1 first: assign the training data above — choose the train split " +
+        "and target model, then click “Save Data Assignment”.";
+      statusText.style.color = "#c0392b";
+      highlightTrainingDataForm();
+    } else {
+      statusText.textContent = "Error: " + error.message;
+      statusText.style.color = "#c0392b";
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = "Start Training";
