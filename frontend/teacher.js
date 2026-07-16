@@ -2,7 +2,7 @@ const user = requireAuth("teacher");
 document.getElementById("who").textContent = `${user.full_name || user.email} (teacher)`;
 
 // ── Tabs ──────────────────────────────────────────────────────
-const TABS = ["sessions", "live", "roster", "analytics", "behaviour", "reports", "leave"];
+const TABS = ["sessions", "live", "roster", "analytics", "behaviour", "reports", "leave", "appeals"];
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -16,6 +16,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "analytics") loadAnalytics();
     if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "leave") loadTeacherLeave();
+    if (btn.dataset.tab === "appeals") loadTeacherAppeals();
   });
 });
 
@@ -1043,6 +1044,68 @@ async function reviewLeave(leaveId, decision) {
 }
 
 document.getElementById("leave-refresh").addEventListener("click", loadTeacherLeave);
+
+// ──────────────────────────────────────────────────────────────
+// U08 Attendance Appeals tab (teacher review)
+// ──────────────────────────────────────────────────────────────
+async function loadTeacherAppeals() {
+  const body = document.getElementById("tappeals-body");
+  const msg = document.getElementById("tappeals-msg");
+  body.innerHTML = "";
+  msg.textContent = "";
+  try {
+    const res = await api("/teacher/appeals");
+    const appeals = res.appeals || [];
+    if (!appeals.length) {
+      body.append(el("tr", {}, el("td", {colspan: 7, class: "muted"}, "No appeals submitted.")));
+      return;
+    }
+    for (const a of appeals) {
+      const actions = el("td", {});
+      if (a.status === "pending") {
+        actions.append(
+          el("button", {onclick: () => reviewAppeal(a.appealid, "approved")}, "Approve"),
+          el("button", {class: "danger", onclick: () => reviewAppeal(a.appealid, "rejected")}, "Reject"),
+        );
+      } else {
+        actions.append(el("span", {class: "muted small"}, a.reviewed_at ? fmt(a.reviewed_at) : "—"));
+      }
+      body.append(el("tr", {},
+        el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
+        el("td", {}, `${a.course_code} — ${fmt(a.start_time)}`),
+        el("td", {}, el("span", {class: "badge"}, a.record_status || "-")),
+        el("td", {}, a.reason || ""),
+        el("td", {}, fmt(a.created_at)),
+        el("td", {}, a.status),
+        actions,
+      ));
+    }
+  } catch (e) {
+    msg.style.color = "#c0392b";
+    msg.textContent = e.message;
+  }
+}
+
+async function reviewAppeal(appealId, status) {
+  if (!confirm(`Set this appeal to ${status}?` +
+    (status === "approved" ? "\nThe attendance record will be corrected to Present." : ""))) return;
+  const msg = document.getElementById("tappeals-msg");
+  try {
+    await api(`/teacher/appeals/${appealId}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({status}),
+    });
+    msg.style.color = "#16a34a";
+    msg.textContent = `Appeal ${status}.`;
+    loadTeacherAppeals();
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+}
+
+document.getElementById("appeals-refresh").addEventListener("click", loadTeacherAppeals);
 
 // ── Init ──────────────────────────────────────────────────────
 (async () => {

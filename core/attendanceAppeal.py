@@ -1,9 +1,12 @@
 """Class 6: attendanceAppeal
 
 Covers UC:
-  U08 Submit Attendance Appeal       (appealAbsence)
+  U08 Submit Attendance Appeal       (appealAbsence, reviewAppeal — teacher)
   U28 Submit Leave Application       (makeLeaveApplication)
   U31 Review Leave Application       (approveLeaveApplication)
+
+Review authority (per FTD U08): appeals are reviewed by the TEACHER.
+Admins may list appeals for oversight but have no review endpoint.
 
 Attributes: applicant (account_id of the requester).
 """
@@ -76,6 +79,60 @@ class AttendanceAppeal:
         """
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(sql, (applicant,))
+            return {"success": True, "appeals": _dict_rows(cur)}
+
+    # ── U08 reviewAppeal (teacher decision) ─────────────────────────
+    def reviewAppeal(
+        self, reviewer: int, appeal_id: int, status: str,
+    ) -> dict[str, Any]:
+        if status not in ("approved", "rejected"):
+            raise HTTPException(400, "status must be approved/rejected")
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT attendancerecordid, status FROM attendance_appeal
+                   WHERE appealid = %s""",
+                (appeal_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Appeal not found")
+            record_id, current = row
+            if current != "pending":
+                raise HTTPException(409, f"This appeal has already been {current}")
+            cur.execute(
+                """UPDATE attendance_appeal
+                   SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+                   WHERE appealid = %s""",
+                (status, reviewer, appeal_id),
+            )
+            if status == "approved":
+                # The disputed record is corrected to 'present' (mirrors how
+                # an approved leave application writes 'leave' in U31).
+                cur.execute(
+                    """UPDATE attendance_record
+                       SET status = 'present', marked_at = NOW()
+                       WHERE attendancerecordid = %s""",
+                    (record_id,),
+                )
+        return {"success": True, "appeal_id": appeal_id, "status": status}
+
+    def listAppealsForReview(self) -> dict[str, Any]:
+        """All appeals with course/session context, pending first."""
+        sql = """
+            SELECT a.appealid, a.attendancerecordid, a.accountid,
+                   pi.full_name, pi.student_id,
+                   c.course_code, c.course_name, s.start_time,
+                   r.status AS record_status,
+                   a.reason, a.status, a.created_at, a.reviewed_at
+            FROM attendance_appeal a
+            JOIN attendance_record r ON r.attendancerecordid = a.attendancerecordid
+            JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+            JOIN course c ON c.courseid = s.courseid
+            LEFT JOIN personal_info pi ON pi.accountid = a.accountid
+            ORDER BY (a.status = 'pending') DESC, a.created_at DESC
+        """
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(sql)
             return {"success": True, "appeals": _dict_rows(cur)}
 
     # ── U28 makeLeaveApplication (future session) ───────────────────
@@ -248,6 +305,22 @@ def student_list_leave(
     return _svc(request).listMyLeaveApplications(user.account_id)
 
 
+# Teacher: U08 — review attendance appeals
+@router.get("/teacher/appeals")
+def teacher_list_appeals(
+    request: Request, user: CurrentUser = Depends(require_role("teacher"))
+):
+    return _svc(request).listAppealsForReview()
+
+
+@router.patch("/teacher/appeals/{appeal_id}")
+def teacher_review_appeal(
+    appeal_id: int, body: AppealReviewBody, request: Request,
+    user: CurrentUser = Depends(require_role("teacher")),
+):
+    return _svc(request).reviewAppeal(user.account_id, appeal_id, body.status)
+
+
 # Teacher: U31
 @router.get("/teacher/leave-applications")
 def teacher_list_leave(
@@ -266,36 +339,10 @@ def teacher_review_leave(
     )
 
 
-# Admin: oversee appeals (parity with old endpoints)
+# Admin: oversight only — admins may list appeals but not review them
+# (FTD U08: review authority belongs to the teacher).
 @router.get("/admin/appeals")
 def admin_list_appeals(
     request: Request, user: CurrentUser = Depends(require_role("admin"))
 ):
-    sql = """
-        SELECT a.appealid, a.attendancerecordid, a.accountid,
-               pi.full_name, pi.student_id,
-               a.reason, a.status, a.created_at, a.reviewed_at
-        FROM attendance_appeal a
-        LEFT JOIN personal_info pi ON pi.accountid = a.accountid
-        ORDER BY a.created_at DESC
-    """
-    with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
-        cur.execute(sql)
-        return {"success": True, "appeals": _dict_rows(cur)}
-
-
-@router.patch("/admin/appeals/{appeal_id}")
-def admin_review_appeal(
-    appeal_id: int, body: AppealReviewBody, request: Request,
-    user: CurrentUser = Depends(require_role("admin")),
-):
-    if body.status not in ("approved", "rejected"):
-        raise HTTPException(400, "Invalid status")
-    with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
-        cur.execute(
-            """UPDATE attendance_appeal
-               SET status = %s, reviewed_by = %s, reviewed_at = NOW()
-               WHERE appealid = %s""",
-            (body.status, user.account_id, appeal_id),
-        )
-    return {"success": True}
+    return _svc(request).listAppealsForReview()

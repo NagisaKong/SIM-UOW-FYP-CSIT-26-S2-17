@@ -865,41 +865,16 @@ async function loadAppeals() {
       actionsWrap.style.alignItems = "center";
       actionsTd.appendChild(actionsWrap);
 
+      // U08: appeals are reviewed by the teacher; the admin view is
+      // read-only oversight.
       const viewBtn = el("button", { class: "primary small", style: "margin: 0;" }, "View");
       viewBtn.addEventListener("click", () => openAppealDetail(app));
       actionsWrap.appendChild(viewBtn);
-
-      if (app.status === "pending") {
-        const approveBtn = el("button", { class: "success small", style: "margin: 0;" }, "Approve");
-        approveBtn.addEventListener("click", () => handleAppeal(app.appealid, "approved"));
-        actionsWrap.appendChild(approveBtn);
-
-        const rejectBtn = el("button", { class: "danger small", style: "margin: 0;" }, "Reject");
-        rejectBtn.addEventListener("click", () => handleAppeal(app.appealid, "rejected"));
-        actionsWrap.appendChild(rejectBtn);
-      }
 
       tr.appendChild(actionsTd);
       body.appendChild(tr);
     });
   } catch (e) {
-    console.error(e);
-  }
-}
-
-async function handleAppeal(appealId, status) {
-  if (!confirm(`Are you sure you want to set this appeal to ${status}?`)) return;
-  try {
-    await api(`/admin/appeals/${appealId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: status })
-    });
-    
-    showAppealsView("list");
-    loadAppeals();
-  } catch (e) {
-    alert("Error updating appeal: " + e.message);
     console.error(e);
   }
 }
@@ -951,15 +926,6 @@ function showAppealsView(view) {
 document.getElementById("btn-back-to-appeals").addEventListener("click", () => {
   showAppealsView("list");
 });
-
-async function reviewAppeal(id, status) {
-  await api(`/admin/appeals/${id}`, {
-    method: "PATCH",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({status}),
-  });
-  loadAppeals();
-}
 
 // ── Attendance Config (U03 detection interval + U34 thresholds) ───
 async function loadAttConfig() {
