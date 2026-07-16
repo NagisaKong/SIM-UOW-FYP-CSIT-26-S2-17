@@ -4,13 +4,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin — FYP Attendance</title>
+  <title>Admin — FRAS</title>
+  <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
   <link rel="stylesheet" href="style.css?v=4">
 </head>
 
 <body>
   <header class="topbar">
-    <h1>FRAS Admin Console</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
+        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Admin Console</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -473,8 +475,8 @@
         <label>Train split (%)<input name="train_pct" type="number" min="10" max="95" value="80"></label>
         <label>Target model
           <select name="model_name">
-            <option value="arcface_ensemble">arcface_ensemble (SCRFD+ArcFace)</option>
-            <option value="facenet_ensemble">facenet_ensemble (MTCNN+FaceNet)</option>
+            <option value="arcface">arcface (SCRFD + ArcFace)</option>
+            <option value="facenet">facenet (MTCNN + FaceNet)</option>
           </select>
         </label>
         <button type="submit">Save Data Assignment</button>
@@ -482,13 +484,30 @@
       <p id="training-data-msg" class="error"></p>
 
       <h3 style="margin-top:1.5rem">Configure & Train ML Model</h3>
-      <p class="muted small">Generates synthetic StyleGAN variations and re-fits the similarity threshold for the
-        selected model. Training progress is reported below.</p>
+      <p class="muted small">Evaluates recognition over the assigned embedding data (genuine vs. imposter pairs)
+        and re-fits the similarity threshold for the selected model. Progress and accuracy statistics are
+        reported below; deploy the result to activate it.</p>
       <button id="recalibrate-btn">Start Training</button>
-      <p id="recalibrate-status" class="muted small" style="margin-top:.75rem"></p>
+      <div id="train-progress-wrap" style="display:none;max-width:420px;margin-top:.75rem">
+        <div style="background:var(--c-border-2);border-radius:6px;overflow:hidden;height:10px">
+          <div id="train-progress-bar" style="background:var(--c-primary);height:100%;width:0%"></div>
+        </div>
+      </div>
+      <p id="recalibrate-status" class="muted small" style="margin-top:.5rem"></p>
+      <div id="train-result" style="display:none;margin-top:.5rem">
+        <table style="max-width:560px">
+          <thead>
+            <tr><th>Model</th><th>New threshold</th><th>Accuracy</th><th>FP rate</th><th>FN rate</th><th>Pairs (gen/imp)</th></tr>
+          </thead>
+          <tbody id="train-result-body"></tbody>
+        </table>
+        <button id="deploy-btn" style="margin-top:.5rem">Deploy This Model</button>
+        <p id="deploy-msg" class="small"></p>
+      </div>
 
       <h3 style="margin-top:1.5rem">Retrain & Redeploy</h3>
-      <p class="muted small">Retrain the active model on the latest data and deploy if performance improves.</p>
+      <p class="muted small">One click: re-evaluate the selected model on the latest data and deploy the new
+        threshold. If it scores worse than the current deployment you will be asked to confirm.</p>
       <button id="retrain-btn">Retrain & Redeploy</button>
       <p id="retrain-msg" class="error"></p>
     </section>
@@ -531,7 +550,7 @@
   </main>
 
   <script src="app.js?v=5"></script>
-  <script src="admin.js?v=7"></script>
+  <script src="admin.js?v=8"></script>
 </body>
 
 </html>

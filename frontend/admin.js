@@ -211,37 +211,97 @@ function promptUploadFace(accountId) {
   input.click();
 }
 
+// ── U23: start a training run and poll its progress ───────────
+const fmtPct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+
+function renderTrainResult(r) {
+  const body = document.getElementById("train-result-body");
+  body.innerHTML = "";
+  body.append(el("tr", {},
+    el("td", {}, r.model_name),
+    el("td", {}, String(r.new_threshold)),
+    el("td", {}, fmtPct(r.accuracy)),
+    el("td", {}, fmtPct(r.fpr)),
+    el("td", {}, fmtPct(r.fnr)),
+    el("td", {}, `${r.genuine_pairs} / ${r.imposter_pairs}`),
+  ));
+  document.getElementById("train-result").style.display = "";
+}
+
+async function pollTraining(statusText, bar) {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 800));
+    const s = await api("/admin/training-status");
+    bar.style.width = (s.progress || 0) + "%";
+    statusText.textContent = `${s.message || ""} (${s.progress || 0}%)`;
+    if (s.status === "done") return s.result;
+    if (s.status === "failed") throw new Error(s.error || "Training failed");
+  }
+}
+
 document.getElementById('recalibrate-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('recalibrate-btn');
-    const statusText = document.getElementById('recalibrate-status');
-    
-    // Disable button to prevent double-clicking while the heavy GPU loads
-    btn.disabled = true;
-    btn.textContent = "Running calibration…";
-    statusText.innerText = "Running StyleGAN — this may take a few minutes. Check the backend terminal for progress.";
-    statusText.style.color = "";
-
-    try {
-        // Use your existing api() wrapper which automatically handles the auth token
-        const result = await api('/admin/recalibrate', {
-            method: 'POST'
-        });
-
-        if (result.status === 'success') {
-            statusText.innerText = `✅ Success! Threshold automatically updated to: ${result.new_threshold}`;
-            statusText.style.color = "#16a34a"; // Green
-        } else {
-            statusText.innerText = `❌ Error: Something went wrong.`;
-            statusText.style.color = "#c0392b"; // Red
-        }
-    } catch (error) {
-        statusText.innerText = `❌ Connection error: ${error.message}`;
-        statusText.style.color = "#c0392b"; // Red
-    } finally {
-        // Re-enable the button
-        btn.disabled = false;
-        btn.textContent = "Start Training";
+  const btn = document.getElementById('recalibrate-btn');
+  const statusText = document.getElementById('recalibrate-status');
+  const bar = document.getElementById('train-progress-bar');
+  btn.disabled = true;
+  btn.textContent = "Training…";
+  statusText.style.color = "";
+  document.getElementById("train-result").style.display = "none";
+  document.getElementById("train-progress-wrap").style.display = "";
+  bar.style.width = "0%";
+  try {
+    await api('/admin/train', {method: 'POST'});
+    const result = await pollTraining(statusText, bar);
+    renderTrainResult(result);
+    let note = `Done in ${result.duration_s}s. New threshold ${result.new_threshold}, ` +
+      `accuracy ${fmtPct(result.accuracy)}`;
+    if (result.current_accuracy != null) {
+      note += ` (current deployment: ${fmtPct(result.current_accuracy)})`;
     }
+    if (result.limited_calibration) {
+      note += " — calibrated from imposter pairs only (each account has a single embedding).";
+    }
+    statusText.textContent = note;
+    statusText.style.color = "#16a34a";
+  } catch (error) {
+    statusText.textContent = "Error: " + error.message;
+    statusText.style.color = "#c0392b";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Start Training";
+  }
+});
+
+// ── U25: deploy the last completed training run ────────────────
+document.getElementById("deploy-btn").addEventListener("click", async () => {
+  const msg = document.getElementById("deploy-msg");
+  msg.style.color = "#333";
+  msg.textContent = "Deploying…";
+  try {
+    let res = await api("/admin/deploy", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({force: false}),
+    });
+    if (res.warning) {
+      if (!confirm(`${res.warning}\nDeploy anyway?`)) {
+        msg.style.color = "#c0392b";
+        msg.textContent = "Deploy aborted; previous model retained.";
+        return;
+      }
+      res = await api("/admin/deploy", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({force: true}),
+      });
+    }
+    msg.style.color = "#16a34a";
+    msg.textContent = `Deployed. Threshold ${res.new_threshold} is now active` +
+      (res.applied_live ? " (live pipeline updated)." : " (applies on next restart).");
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
 });
 
 document.getElementById("user-form").addEventListener("submit", async (e) => {
@@ -673,8 +733,8 @@ document.getElementById("ensemble-form").addEventListener("submit", async (e) =>
   // Backend expects a list of model names. Two or more => ensemble voting;
   // a single model runs on its own.
   const models = [];
-  if (form.use_arcface.checked) models.push("arcface_ensemble");
-  if (form.use_facenet.checked) models.push("facenet_ensemble");
+  if (form.use_arcface.checked) models.push("arcface");
+  if (form.use_facenet.checked) models.push("facenet");
   if (!models.length) {
     msg.style.color = "#c0392b";
     msg.textContent = "Select at least one model.";
@@ -687,9 +747,10 @@ document.getElementById("ensemble-form").addEventListener("submit", async (e) =>
       body: JSON.stringify({models, weighting: form.weighting.value}),
     });
     msg.style.color = "#16a34a";
-    msg.textContent = res.is_ensemble
-      ? `Ensemble saved (${models.length} models, ${res.weighting} weighting).`
-      : "Saved. Single model active (no ensemble voting).";
+    msg.textContent = (res.is_ensemble
+      ? `Ensemble active (${res.models.join(" + ")}, ${res.weighting} weighting).`
+      : `Saved. Single model active: ${res.models.join("")} (no ensemble voting).`)
+      + ((res.warnings || []).length ? ` Note: ${res.warnings.join("; ")}` : "");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -703,17 +764,19 @@ document.getElementById("retrain-btn").addEventListener("click", async () => {
   msg.style.color = "#333";
   msg.textContent = "Retraining…";
   try {
-    const res = await api("/admin/retrain", {method: "POST"});
+    let res = await api("/admin/retrain", {method: "POST"});
     if (res.warning) {
       if (!confirm(`${res.warning}\nDeploy anyway?`)) {
         msg.style.color = "#c0392b";
         msg.textContent = "Retrain aborted; previous model retained.";
         return;
       }
-      await api("/admin/retrain?force=true", {method: "POST"});
+      res = await api("/admin/retrain?force=true", {method: "POST"});
     }
     msg.style.color = "#16a34a";
-    msg.textContent = `Redeployed. New threshold: ${res.new_threshold}`;
+    msg.textContent = `Redeployed ${res.model_name}. New threshold ${res.new_threshold}, ` +
+      `accuracy ${(res.accuracy * 100).toFixed(1)}%` +
+      (res.applied_live ? " (live)." : " (applies on next restart).");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

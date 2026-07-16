@@ -1,7 +1,12 @@
 """Class 3: notification
 
 Covers UC: U05 Attendance Status Notification (late/absent emails),
-           U29 Long-term Absence Reminder.
+           U29 Long-term Absence Reminder,
+           U08/U31 review-outcome emails (appeal / leave decisions).
+
+U29 trigger thresholds come from the admin-configured
+attendance_threshold_config table (U34); the module constants are only
+the last-resort fallback when that table is unavailable.
 
 Absorbs former api/notifications.py — SMTP helpers are now private
 functions inside this module.
@@ -18,6 +23,7 @@ from typing import Any, Iterable
 import psycopg2
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
+from core.attendanceRecord import load_threshold_config
 from core.userInformation import CurrentUser, require_role
 
 
@@ -81,9 +87,17 @@ class Notification:
     ) -> dict[str, Any]:
         """Evaluate every active student; send a reminder when they hit
         either trigger. Approved leave applications are excluded.
+
+        Thresholds default to the admin-configured values in
+        attendance_threshold_config (U34); explicit arguments override.
         """
-        n_thr = consecutive_threshold or self.DEFAULT_CONSECUTIVE_ABSENCE_THRESHOLD
-        rate_thr = min_rate if min_rate is not None else self.DEFAULT_MIN_RATE
+        cfg = load_threshold_config(self.database_url)
+        n_thr = consecutive_threshold or int(
+            cfg.get("absence_threshold", self.DEFAULT_CONSECUTIVE_ABSENCE_THRESHOLD)
+        )
+        rate_thr = min_rate if min_rate is not None else float(
+            cfg.get("minimum_attendance_rate", self.DEFAULT_MIN_RATE)
+        )
 
         # Pull each student's most recent records + overall rate.
         sql = """
@@ -237,6 +251,48 @@ def _send_batch(recipients: Iterable[dict]) -> dict[str, Any]:
 def send_late_absent_emails(recipients: Iterable[dict]) -> dict[str, Any]:
     """Backward-compatible export used by attendanceSession.endSession."""
     return _send_batch(recipients)
+
+
+def send_review_outcome_email(recipient: dict[str, Any]) -> bool:
+    """U08/U31: email a student the outcome of their appeal or leave
+    application review. Expected keys: email, full_name, kind
+    ('appeal' | 'leave application'), decision ('approved' | 'rejected'),
+    course, start_time; optional: comment, corrected_status.
+    Safe to run as a BackgroundTasks payload — never raises."""
+    try:
+        email = recipient.get("email")
+        if not email:
+            return False
+        kind = recipient.get("kind", "request")
+        decision = (recipient.get("decision") or "").upper()
+        course = recipient.get("course") or ""
+        when = recipient.get("start_time") or ""
+        lines = [
+            f"Hi {recipient.get('full_name') or 'Student'},",
+            "",
+            f"Your {kind} for {course} (session starting {when}) has been "
+            f"reviewed: {decision}.",
+        ]
+        corrected = recipient.get("corrected_status")
+        if corrected:
+            lines.append(
+                f"Your attendance record for this session has been updated "
+                f"to: {corrected.upper()}."
+            )
+        comment = recipient.get("comment")
+        if comment:
+            lines.append(f"Reviewer comment: {comment}")
+        lines += [
+            "",
+            "You can view the details on the student dashboard.",
+            "",
+            "— FYP-26-S2-17 Attendance System",
+        ]
+        subject = f"[Attendance] Your {kind} was {decision.lower()} — {course}"
+        return _send_email(email, subject, "\n".join(lines))
+    except Exception as exc:  # noqa: BLE001 — background task must not raise
+        print(f"[notify:error] review outcome | {exc}")
+        return False
 
 
 # ── Router ───────────────────────────────────────────────────────────

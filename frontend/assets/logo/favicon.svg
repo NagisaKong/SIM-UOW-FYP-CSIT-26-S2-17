@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FRAS">
+  <!-- Favicon-optimised: thicker scan corners, larger face and badge so the
+       mark stays legible at 16x16 / 32x32. -->
+  <g stroke="#2a4b7f" stroke-width="7" fill="none" stroke-linecap="round">
+    <path d="M7 20 V11 Q7 7 11 7 H20"/>
+    <path d="M44 7 H53 Q57 7 57 11 V20"/>
+    <path d="M57 44 V53 Q57 57 53 57 H44"/>
+    <path d="M20 57 H11 Q7 57 7 53 V44"/>
+  </g>
+  <circle cx="30" cy="24" r="10" fill="#2a4b7f"/>
+  <path d="M14 50 Q14 36 30 36 Q46 36 46 50 Q46 52 44 52 H16 Q14 52 14 50 Z" fill="#2a4b7f"/>
+  <circle cx="48" cy="47" r="14" fill="#16a34a"/>
+  <path d="M41 47 l5 5 l9 -10" stroke="#ffffff" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

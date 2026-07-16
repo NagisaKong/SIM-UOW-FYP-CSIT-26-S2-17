@@ -1151,6 +1151,15 @@ class AttendancePipeline:
             )
         loaded = manager.hydrate_all()
         print(f"[pipeline] DB hydrate: {loaded}")
+        # U25: an admin-deployed similarity threshold (MODEL_CONFIGS) takes
+        # precedence over the env default so deployments survive restarts.
+        from core.trainConfiguration import load_deployed_threshold
+
+        for name, store in manager.stores.items():
+            deployed = load_deployed_threshold(cfg.database_url, name)
+            if deployed is not None:
+                store.threshold = deployed
+                print(f"[pipeline] {name}: deployed threshold {deployed} applied")
         return cls(cfg, manager)
 
     def process_frame(self, frame: np.ndarray) -> FrameResult:

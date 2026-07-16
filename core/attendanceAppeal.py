@@ -17,9 +17,10 @@ import contextlib
 from typing import Any
 
 import psycopg2
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from core.notification import send_review_outcome_email
 from core.userInformation import CurrentUser, require_role
 
 
@@ -84,19 +85,28 @@ class AttendanceAppeal:
     # ── U08 reviewAppeal (teacher decision) ─────────────────────────
     def reviewAppeal(
         self, reviewer: int, appeal_id: int, status: str,
+        background_tasks: BackgroundTasks | None = None,
     ) -> dict[str, Any]:
         if status not in ("approved", "rejected"):
             raise HTTPException(400, "status must be approved/rejected")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                """SELECT attendancerecordid, status FROM attendance_appeal
-                   WHERE appealid = %s""",
+                """SELECT a.attendancerecordid, a.status,
+                          ua.email, pi.full_name,
+                          c.course_code, c.course_name, s.start_time
+                   FROM attendance_appeal a
+                   JOIN attendance_record r ON r.attendancerecordid = a.attendancerecordid
+                   JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
+                   JOIN course c ON c.courseid = s.courseid
+                   JOIN user_account ua ON ua.accountid = a.accountid
+                   LEFT JOIN personal_info pi ON pi.accountid = a.accountid
+                   WHERE a.appealid = %s""",
                 (appeal_id,),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Appeal not found")
-            record_id, current = row
+            record_id, current, email, full_name, code, cname, start_time = row
             if current != "pending":
                 raise HTTPException(409, f"This appeal has already been {current}")
             cur.execute(
@@ -114,6 +124,17 @@ class AttendanceAppeal:
                        WHERE attendancerecordid = %s""",
                     (record_id,),
                 )
+        # U08: the student is notified once the appeal has been reviewed.
+        payload = {
+            "email": email, "full_name": full_name, "kind": "attendance appeal",
+            "decision": status, "course": f"{code} {cname}".strip(),
+            "start_time": start_time,
+            "corrected_status": "present" if status == "approved" else None,
+        }
+        if background_tasks is not None:
+            background_tasks.add_task(send_review_outcome_email, payload)
+        else:
+            send_review_outcome_email(payload)
         return {"success": True, "appeal_id": appeal_id, "status": status}
 
     def listAppealsForReview(self) -> dict[str, Any]:
@@ -193,19 +214,27 @@ class AttendanceAppeal:
     def approveLeaveApplication(
         self, reviewer: int, leave_id: int, decision: str,
         comment: str | None = None,
+        background_tasks: BackgroundTasks | None = None,
     ) -> dict[str, Any]:
         if decision not in ("approved", "rejected"):
             raise HTTPException(400, "decision must be approved/rejected")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                """SELECT accountid, attendancesessionid FROM leave_application
-                   WHERE leaveapplicationid = %s""",
+                """SELECT la.accountid, la.attendancesessionid,
+                          ua.email, pi.full_name,
+                          c.course_code, c.course_name, s.start_time
+                   FROM leave_application la
+                   JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
+                   JOIN course c ON c.courseid = s.courseid
+                   JOIN user_account ua ON ua.accountid = la.accountid
+                   LEFT JOIN personal_info pi ON pi.accountid = la.accountid
+                   WHERE la.leaveapplicationid = %s""",
                 (leave_id,),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Leave application not found")
-            student_id, session_id = row
+            student_id, session_id, email, full_name, code, cname, start_time = row
             cur.execute(
                 """UPDATE leave_application
                    SET status = %s, reviewed_by = %s, reviewed_at = NOW(),
@@ -223,6 +252,17 @@ class AttendanceAppeal:
                          DO UPDATE SET status = 'leave', marked_at = NOW()""",
                     (session_id, student_id),
                 )
+        # U31: notify the student of the review outcome.
+        payload = {
+            "email": email, "full_name": full_name, "kind": "leave application",
+            "decision": decision, "course": f"{code} {cname}".strip(),
+            "start_time": start_time, "comment": comment,
+            "corrected_status": "leave" if decision == "approved" else None,
+        }
+        if background_tasks is not None:
+            background_tasks.add_task(send_review_outcome_email, payload)
+        else:
+            send_review_outcome_email(payload)
         return {"success": True}
 
     def listPendingLeaveApplications(self) -> dict[str, Any]:
@@ -315,10 +355,13 @@ def teacher_list_appeals(
 
 @router.patch("/teacher/appeals/{appeal_id}")
 def teacher_review_appeal(
-    appeal_id: int, body: AppealReviewBody, request: Request,
+    appeal_id: int, body: AppealReviewBody,
+    background_tasks: BackgroundTasks, request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
-    return _svc(request).reviewAppeal(user.account_id, appeal_id, body.status)
+    return _svc(request).reviewAppeal(
+        user.account_id, appeal_id, body.status, background_tasks,
+    )
 
 
 # Teacher: U31
@@ -331,11 +374,12 @@ def teacher_list_leave(
 
 @router.patch("/teacher/leave-applications/{leave_id}")
 def teacher_review_leave(
-    leave_id: int, body: LeaveReviewBody, request: Request,
+    leave_id: int, body: LeaveReviewBody,
+    background_tasks: BackgroundTasks, request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
     return _svc(request).approveLeaveApplication(
-        user.account_id, leave_id, body.decision, body.comment
+        user.account_id, leave_id, body.decision, body.comment, background_tasks,
     )
 
 
