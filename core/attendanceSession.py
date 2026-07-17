@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.attendanceRecord import load_threshold_config
-from core.notification import send_late_absent_emails
+from core.notification import Notification, send_late_absent_emails
 from core.userInformation import CurrentUser, require_role
 
 
@@ -197,11 +197,17 @@ class AttendanceSession:
                 (session_id,),
             )
         recipients = self._fetch_late_absent_recipients(session_id)
+        # U29 (FTD): the long-term-absence check runs automatically after
+        # every completed session, using the U34-configured thresholds.
+        reminder_scan = Notification(self.database_url).generateLongTermAbsenceNotification
         if background_tasks is not None:
             background_tasks.add_task(send_late_absent_emails, recipients)
+            background_tasks.add_task(reminder_scan)
             queued = len(recipients)
         else:
             send_late_absent_emails(recipients)
+            with contextlib.suppress(Exception):
+                reminder_scan()
             queued = len(recipients)
         return {
             "success": True, "session_id": session_id,

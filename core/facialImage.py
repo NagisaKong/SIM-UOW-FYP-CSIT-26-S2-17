@@ -22,7 +22,7 @@ import numpy as np
 import psycopg2
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from core.attendancePipeline import AttendancePipeline
+from core.attendancePipeline import AttendancePipeline, MultipleFacesError
 from core.userInformation import CurrentUser, get_current_user, require_role
 
 
@@ -123,7 +123,18 @@ class FacialImage:
     def _enrol(
         self, account_id: int, images: list[np.ndarray],
     ) -> dict[str, Any]:
-        written = self.pipeline.enrol_student(account_id=account_id, images=images)
+        try:
+            written = self.pipeline.enrol_student(
+                account_id=account_id, images=images, reject_multiple=True,
+            )
+        except MultipleFacesError as e:
+            return {
+                "success": False,
+                "message": (
+                    f"{e.count} faces detected. Please make sure only your face "
+                    "is in the photo and retake."
+                ),
+            }
         if not written:
             return {"success": False, "message": "No face detected, please retake the photo"}
         return {

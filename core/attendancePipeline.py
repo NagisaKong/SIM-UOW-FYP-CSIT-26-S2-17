@@ -108,6 +108,54 @@ def _env_int(key: str, default: int) -> int:
     return int(v) if v else default
 
 
+def _env_det_size(key: str, default: int) -> tuple[int, int]:
+    """SCRFD detection input size. Accepts a single int (square, e.g. "1280")
+    or "WxH" (e.g. "1280x1280"). Larger = better at detecting small / distant
+    faces, at the cost of more compute per frame."""
+    v = os.getenv(key)
+    if not v:
+        return (default, default)
+    v = v.strip().lower()
+    if "x" in v:
+        w, h = v.split("x", 1)
+        return (int(w), int(h))
+    s = int(v)
+    return (s, s)
+
+
+def _env_tiles(key: str, default: tuple[int, int]) -> tuple[int, int]:
+    """Detection tiling grid. "2x2" = 2 cols × 2 rows; a single int "2" = 2x2.
+    1x1 (default) disables tiling."""
+    v = os.getenv(key)
+    if not v:
+        return default
+    v = v.strip().lower()
+    if "x" in v:
+        c, r = v.split("x", 1)
+        return (max(1, int(c)), max(1, int(r)))
+    n = max(1, int(v))
+    return (n, n)
+
+
+def _onnx_providers(ctx_id: int) -> list[str]:
+    """ONNX Runtime execution providers for InsightFace. ctx_id >= 0 requests
+    GPU: prefer CUDA with CPU fallback, but only if the installed runtime
+    actually exposes CUDA — a CPU-only `onnxruntime` wheel will not, so we fall
+    back to CPU rather than silently pretending to use the GPU."""
+    if ctx_id < 0:
+        return ["CPUExecutionProvider"]
+    try:
+        import onnxruntime as ort
+        avail = set(ort.get_available_providers())
+    except Exception:
+        return ["CPUExecutionProvider"]
+    providers = []
+    if "CUDAExecutionProvider" in avail:
+        providers.append("CUDAExecutionProvider")
+    providers.append("CPUExecutionProvider")
+    return providers
+
+
 @dataclass
 class AIConfig:
     """Prototype AI configuration.
@@ -126,9 +174,24 @@ class AIConfig:
     device: str = field(default_factory=lambda: os.getenv("AI_DEVICE", "cpu"))
 
     # ── Detection ───────────────────────────────────────────────────────
-    det_size: tuple[int, int] = (640, 640)
+    # Larger det_size lets SCRFD see smaller / farther faces. Default 1280
+    # (vs the old 640) roughly doubles the usable range for a 1080p camera.
+    # Override with AI_DET_SIZE (e.g. "960", "1280", or "1920x1080").
+    det_size: tuple[int, int] = field(
+        default_factory=lambda: _env_det_size("AI_DET_SIZE", 1280)
+    )
     det_thresh: float = field(default_factory=lambda: _env_float("AI_DET_THRESH", 0.5))
     use_mtcnn: bool = field(default_factory=lambda: _env_bool("AI_USE_MTCNN", True))
+    # Tiled detection for long range: split each frame into cols×rows tiles and
+    # run the detector on each, so distant (small) faces become large enough to
+    # detect. Multiplies detection compute by cols*rows. "2x2" ≈ doubles range.
+    # Default 1x1 = off (keeps CPU deployments fast). Set AI_DETECT_TILES=2x2.
+    detect_tiles: tuple[int, int] = field(
+        default_factory=lambda: _env_tiles("AI_DETECT_TILES", (1, 1))
+    )
+    detect_tile_overlap: float = field(
+        default_factory=lambda: _env_float("AI_DETECT_TILE_OVERLAP", 0.15)
+    )
 
     # ── Recognition ─────────────────────────────────────────────────────
     arcface_threshold: float = field(
@@ -168,6 +231,53 @@ class AIConfig:
         default_factory=lambda: _env_int("AI_EMBEDDING_RETENTION_DAYS", 365)
     )
 
+    # ── Behaviour analysis (CR-06 / U32–U35) ────────────────────────────
+    # Master switch for the BehaviourAnalysisService (MediaPipe FaceMesh +
+    # YOLO phone detection). Default OFF so CPU deployments (Railway) pay
+    # nothing; enable on the GPU rig with AI_BEHAVIOUR=true.
+    behaviour_enabled: bool = field(
+        default_factory=lambda: _env_bool("AI_BEHAVIOUR", False)
+    )
+    # Eyes count as closed below this EAR; a drowsiness episode needs the
+    # signal to persist for ear_consec_seconds before it is recorded.
+    ear_threshold: float = field(
+        default_factory=lambda: _env_float("AI_EAR_THRESHOLD", 0.21)
+    )
+    ear_consec_seconds: float = field(
+        default_factory=lambda: _env_float("AI_EAR_CONSEC_SECONDS", 2.0)
+    )
+    mar_threshold: float = field(
+        default_factory=lambda: _env_float("AI_MAR_THRESHOLD", 0.6)
+    )
+    headpose_pitch_deg: float = field(
+        default_factory=lambda: _env_float("AI_HEADPOSE_PITCH_DEG", 30.0)
+    )
+    phone_conf: float = field(
+        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.35)
+    )
+    # At ~1 fps sampling, N consecutive samples ≈ N seconds of phone use
+    # before an episode is confirmed (debounces YOLO flicker).
+    phone_consec_samples: int = field(
+        default_factory=lambda: _env_int("AI_PHONE_CONSEC", 3)
+    )
+    # YOLO weights for phone detection. yolov8n = lightest; on a GPU rig
+    # yolov8s/yolov8m markedly improve small-object (distant phone) recall.
+    phone_model: str = field(
+        default_factory=lambda: os.getenv("AI_PHONE_MODEL", "yolov8n.pt")
+    )
+    # YOLO inference size. The ultralytics default (640) halves a 720p frame
+    # and makes phones beyond ~3 m too small to detect; 1280 keeps them at
+    # native resolution at ~4x the (still tiny) nano compute cost.
+    phone_imgsz: int = field(
+        default_factory=lambda: _env_int("AI_PHONE_IMGSZ", 1280)
+    )
+    heatmap_grid: tuple[int, int] = field(
+        default_factory=lambda: _env_tiles("AI_HEATMAP_GRID", (8, 6))
+    )
+    heatmap_flush_seconds: int = field(
+        default_factory=lambda: _env_int("AI_HEATMAP_FLUSH_SECONDS", 60)
+    )
+
     def log_summary(self) -> str:
         return (
             f"AIConfig(ctx_id={self.ctx_id}, device={self.device}, "
@@ -176,7 +286,8 @@ class AIConfig:
             f"facenet(enabled={self.use_facenet}, th={self.facenet_threshold}, "
             f"w={self.facenet_weight}), "
             f"mtcnn={self.use_mtcnn}, enhancer={self.enhancer_kind}"
-            f"{'(on)' if self.use_enhancer else '(off)'})"
+            f"{'(on)' if self.use_enhancer else '(off)'}, "
+            f"behaviour={'on' if self.behaviour_enabled else 'off'})"
         )
 
 
@@ -390,6 +501,14 @@ class FrameResult:
     predictions: list[Prediction]
     enhanced: bool
     detections: list[Detection]
+
+
+class MultipleFacesError(Exception):
+    """Raised during enrolment when more than one face is in the photo."""
+
+    def __init__(self, count: int):
+        self.count = count
+        super().__init__(f"{count} faces detected")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -669,34 +788,88 @@ def maybe_enhance(
 # ════════════════════════════════════════════════════════════════════════
 # 7. Detectors
 # ════════════════════════════════════════════════════════════════════════
+def _build_face_analysis(cfg: AIConfig):
+    """Construct the shared InsightFace app (SCRFD detection + ArcFace
+    recognition) with explicit providers, and log which device each model
+    actually runs on so a CPU-only onnxruntime install can't hide as 'GPU'."""
+    from insightface.app import FaceAnalysis  # deferred
+
+    providers = _onnx_providers(cfg.ctx_id)
+    app = FaceAnalysis(
+        name="buffalo_l",
+        allowed_modules=["detection", "recognition"],
+        providers=providers,
+    )
+    app.prepare(ctx_id=cfg.ctx_id, det_size=cfg.det_size, det_thresh=cfg.det_thresh)
+    try:
+        active = {
+            task: m.session.get_providers()[0]
+            for task, m in app.models.items()
+            if getattr(m, "session", None) is not None
+        }
+        on_gpu = any("CUDA" in p for p in active.values())
+        print(f"[insightface] ctx_id={cfg.ctx_id} requested={providers} "
+              f"active={active} -> {'GPU' if on_gpu else 'CPU'}")
+        if cfg.ctx_id >= 0 and not on_gpu:
+            print("[insightface] WARNING: GPU requested but running on CPU. "
+                  "Install onnxruntime-gpu (and a matching CUDA/cuDNN) — the "
+                  "plain `onnxruntime` wheel is CPU-only.")
+    except Exception:
+        pass
+    return app
+
+
 class ScrfdDetector:
     name = "scrfd"
 
     def __init__(self, cfg: AIConfig, shared_app=None):
-        if shared_app is None:
-            from insightface.app import FaceAnalysis  # deferred
+        self.app = shared_app if shared_app is not None else _build_face_analysis(cfg)
 
-            self.app = FaceAnalysis(
-                name="buffalo_l",
-                allowed_modules=["detection", "recognition"],
-            )
-            self.app.prepare(
-                ctx_id=cfg.ctx_id, det_size=cfg.det_size,
-                det_thresh=cfg.det_thresh,
-            )
-        else:
-            self.app = shared_app
+    @staticmethod
+    def _to_detection(f, ox: int = 0, oy: int = 0) -> Detection:
+        """Wrap an InsightFace face as a Detection, shifting bbox/kps by the
+        tile origin (ox, oy) so tiled coords map back to the full frame. The
+        face's `raw.normed_embedding` is alignment-invariant, so recognition
+        still works from a tile crop."""
+        bbox = f.bbox.astype(int).copy()
+        bbox[0] += ox
+        bbox[1] += oy
+        bbox[2] += ox
+        bbox[3] += oy
+        kps = None
+        if getattr(f, "kps", None) is not None:
+            kps = np.asarray(f.kps, dtype=float).copy()
+            kps[:, 0] += ox
+            kps[:, 1] += oy
+        return Detection(bbox=bbox, det_score=float(f.det_score),
+                         kps=kps, source="scrfd", raw=f)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
-        faces = self.app.get(frame)
+        return [self._to_detection(f) for f in self.app.get(frame)]
+
+    def detect_tiled(
+        self, frame: np.ndarray, cols: int = 1, rows: int = 1, overlap: float = 0.15,
+    ) -> list[Detection]:
+        """Run detection on a cols×rows grid of (overlapping) tiles and merge.
+        Overlapping tiles avoid missing faces straddling a tile boundary;
+        duplicate detections are deduplicated later by fuse_detections."""
+        if cols <= 1 and rows <= 1:
+            return self.detect(frame)
+        h, w = frame.shape[:2]
+        tw, th = w / cols, h / rows
+        ox_pad, oy_pad = int(tw * overlap), int(th * overlap)
         out: list[Detection] = []
-        for f in faces:
-            out.append(Detection(
-                bbox=f.bbox.astype(int),
-                det_score=float(f.det_score),
-                kps=np.asarray(f.kps) if getattr(f, "kps", None) is not None else None,
-                source="scrfd", raw=f,
-            ))
+        for r in range(rows):
+            for c in range(cols):
+                x0 = max(0, int(c * tw) - ox_pad)
+                y0 = max(0, int(r * th) - oy_pad)
+                x1 = min(w, int((c + 1) * tw) + ox_pad)
+                y1 = min(h, int((r + 1) * th) + oy_pad)
+                tile = frame[y0:y1, x0:x1]
+                if tile.size == 0:
+                    continue
+                for f in self.app.get(tile):
+                    out.append(self._to_detection(f, x0, y0))
         return out
 
 
@@ -752,16 +925,7 @@ class ArcFaceRecognizer:
 
     def __init__(self, cfg: AIConfig, shared_app=None):
         if shared_app is None:
-            from insightface.app import FaceAnalysis  # deferred
-
-            self.app = FaceAnalysis(
-                name="buffalo_l",
-                allowed_modules=["detection", "recognition"],
-            )
-            self.app.prepare(
-                ctx_id=cfg.ctx_id, det_size=cfg.det_size,
-                det_thresh=cfg.det_thresh,
-            )
+            self.app = _build_face_analysis(cfg)
         else:
             self.app = shared_app
 
@@ -998,11 +1162,23 @@ class AttendancePipeline:
             )
         loaded = manager.hydrate_all()
         print(f"[pipeline] DB hydrate: {loaded}")
+        # U25: an admin-deployed similarity threshold (MODEL_CONFIGS) takes
+        # precedence over the env default so deployments survive restarts.
+        from core.trainConfiguration import load_deployed_threshold
+
+        for name, store in manager.stores.items():
+            deployed = load_deployed_threshold(cfg.database_url, name)
+            if deployed is not None:
+                store.threshold = deployed
+                print(f"[pipeline] {name}: deployed threshold {deployed} applied")
         return cls(cfg, manager)
 
     def process_frame(self, frame: np.ndarray) -> FrameResult:
         frame_in, was_enhanced = maybe_enhance(frame, self.enhancer, self.cfg)
-        scrfd_dets = self._scrfd.detect(frame_in)
+        cols, rows = self.cfg.detect_tiles
+        scrfd_dets = self._scrfd.detect_tiled(
+            frame_in, cols, rows, self.cfg.detect_tile_overlap,
+        )
         mtcnn_dets = self._mtcnn.detect(frame_in) if self._mtcnn is not None else []
         min_px = self.cfg.anti_spoof_min_face_px
         dets = [
@@ -1026,6 +1202,7 @@ class AttendancePipeline:
 
     def enrol_student(
         self, account_id: int, images: list[np.ndarray],
+        reject_multiple: bool = False,
     ) -> dict[str, int]:
         vectors: dict[str, list[np.ndarray]] = {ARCFACE_MODEL_NAME: []}
         if self._facenet is not None:
@@ -1035,6 +1212,8 @@ class AttendancePipeline:
             scrfd_dets = self._scrfd.detect(frame_in)
             if not scrfd_dets:
                 continue
+            if reject_multiple and len(scrfd_dets) > 1:
+                raise MultipleFacesError(len(scrfd_dets))
             best = max(
                 scrfd_dets,
                 key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),
@@ -1081,15 +1260,27 @@ class AttendancePipeline:
     def _group_anchors(
         groups: list[FaceGroup], detections: list[Detection],
     ) -> list[Detection]:
+        # Prefer a SCRFD detection whenever one overlaps the group: SCRFD
+        # carries ArcFace's embedding for free via raw.normed_embedding, and
+        # FaceNet can crop from any bbox. Picking by raw det_score alone makes
+        # MTCNN (probabilities ~0.99) always win over SCRFD (~0.8-0.9), which
+        # leaves ArcFace with a raw=None box, forces a fragile re-detect that
+        # fails, and silently degrades the ensemble to FaceNet-only. Only fall
+        # back to the best MTCNN box for faces SCRFD missed entirely.
         anchors: list[Detection] = []
         for g in groups:
-            best: tuple[float, Detection | None] = (-1.0, None)
+            scrfd_best: tuple[float, Detection | None] = (-1.0, None)
+            mtcnn_best: tuple[float, Detection | None] = (-1.0, None)
             for d in detections:
                 if bbox_iou(d.bbox, g.bbox) == 0:
                     continue
-                score = d.det_score + (0.1 if d.source == "scrfd" else 0.0)
-                if score > best[0]:
-                    best = (score, d)
-            if best[1] is not None:
-                anchors.append(best[1])
+                bucket = scrfd_best if d.source == "scrfd" else mtcnn_best
+                if d.det_score > bucket[0]:
+                    if d.source == "scrfd":
+                        scrfd_best = (d.det_score, d)
+                    else:
+                        mtcnn_best = (d.det_score, d)
+            pick = scrfd_best[1] if scrfd_best[1] is not None else mtcnn_best[1]
+            if pick is not None:
+                anchors.append(pick)
         return anchors

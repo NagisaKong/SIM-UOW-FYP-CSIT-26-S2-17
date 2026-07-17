@@ -35,6 +35,12 @@ httpx>=0.27.0
 python-jose[cryptography]>=3.3.0
 argon2-cffi>=23.1.0
 
+# ── Classroom behaviour analysis (CR-06: drowsiness / phone / heatmap) ─
+# Used only when AI_BEHAVIOUR=true; the service degrades gracefully if
+# these are missing (drowsiness/phone detection disable themselves).
+mediapipe>=0.10.14
+ultralytics>=8.2.0
+
 # ── Optional: GAN-based face restoration for low-light enhancement ──
 # Uncomment to swap the CLAHE baseline for a real GAN. Both are heavy.
 # gfpgan>=1.3.8

@@ -97,6 +97,7 @@ jobs:
       AI_USE_MTCNN: 'false'
       AI_USE_FACENET: 'false'
       AI_USE_ENHANCER: 'false'
+      AI_BEHAVIOUR: 'false'
     steps:
       - uses: actions/checkout@v4
 

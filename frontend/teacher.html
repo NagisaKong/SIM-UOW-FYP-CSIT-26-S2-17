@@ -4,13 +4,145 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Teacher — FYP Attendance</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Teacher — FRAS</title>
+  <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
+  <link rel="stylesheet" href="style.css?v=4">
+  <style>
+    /* ── Multi-camera classroom scan grid ─────────────────────── */
+    .scan-cams {
+      align-items: flex-start;
+    }
+
+    .scan-cam-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .2rem;
+    }
+
+    /* Stage wraps the video + the detection-box overlay canvas. */
+    .scan-cam-stage {
+      position: relative;
+      line-height: 0;
+    }
+
+    .scan-cam-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      border-radius: var(--radius, 8px);
+      /* The global `canvas { background:#0f172a }` rule would otherwise make
+         this overlay opaque and hide the video underneath. */
+      background: transparent !important;
+      border: 0 !important;
+    }
+
+    /* Override the global .camera-frame video rule so several tiles fit. */
+    .camera-frame .scan-cam-video {
+      width: 300px;
+      max-width: 42vw;
+      height: auto;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      background: #0b1020;
+      border-radius: var(--radius, 8px);
+      display: block;
+    }
+
+    .scan-cam-label {
+      font-size: .72rem;
+      color: var(--c-text-2, #666);
+      max-width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Camera picker (choose which cameras to scan with) ────── */
+    .scan-cam-picker {
+      width: 100%;
+      max-width: 520px;
+      margin: 0 auto;
+      border: 1px solid var(--c-border-2, #e2e2e2);
+      border-radius: var(--radius, 8px);
+      padding: .6rem .75rem;
+      background: var(--c-surface, #fff);
+    }
+
+    .scan-cam-picker__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      margin-bottom: .4rem;
+    }
+
+    .scan-cam-list {
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+    }
+
+    .scan-cam-pick {
+      display: flex;
+      align-items: center;
+      gap: .45rem;
+      font-size: .85rem;
+      cursor: pointer;
+    }
+
+    .scan-cam-pick input {
+      margin: 0;
+    }
+
+    .scan-cam-pick .tag {
+      font-size: .65rem;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--c-warning-bg, #fff3cd);
+      color: var(--c-warning, #b8860b);
+    }
+
+    /* ── Live detection summary (count + names) ───────────────── */
+    .scan-detected {
+      width: 100%;
+      text-align: center;
+      margin-top: .35rem;
+      min-height: 1.2em;
+    }
+
+    .scan-detected .chip {
+      display: inline-block;
+      font-size: .78rem;
+      margin: 2px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--c-success-bg, #e7f6e7);
+      color: var(--c-success, #16a34a);
+    }
+
+    .scan-detected .count {
+      font-weight: 600;
+      margin-right: .35rem;
+    }
+
+    .scan-detected .scan-stats {
+      font-weight: 600;
+      margin-bottom: .25rem;
+    }
+
+    .scan-detected .scan-names {
+      line-height: 1.8;
+    }
+  </style>
 </head>
 
 <body>
   <header class="topbar">
-    <h1>Teacher Dashboard</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
+        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Teacher Dashboard</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -22,8 +154,10 @@
     <button class="tab-btn" data-tab="live">Live Attendance</button>
     <button class="tab-btn" data-tab="roster">Class Roster</button>
     <button class="tab-btn" data-tab="analytics">Analytics</button>
+    <button class="tab-btn" data-tab="behaviour">Behaviour</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button class="tab-btn" data-tab="leave">Leave Applications</button>
+    <button class="tab-btn" data-tab="appeals">Appeals</button>
   </div>
 
   <main>
@@ -79,23 +213,58 @@
           Each snapshot runs SCRFD&nbsp;+&nbsp;ArcFace and records who is present.
           When you finalize, the system assigns each student a final status.
         </p>
-        <div class="camera-stage">
+        <p class="muted small" style="margin-top:.25rem">
+          Live boxes:
+          <span style="color:#16a34a;font-weight:600">■ recognised</span> ·
+          <span style="color:#e3a008;font-weight:600">■ unknown face</span> ·
+          <span style="color:#dc2626;font-weight:600">■ sleeping / using phone</span>
+          (red requires behaviour analysis to be enabled for this course)
+        </p>
+        <div class="camera-stage camera-stage--wide">
           <div class="camera-frame">
-            <video id="scan-cam" autoplay playsinline muted width="320" height="240"></video>
+            <div id="scan-cams" class="scan-cams"
+              style="display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;width:100%">
+              <p id="scan-cams-empty" class="muted small" style="margin:0">Camera preview will appear here after you
+                start the scan.</p>
+            </div>
             <canvas id="scan-canvas" width="320" height="240" style="display:none"></canvas>
           </div>
-          <div class="camera-actions">
-            <button id="scan-start">Start Scan</button>
-            <button id="scan-capture" disabled>Capture Snapshot</button>
-            <label class="small"><input type="checkbox" id="scan-auto"> Auto every
-              <input type="number" id="scan-interval" value="15" min="3" max="86400"
-                     style="width:5rem"> s</label>
-            <label class="small"><input type="checkbox" id="scan-countdown-toggle" checked> Show countdown</label>
-            <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
-            <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+
+          <div id="scan-cam-picker" class="scan-cam-picker">
+            <div class="scan-cam-picker__head">
+              <strong class="small">Cameras to use</strong>
+              <button type="button" id="scan-cam-refresh" class="secondary small">Detect cameras</button>
+            </div>
+            <div id="scan-cam-list" class="scan-cam-list">
+              <p class="muted small" style="margin:0">Click “Detect cameras” to list your connected cameras, then tick
+                the ones to use.</p>
+            </div>
+          </div>
+
+          <div class="camera-actions scan-actions"
+            style="display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:.75rem">
+            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+              <button id="scan-start">Start Scan</button>
+              <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
+            </div>
+            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+              <button id="scan-capture" disabled>Capture Snapshot</button>
+              <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+            </div>
+            <div class="scan-actions__col scan-actions__col--checks"
+              style="display:flex;flex-direction:column;justify-content:center;gap:.5rem">
+              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
+                  id="scan-auto"> Auto every
+                <input type="number" id="scan-interval" value="15" min="3" max="86400" style="width:5rem"> s</label>
+              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
+                  id="scan-countdown-toggle" checked> Show countdown</label>
+            </div>
           </div>
           <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
           <p id="scan-msg" class="small camera-msg"></p>
+          <div id="scan-detected" class="scan-detected"></div>
+          <!-- CR-06: live behaviour-analysis status (fed by the ~1 fps sampler) -->
+          <p id="scan-behaviour" class="small muted" style="margin:.25rem 0 0"></p>
         </div>
       </div>
 
@@ -202,6 +371,76 @@
       </div>
     </section>
 
+    <!-- U32/U33 Classroom Behaviour Analysis (CR-06) -->
+    <section id="tab-behaviour" class="panel" style="display:none">
+      <h2>Classroom Behaviour Analysis</h2>
+      <p class="muted small">
+        Drowsiness and phone-use events are detected on the classroom scan
+        (~1&nbsp;frame/sec) and attributed to recognised students. Only derived
+        events are stored — never video frames. Figures are assistive
+        indicators, not disciplinary evidence.
+      </p>
+      <div class="row row--compact">
+        <label>Session
+          <select id="beh-session"></select>
+        </label>
+        <button id="beh-refresh">Refresh</button>
+      </div>
+      <p id="beh-msg" class="small muted"></p>
+
+      <h3>Per-student summary</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>Drowsiness events</th>
+            <th>Drowsy time</th>
+            <th>Phone events</th>
+            <th>Phone time</th>
+          </tr>
+        </thead>
+        <tbody id="beh-summary-body"></tbody>
+      </table>
+
+      <div class="row" style="align-items:flex-start;gap:1.5rem;margin-top:1.25rem;flex-wrap:wrap;max-width:none">
+        <div style="flex:1;min-width:320px">
+          <h3 style="margin-top:0">Recent events</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Student</th>
+                <th>Type</th>
+                <th>Duration</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="beh-timeline-body"></tbody>
+          </table>
+        </div>
+        <div style="min-width:300px;max-width:520px;flex:1">
+          <h3 style="margin-top:0">Activity heatmap (U33)</h3>
+          <canvas id="beh-heatmap" width="480" height="360"
+            style="width:100%;max-width:480px;border-radius:8px"></canvas>
+          <div style="max-width:480px">
+            <canvas id="beh-legend" width="480" height="14"
+              style="width:100%;display:block;border-radius:4px;margin-top:.4rem"></canvas>
+            <div class="small muted" style="display:flex;justify-content:space-between">
+              <span>No faces detected</span>
+              <span>Most persistent presence</span>
+            </div>
+          </div>
+          <p class="muted small" style="max-width:480px">
+            The grid is the camera's view split into zones (not a floor plan).
+            Each cell's colour shows how often recognised faces appeared in that
+            area over the session, relative to the busiest cell — it maps where
+            students were seated and facing the camera, not how much they moved.
+            Dark cells are aisles, walls or empty seats.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <!-- U14 Reports -->
     <section id="tab-reports" class="panel" style="display:none">
       <h2>Export Attendance Report</h2>
@@ -243,11 +482,64 @@
         <tbody id="tleave-body"></tbody>
       </table>
     </section>
+
+    <!-- U08 Review Attendance Appeals -->
+    <section id="tab-appeals" class="panel" style="display:none">
+      <div id="tappeals-list-view">
+        <h2>Review Attendance Appeals</h2>
+        <p class="muted small">
+          Open an appeal to read the student's reason and decide. Approving
+          corrects the attendance record for that session to <strong>Present</strong>.
+        </p>
+        <div class="row row--compact">
+          <button id="appeals-refresh">Refresh</button>
+        </div>
+        <p id="tappeals-msg" class="small"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Course / Session</th>
+              <th>Recorded As</th>
+              <th>Submitted</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tappeals-body"></tbody>
+        </table>
+      </div>
+
+      <div id="tappeals-detail-view" style="display:none;max-width:720px">
+        <div class="row row--compact">
+          <button id="tappeal-back" class="secondary">← Back to list</button>
+        </div>
+        <h2>Appeal Details</h2>
+        <table>
+          <tbody>
+            <tr><th style="width:180px">Student</th><td id="tappeal-student">-</td></tr>
+            <tr><th>Course / Session</th><td id="tappeal-session">-</td></tr>
+            <tr><th>Recorded As</th><td id="tappeal-record">-</td></tr>
+            <tr><th>Submitted</th><td id="tappeal-created">-</td></tr>
+            <tr><th>Status</th><td id="tappeal-status">-</td></tr>
+            <tr><th>Reviewed At</th><td id="tappeal-reviewed">-</td></tr>
+          </tbody>
+        </table>
+        <h3 style="margin-top:1rem">Reason for Appeal</h3>
+        <p id="tappeal-reason" class="small"
+          style="background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap;min-height:3em">-</p>
+        <div id="tappeal-actions" class="row row--compact" style="margin-top:.5rem">
+          <button id="tappeal-approve">Approve — mark Present</button>
+          <button id="tappeal-reject" class="danger">Reject</button>
+        </div>
+        <p id="tappeal-detail-msg" class="small"></p>
+      </div>
+    </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=4"></script>
-  <script src="teacher.js?v=3"></script>
+  <script src="app.js?v=5"></script>
+  <script src="teacher.js?v=19"></script>
 </body>
 
 </html>

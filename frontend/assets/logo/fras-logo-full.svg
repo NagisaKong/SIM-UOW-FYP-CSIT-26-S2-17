@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 72" role="img" aria-label="FRAS — Face Recognition Attendance System">
+  <!-- FRAS full lockup (icon + wordmark). For login page / landing headers. -->
+  <g transform="translate(4,4)">
+    <g stroke="#2a4b7f" stroke-width="5" fill="none" stroke-linecap="round">
+      <path d="M6 20 V10 Q6 6 10 6 H20"/>
+      <path d="M44 6 H54 Q58 6 58 10 V20"/>
+      <path d="M58 44 V54 Q58 58 54 58 H44"/>
+      <path d="M20 58 H10 Q6 58 6 54 V44"/>
+    </g>
+    <circle cx="32" cy="25" r="8.5" fill="#2a4b7f"/>
+    <path d="M17 49 Q17 37 32 37 Q47 37 47 49 Q47 51 45 51 H19 Q17 51 17 49 Z" fill="#2a4b7f"/>
+    <circle cx="48" cy="48" r="11.5" fill="#16a34a" stroke="#ffffff" stroke-width="2.5"/>
+    <path d="M42.5 48 l3.8 3.8 l7.2 -7.6" stroke="#ffffff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="80" y="38" font-family="Inter, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="30" font-weight="700" letter-spacing="3" fill="#2a4b7f">FRAS</text>
+  <text x="80" y="56" font-family="Inter, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="9.2" letter-spacing="0.4" fill="#64748b">FACE RECOGNITION ATTENDANCE SYSTEM</text>
+</svg>

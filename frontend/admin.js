@@ -14,7 +14,10 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "faces") { showFacesView("list"); loadFaces(); }
     if (btn.dataset.tab === "courses") loadCourses();
     if (btn.dataset.tab === "attendance") loadAttendance();
-    if (btn.dataset.tab === "appeals") loadAppeals();
+    if (btn.dataset.tab === "appeals") {
+      showAppealsView("list");
+      loadAppeals();
+    }
     if (btn.dataset.tab === "att-config") loadAttConfig();
     if (btn.dataset.tab === "behaviour") loadBehaviourTab();
     if (btn.dataset.tab === "ai-config") {}
@@ -208,37 +211,117 @@ function promptUploadFace(accountId) {
   input.click();
 }
 
+// ── U23: start a training run and poll its progress ───────────
+const fmtPct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+
+// Scroll to the U22 form and flash it so the admin sees where step 1 lives.
+function highlightTrainingDataForm() {
+  const form = document.getElementById("training-data-form");
+  if (!form) return;
+  form.scrollIntoView({behavior: "smooth", block: "center"});
+  form.style.transition = "box-shadow .3s, border-radius .3s";
+  form.style.borderRadius = "8px";
+  form.style.boxShadow = "0 0 0 3px var(--c-primary-soft), 0 0 0 5px var(--c-primary)";
+  setTimeout(() => { form.style.boxShadow = ""; }, 2500);
+}
+
+function renderTrainResult(r) {
+  const body = document.getElementById("train-result-body");
+  body.innerHTML = "";
+  body.append(el("tr", {},
+    el("td", {}, r.model_name),
+    el("td", {}, String(r.new_threshold)),
+    el("td", {}, fmtPct(r.accuracy)),
+    el("td", {}, fmtPct(r.fpr)),
+    el("td", {}, fmtPct(r.fnr)),
+    el("td", {}, `${r.genuine_pairs} / ${r.imposter_pairs}`),
+  ));
+  document.getElementById("train-result").style.display = "";
+}
+
+async function pollTraining(statusText, bar) {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 800));
+    const s = await api("/admin/training-status");
+    bar.style.width = (s.progress || 0) + "%";
+    statusText.textContent = `${s.message || ""} (${s.progress || 0}%)`;
+    if (s.status === "done") return s.result;
+    if (s.status === "failed") throw new Error(s.error || "Training failed");
+  }
+}
+
 document.getElementById('recalibrate-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('recalibrate-btn');
-    const statusText = document.getElementById('recalibrate-status');
-    
-    // Disable button to prevent double-clicking while the heavy GPU loads
-    btn.disabled = true;
-    btn.textContent = "Running calibration…";
-    statusText.innerText = "Running StyleGAN — this may take a few minutes. Check the backend terminal for progress.";
-    statusText.style.color = "";
-
-    try {
-        // Use your existing api() wrapper which automatically handles the auth token
-        const result = await api('/admin/recalibrate', {
-            method: 'POST'
-        });
-
-        if (result.status === 'success') {
-            statusText.innerText = `✅ Success! Threshold automatically updated to: ${result.new_threshold}`;
-            statusText.style.color = "#16a34a"; // Green
-        } else {
-            statusText.innerText = `❌ Error: Something went wrong.`;
-            statusText.style.color = "#c0392b"; // Red
-        }
-    } catch (error) {
-        statusText.innerText = `❌ Connection error: ${error.message}`;
-        statusText.style.color = "#c0392b"; // Red
-    } finally {
-        // Re-enable the button
-        btn.disabled = false;
-        btn.textContent = "Start Training";
+  const btn = document.getElementById('recalibrate-btn');
+  const statusText = document.getElementById('recalibrate-status');
+  const bar = document.getElementById('train-progress-bar');
+  btn.disabled = true;
+  btn.textContent = "Training…";
+  statusText.style.color = "";
+  document.getElementById("train-result").style.display = "none";
+  document.getElementById("train-progress-wrap").style.display = "";
+  bar.style.width = "0%";
+  try {
+    await api('/admin/train', {method: 'POST'});
+    const result = await pollTraining(statusText, bar);
+    renderTrainResult(result);
+    let note = `Done in ${result.duration_s}s. New threshold ${result.new_threshold}, ` +
+      `accuracy ${fmtPct(result.accuracy)}`;
+    if (result.current_accuracy != null) {
+      note += ` (current deployment: ${fmtPct(result.current_accuracy)})`;
     }
+    if (result.limited_calibration) {
+      note += " — calibrated from imposter pairs only (each account has a single embedding).";
+    }
+    statusText.textContent = note;
+    statusText.style.color = "#16a34a";
+  } catch (error) {
+    document.getElementById("train-progress-wrap").style.display = "none";
+    if (/selectTrainingDataSet|dataset/i.test(error.message)) {
+      statusText.textContent =
+        "Step 1 first: assign the training data above — choose the train split " +
+        "and target model, then click “Save Data Assignment”.";
+      statusText.style.color = "#c0392b";
+      highlightTrainingDataForm();
+    } else {
+      statusText.textContent = "Error: " + error.message;
+      statusText.style.color = "#c0392b";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Start Training";
+  }
+});
+
+// ── U25: deploy the last completed training run ────────────────
+document.getElementById("deploy-btn").addEventListener("click", async () => {
+  const msg = document.getElementById("deploy-msg");
+  msg.style.color = "#333";
+  msg.textContent = "Deploying…";
+  try {
+    let res = await api("/admin/deploy", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({force: false}),
+    });
+    if (res.warning) {
+      if (!confirm(`${res.warning}\nDeploy anyway?`)) {
+        msg.style.color = "#c0392b";
+        msg.textContent = "Deploy aborted; previous model retained.";
+        return;
+      }
+      res = await api("/admin/deploy", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({force: true}),
+      });
+    }
+    msg.style.color = "#16a34a";
+    msg.textContent = `Deployed. Threshold ${res.new_threshold} is now active` +
+      (res.applied_live ? " (live pipeline updated)." : " (applies on next restart).");
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
 });
 
 document.getElementById("user-form").addEventListener("submit", async (e) => {
@@ -670,8 +753,8 @@ document.getElementById("ensemble-form").addEventListener("submit", async (e) =>
   // Backend expects a list of model names. Two or more => ensemble voting;
   // a single model runs on its own.
   const models = [];
-  if (form.use_arcface.checked) models.push("arcface_ensemble");
-  if (form.use_facenet.checked) models.push("facenet_ensemble");
+  if (form.use_arcface.checked) models.push("arcface");
+  if (form.use_facenet.checked) models.push("facenet");
   if (!models.length) {
     msg.style.color = "#c0392b";
     msg.textContent = "Select at least one model.";
@@ -684,9 +767,10 @@ document.getElementById("ensemble-form").addEventListener("submit", async (e) =>
       body: JSON.stringify({models, weighting: form.weighting.value}),
     });
     msg.style.color = "#16a34a";
-    msg.textContent = res.is_ensemble
-      ? `Ensemble saved (${models.length} models, ${res.weighting} weighting).`
-      : "Saved. Single model active (no ensemble voting).";
+    msg.textContent = (res.is_ensemble
+      ? `Ensemble active (${res.models.join(" + ")}, ${res.weighting} weighting).`
+      : `Saved. Single model active: ${res.models.join("")} (no ensemble voting).`)
+      + ((res.warnings || []).length ? ` Note: ${res.warnings.join("; ")}` : "");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -700,17 +784,19 @@ document.getElementById("retrain-btn").addEventListener("click", async () => {
   msg.style.color = "#333";
   msg.textContent = "Retraining…";
   try {
-    const res = await api("/admin/retrain", {method: "POST"});
+    let res = await api("/admin/retrain", {method: "POST"});
     if (res.warning) {
       if (!confirm(`${res.warning}\nDeploy anyway?`)) {
         msg.style.color = "#c0392b";
         msg.textContent = "Retrain aborted; previous model retained.";
         return;
       }
-      await api("/admin/retrain?force=true", {method: "POST"});
+      res = await api("/admin/retrain?force=true", {method: "POST"});
     }
     msg.style.color = "#16a34a";
-    msg.textContent = `Redeployed. New threshold: ${res.new_threshold}`;
+    msg.textContent = `Redeployed ${res.model_name}. New threshold ${res.new_threshold}, ` +
+      `accuracy ${(res.accuracy * 100).toFixed(1)}%` +
+      (res.applied_live ? " (live)." : " (applies on next restart).");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -747,11 +833,64 @@ async function loadFaces() {
 }
 
 // ── Attendance ────────────────────────────────────────────────
+let attAllRecords = [];
+
 async function loadAttendance() {
+  const res = await api("/admin/attendance");
+  attAllRecords = res.records || [];
+
+  // Populate the status filter with the distinct statuses present.
+  const sel = document.getElementById("att-f-status");
+  const current = sel.value;
+  const statuses = [...new Set(attAllRecords.map(r => r.status).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">All statuses</option>' +
+    statuses.map(s => `<option value="${s}">${s}</option>`).join("");
+  sel.value = current; // keep selection across reloads
+
+  renderAttendance();
+}
+
+// Case-insensitive substring match; empty query always matches.
+function attMatch(query, ...fields) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return fields.some(f => String(f ?? "").toLowerCase().includes(q));
+}
+
+// Local YYYY-MM-DD for a timestamp (so date comparisons are calendar-day based).
+function localDateKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Inclusive date-range filter. Empty from/to = open-ended; from === to = a
+// single day (a point). YYYY-MM-DD strings compare correctly as text.
+function attInDateRange(ts, from, to) {
+  if (!from && !to) return true;
+  if (!ts) return false;
+  const ds = localDateKey(ts);
+  if (from && ds < from) return false;
+  if (to && ds > to) return false;
+  return true;
+}
+
+function renderAttendance() {
   const body = document.getElementById("att-body");
   body.innerHTML = "";
-  const res = await api("/admin/attendance");
-  for (const r of res.records) {
+  const fCourse = document.getElementById("att-f-course").value;
+  const fStudent = document.getElementById("att-f-student").value;
+  const fDateFrom = document.getElementById("att-f-date-from").value;
+  const fDateTo = document.getElementById("att-f-date-to").value;
+  const fStatus = document.getElementById("att-f-status").value;
+
+  const rows = attAllRecords.filter(r =>
+    attMatch(fCourse, r.course_code, r.course_name) &&
+    attMatch(fStudent, r.full_name, r.student_id, r.accountid) &&
+    attInDateRange(r.start_time, fDateFrom, fDateTo) &&
+    (!fStatus || r.status === fStatus)
+  );
+
+  for (const r of rows) {
     body.append(el("tr", {},
       el("td", {}, r.attendancesessionid),
       el("td", {}, `${r.course_code} — ${r.course_name}`),
@@ -761,43 +900,115 @@ async function loadAttendance() {
       el("td", {}, fmt(r.marked_at)),
     ));
   }
+  if (!rows.length) {
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No matching records.")));
+  }
+  document.getElementById("att-f-count").textContent =
+    `${rows.length} / ${attAllRecords.length}`;
 }
+
+// Wire up the filter controls (live filtering).
+["att-f-course", "att-f-student"].forEach(id =>
+  document.getElementById(id).addEventListener("input", renderAttendance));
+["att-f-date-from", "att-f-date-to", "att-f-status"].forEach(id =>
+  document.getElementById(id).addEventListener("change", renderAttendance));
+document.getElementById("att-f-clear").addEventListener("click", () => {
+  ["att-f-course", "att-f-student", "att-f-date-from", "att-f-date-to"]
+    .forEach(id => document.getElementById(id).value = "");
+  document.getElementById("att-f-status").value = "";
+  renderAttendance();
+});
 
 // ── Appeals ───────────────────────────────────────────────────
 async function loadAppeals() {
-  const body = document.getElementById("appeals-body");
-  body.innerHTML = "";
-  const res = await api("/admin/appeals");
-  for (const a of res.appeals) {
-    const canReview = a.status === "pending";
-    body.append(el("tr", {},
-      el("td", {}, a.appealid),
-      el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
-      el("td", {}, a.attendancerecordid),
-      el("td", {}, a.reason),
-      el("td", {}, el("span", {class: "badge"}, a.status)),
-      el("td", {}, fmt(a.created_at)),
-      el("td", {},
-        canReview ? el("button", {
-          onclick: () => reviewAppeal(a.appealid, "approved"),
-        }, "Approve") : null,
-        canReview ? el("button", {
-          class: "danger",
-          onclick: () => reviewAppeal(a.appealid, "rejected"),
-        }, "Reject") : null,
-      ),
-    ));
+  try {
+    const res = await api("/admin/appeals");
+    const appeals = res.appeals || [];
+    const body = document.getElementById("appeals-body");
+    body.innerHTML = "";
+
+    appeals.forEach(app => {
+      const tr = document.createElement("tr");
+
+      tr.appendChild(el("td", {}, app.appealid));
+      tr.appendChild(el("td", {}, app.student_id || "-"));
+      tr.appendChild(el("td", {}, app.full_name || "-"));
+      tr.appendChild(el("td", {}, app.attendancerecordid));
+      tr.appendChild(el("td", {}, app.reason || ""));
+      tr.appendChild(el("td", {}, app.status));
+
+      // Keep the <td> a real table cell (display:flex on a td detaches it
+      // from row-height calculation and misaligns it when other cells wrap);
+      // lay the buttons out in an inner flex wrapper instead.
+      const actionsTd = document.createElement("td");
+      actionsTd.style.whiteSpace = "nowrap";
+      const actionsWrap = document.createElement("div");
+      actionsWrap.style.display = "flex";
+      actionsWrap.style.gap = "8px";
+      actionsWrap.style.alignItems = "center";
+      actionsTd.appendChild(actionsWrap);
+
+      // U08: appeals are reviewed by the teacher; the admin view is
+      // read-only oversight.
+      const viewBtn = el("button", { class: "primary small", style: "margin: 0;" }, "View");
+      viewBtn.addEventListener("click", () => openAppealDetail(app));
+      actionsWrap.appendChild(viewBtn);
+
+      tr.appendChild(actionsTd);
+      body.appendChild(tr);
+    });
+  } catch (e) {
+    console.error(e);
   }
 }
 
-async function reviewAppeal(id, status) {
-  await api(`/admin/appeals/${id}`, {
-    method: "PATCH",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({status}),
-  });
-  loadAppeals();
+function openAppealDetail(appeal) {
+  document.getElementById("detail-appeal-id").textContent = appeal.appealid || "-";
+  document.getElementById("detail-student-id").textContent = appeal.student_id || "-";
+  document.getElementById("detail-full-name").textContent = appeal.full_name || "-";
+  document.getElementById("detail-record-id").textContent = appeal.attendancerecordid || "-";
+  document.getElementById("detail-reason").textContent = appeal.reason || "-";
+
+  document.getElementById("detail-created-at").textContent = fmt(appeal.created_at);
+  document.getElementById("detail-reviewed-at").textContent = appeal.reviewed_at ? fmt(appeal.reviewed_at) : "Not reviewed yet";
+
+  const statusEl = document.getElementById("detail-status");
+  const currentStatus = appeal.status || "pending";
+  statusEl.textContent = currentStatus.toUpperCase();
+  
+  if (currentStatus === "approved") {
+    statusEl.style.background = "#e6f4ea";
+    statusEl.style.color = "#137333";
+    statusEl.style.border = "1px solid #c2e7cd";
+  } else if (currentStatus === "rejected") {
+    statusEl.style.background = "#fce8e6";
+    statusEl.style.color = "#c5221f";
+    statusEl.style.border = "1px solid #f9d2cd";
+  } else {
+    // pending
+    statusEl.style.background = "#fef7e0";
+    statusEl.style.color = "#b06000";
+    statusEl.style.border = "1px solid #fbe4a2";
+  }
+
+  showAppealsView("detail");
 }
+
+function showAppealsView(view) {
+  const listView = document.getElementById("appeals-list-view");
+  const detailView = document.getElementById("appeals-detail-view");
+  if (view === "list") {
+    listView.style.display = "";
+    detailView.style.display = "none";
+  } else if (view === "detail") {
+    listView.style.display = "none";
+    detailView.style.display = "";
+  }
+}
+
+document.getElementById("btn-back-to-appeals").addEventListener("click", () => {
+  showAppealsView("list");
+});
 
 // ── Attendance Config (U03 detection interval + U34 thresholds) ───
 async function loadAttConfig() {

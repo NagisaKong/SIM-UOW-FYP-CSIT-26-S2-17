@@ -15,8 +15,8 @@ from core import (
     attendanceAppeal,
     attendanceRecord,
     attendanceSession,
+    behaviourAnalysis,
     facialImage,
-    inClassBehaviour,
     notification,
     report,
     trainConfiguration,
@@ -32,6 +32,6 @@ all_routers: list[APIRouter] = [
     attendanceSession.router,
     attendanceAppeal.router,
     report.router,
-    inClassBehaviour.router,
+    behaviourAnalysis.router,
     trainConfiguration.router,
 ]

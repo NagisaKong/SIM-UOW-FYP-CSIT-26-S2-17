@@ -2,44 +2,56 @@
    FYP Attendance — Design System
    ============================================================ */
 :root {
-  --c-bg:        #f3f5fb;
-  --c-surface:   #ffffff;
+  --c-bg: #f3f5fb;
+  --c-surface: #ffffff;
   --c-surface-2: #f8fafc;
-  --c-border:    #e5e7eb;
-  --c-border-2:  #eef0f4;
-  --c-text:      #0f172a;
-  --c-text-2:    #475569;
-  --c-muted:     #94a3b8;
+  --c-border: #e5e7eb;
+  --c-border-2: #eef0f4;
+  --c-text: #0f172a;
+  --c-text-2: #475569;
+  --c-muted: #94a3b8;
 
-  --c-primary:        #2a4b7f;
-  --c-primary-hover:  #203a63;
-  --c-primary-soft:   #eaeff6;
-  --c-accent:         #2a4b7f;
+  --c-primary: #2a4b7f;
+  --c-primary-hover: #203a63;
+  --c-primary-soft: #eaeff6;
+  --c-accent: #2a4b7f;
 
-  --c-success:    #16a34a;
+  --c-success: #16a34a;
   --c-success-bg: #dcfce7;
-  --c-warning:    #d97706;
+  --c-warning: #d97706;
   --c-warning-bg: #fef3c7;
-  --c-danger:     #dc2626;
-  --c-danger-bg:  #fee2e2;
+  --c-danger: #dc2626;
+  --c-danger-bg: #fee2e2;
 
   --radius-sm: 6px;
-  --radius:    10px;
+  --radius: 10px;
   --radius-lg: 16px;
 
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, .04), 0 1px 3px rgba(15, 23, 42, .04);
-  --shadow:    0 4px 12px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .04);
+  --shadow: 0 4px 12px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .04);
   --shadow-lg: 0 20px 40px -10px rgba(15, 23, 42, .15), 0 8px 16px -8px rgba(15, 23, 42, .08);
 
   --transition: 150ms cubic-bezier(.4, 0, .2, 1);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-               "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body { height: 100%; }
+html {
+  height: 100%;
+}
+
+/* min-height (not height): a fixed height caps the body at one viewport,
+   which breaks position:sticky for the topbar once the page scrolls
+   past the first screen. */
+body {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -63,15 +75,47 @@ body.centered {
 }
 
 /* Typography ---------------------------------------------------- */
-h1, h2, h3, h4 { margin: 0 0 .5rem; font-weight: 600; letter-spacing: -.01em; color: var(--c-text); }
-h1 { font-size: 1.5rem; }
-h2 { font-size: 1.15rem; }
-h3 { font-size: 1rem; color: var(--c-text); }
-p  { margin: .25rem 0; }
+h1,
+h2,
+h3,
+h4 {
+  margin: 0 0 .5rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--c-text);
+}
 
-.muted { color: var(--c-text-2); }
-.small { font-size: 12px; }
-.error { color: var(--c-danger); min-height: 1em; margin: .5rem 0 0; font-size: 13px; }
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+}
+
+h3 {
+  font-size: 1rem;
+  color: var(--c-text);
+}
+
+p {
+  margin: .25rem 0;
+}
+
+.muted {
+  color: var(--c-text-2);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.error {
+  color: var(--c-danger);
+  min-height: 1em;
+  margin: .5rem 0 0;
+  font-size: 13px;
+}
 
 code {
   background: var(--c-surface-2);
@@ -92,6 +136,7 @@ code {
   max-width: 95vw;
   border: 1px solid var(--c-border-2);
 }
+
 .card h1 {
   font-size: 1.5rem;
   background: linear-gradient(135deg, var(--c-primary), var(--c-accent));
@@ -100,6 +145,7 @@ code {
   color: transparent;
   margin-bottom: .25rem;
 }
+
 .card label {
   display: block;
   margin: 1rem 0 .35rem;
@@ -107,11 +153,13 @@ code {
   font-weight: 500;
   color: var(--c-text-2);
 }
+
 .card input,
 .card select,
 .card textarea {
   width: 100%;
 }
+
 .card button[type="submit"] {
   width: 100%;
   margin-top: 1.25rem;
@@ -121,7 +169,9 @@ code {
 }
 
 /* Form controls ------------------------------------------------ */
-input, select, textarea {
+input,
+select,
+textarea {
   width: 100%;
   padding: .55rem .75rem;
   border: 1px solid var(--c-border);
@@ -132,22 +182,31 @@ input, select, textarea {
   background: var(--c-surface);
   transition: border-color var(--transition), box-shadow var(--transition);
 }
-input:focus, select:focus, textarea:focus {
+
+input:focus,
+select:focus,
+textarea:focus {
   outline: none;
   border-color: var(--c-primary);
   box-shadow: 0 0 0 3px rgba(42, 75, 127, .15);
 }
+
 input[type="file"] {
   padding: .35rem;
   background: var(--c-surface-2);
   cursor: pointer;
 }
+
 input[type="checkbox"] {
   width: auto;
   margin-right: .4rem;
   accent-color: var(--c-primary);
 }
-textarea { resize: vertical; min-height: 72px; }
+
+textarea {
+  resize: vertical;
+  min-height: 72px;
+}
 
 label {
   display: block;
@@ -155,10 +214,14 @@ label {
   font-weight: 500;
   color: var(--c-text-2);
 }
-form label { margin-bottom: .25rem; }
-form label > input,
-form label > select,
-form label > textarea {
+
+form label {
+  margin-bottom: .25rem;
+}
+
+form label>input,
+form label>select,
+form label>textarea {
   margin-top: .25rem;
 }
 
@@ -179,31 +242,52 @@ button {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--transition), box-shadow var(--transition),
-              transform var(--transition), opacity var(--transition);
+    transform var(--transition), opacity var(--transition);
 }
-button:hover    { background: var(--c-primary-hover); }
-button:active   { transform: translateY(1px); }
-button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+
+button:hover {
+  background: var(--c-primary-hover);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
 
 button.secondary {
   background: var(--c-surface);
   color: var(--c-text);
   border-color: var(--c-border);
 }
+
 button.secondary:hover {
   background: var(--c-surface-2);
   border-color: #cbd5e1;
 }
 
-button.danger          { background: var(--c-danger); }
-button.danger:hover    { background: #b91c1c; }
+button.danger {
+  background: var(--c-danger);
+}
+
+button.danger:hover {
+  background: #b91c1c;
+}
 
 button.ghost {
   background: transparent;
   color: var(--c-text-2);
   border-color: transparent;
 }
-button.ghost:hover { background: var(--c-surface-2); color: var(--c-text); }
+
+button.ghost:hover {
+  background: var(--c-surface-2);
+  color: var(--c-text);
+}
 
 /* Top bar ------------------------------------------------------ */
 header.topbar {
@@ -219,6 +303,7 @@ header.topbar {
   -webkit-backdrop-filter: saturate(180%) blur(10px);
   border-bottom: 1px solid var(--c-border-2);
 }
+
 header.topbar h1 {
   font-size: 1.05rem;
   font-weight: 600;
@@ -227,12 +312,16 @@ header.topbar h1 {
   align-items: center;
   gap: .55rem;
 }
-header.topbar > div {
+
+header.topbar>div {
   display: flex;
   align-items: center;
   gap: .75rem;
 }
-header.topbar #who { font-size: 13px; }
+
+header.topbar #who {
+  font-size: 13px;
+}
 
 /* Tabs --------------------------------------------------------- */
 .tabs {
@@ -244,7 +333,17 @@ header.topbar #who { font-size: 13px; }
   overflow-x: auto;
   scrollbar-width: none;
 }
-.tabs::-webkit-scrollbar { display: none; }
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Mobile navigation dropdown — built from .tabs by app.js, shown only on
+   narrow screens (see the responsive block below). */
+.tabs-select {
+  display: none;
+}
+
 .tabs button.tab-btn {
   position: relative;
   flex: none;
@@ -257,14 +356,17 @@ header.topbar #who { font-size: 13px; }
   white-space: nowrap;
   transition: background .2s ease, color .2s ease;
 }
+
 .tabs button.tab-btn:hover {
   background: var(--c-surface-2);
   color: var(--c-text);
 }
+
 .tabs button.tab-btn.active {
   color: var(--c-primary);
   background: var(--c-primary-soft);
 }
+
 .tabs button.tab-btn.active::after {
   content: "";
   position: absolute;
@@ -275,6 +377,7 @@ header.topbar #who { font-size: 13px; }
   background: var(--c-primary);
   border-radius: 2px;
 }
+
 /* Incomplete / work-in-progress feature — highlighted yellow so it is
    visually distinct from finished features. Add the `incomplete` class
    to any `.tab-btn` to flag the feature as not yet done. */
@@ -282,14 +385,17 @@ header.topbar #who { font-size: 13px; }
   background: #fde68a;
   color: #92400e;
 }
+
 .tabs button.tab-btn.incomplete:hover {
   background: #fcd34d;
   color: #78350f;
 }
+
 .tabs button.tab-btn.incomplete.active {
   background: #fbbf24;
   color: #78350f;
 }
+
 .tabs button.tab-btn.incomplete.active::after {
   background: #d97706;
 }
@@ -306,14 +412,16 @@ header.topbar #who { font-size: 13px; }
   overflow: hidden;
   transform: translateY(-10px);
   transition: max-height .35s ease, opacity .3s ease,
-              transform .35s ease, margin-bottom .35s ease;
+    transform .35s ease, margin-bottom .35s ease;
 }
+
 .submenu.open {
   max-height: 120px;
   margin-bottom: 1.25rem;
   opacity: 1;
   transform: translateY(0);
 }
+
 .submenu .submenu-btn {
   flex: none;
   padding: .5rem .95rem;
@@ -324,19 +432,23 @@ header.topbar #who { font-size: 13px; }
   font-weight: 500;
   white-space: nowrap;
 }
+
 .submenu .submenu-btn:hover {
   color: var(--c-text);
   border-color: var(--c-primary);
 }
+
 .submenu .submenu-btn.active {
   background: var(--c-primary);
   color: #fff;
   border-color: var(--c-primary);
 }
+
 /* Animate the active sub-page into view */
 .subpage {
   animation: subpage-in .3s ease;
 }
+
 /* List-view header: title on the left, "+ create" action on the right */
 .subpage-head {
   display: flex;
@@ -345,10 +457,20 @@ header.topbar #who { font-size: 13px; }
   gap: 1rem;
   flex-wrap: wrap;
 }
-.subpage-head h2 { margin: 0; }
-.subpage-head { margin-bottom: 1rem; }
+
+.subpage-head h2 {
+  margin: 0;
+}
+
+.subpage-head {
+  margin-bottom: 1rem;
+}
+
 /* Read-only key/value detail table (e.g. User Details) */
-.kv-table { max-width: 520px; }
+.kv-table {
+  max-width: 520px;
+}
+
 .kv-table th {
   width: 150px;
   text-align: left;
@@ -356,11 +478,25 @@ header.topbar #who { font-size: 13px; }
   font-weight: 600;
   background: var(--c-surface-2);
 }
-.subpage-head + table { margin-top: 0; }
-.back-btn { margin-bottom: .5rem; }
+
+.subpage-head+table {
+  margin-top: 0;
+}
+
+.back-btn {
+  margin-bottom: .5rem;
+}
+
 @keyframes subpage-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Layout ------------------------------------------------------- */
@@ -380,16 +516,36 @@ main {
   /* Smooth fade/slide-in whenever a panel becomes visible (tab switch). */
   animation: panel-in .32s ease;
 }
-.panel + .panel { margin-top: 0; }
-@keyframes panel-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+
+.panel+.panel {
+  margin-top: 0;
 }
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Respect users who prefer reduced motion. */
 @media (prefers-reduced-motion: reduce) {
-  .panel, .subpage { animation: none; }
-  .submenu { transition: none; }
+
+  .panel,
+  .subpage {
+    animation: none;
+  }
+
+  .submenu {
+    transition: none;
+  }
 }
+
 .panel h2 {
   display: flex;
   align-items: center;
@@ -398,6 +554,7 @@ main {
   margin-bottom: 1.1rem;
   border-bottom: 1px solid var(--c-border-2);
 }
+
 .panel h3 {
   margin-top: 1.5rem;
   margin-bottom: .65rem;
@@ -413,7 +570,11 @@ main {
   gap: 1rem 1rem;
   align-items: end;
 }
-.row--compact { grid-template-columns: repeat(auto-fit, minmax(180px, 220px)); max-width: 480px; }
+
+.row--compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
+  max-width: 480px;
+}
 
 /* Stacked single-column form (one field per row, typical sign-up layout) */
 .form-stacked {
@@ -421,7 +582,8 @@ main {
   gap: 1rem;
   max-width: 420px;
 }
-.form-stacked > button {
+
+.form-stacked>button {
   align-self: stretch;
   width: 100%;
   margin-top: .25rem;
@@ -436,6 +598,7 @@ form.row label {
   margin: 0;
   min-width: 0;
 }
+
 .row input,
 .row select,
 .row textarea,
@@ -445,12 +608,25 @@ form.row textarea {
   height: 38px;
   margin-top: 0;
 }
+
 .row textarea,
-form.row textarea { height: auto; min-height: 76px; }
+form.row textarea {
+  height: auto;
+  min-height: 76px;
+}
+
 .row input[type="file"],
-form.row input[type="file"] { line-height: 1.4; padding: .4rem .55rem; }
+form.row input[type="file"] {
+  line-height: 1.4;
+  padding: .4rem .55rem;
+}
+
 .row input[type="checkbox"],
-form.row input[type="checkbox"] { height: auto; width: auto; }
+form.row input[type="checkbox"] {
+  height: auto;
+  width: auto;
+}
+
 /* Inline checkbox-style label keeps checkbox + text on one line */
 .row label:has(> input[type="checkbox"]),
 form.row label:has(> input[type="checkbox"]) {
@@ -461,8 +637,8 @@ form.row label:has(> input[type="checkbox"]) {
 }
 
 /* Submit button aligns with input row */
-form.row > button,
-.row > button {
+form.row>button,
+.row>button {
   height: 38px;
   align-self: end;
   white-space: nowrap;
@@ -470,19 +646,29 @@ form.row > button,
 
 /* Attendance config form: top-align labels so all inputs line up even
    though only some fields carry a helper description below the input. */
-#att-config-form { align-items: start; }
-#att-config-form > button { align-self: start; }
+#att-config-form {
+  align-items: start;
+}
 
-form .row + button,
-form > button {
+#att-config-form>button {
+  align-self: start;
+}
+
+form .row+button,
+form>button {
   margin-top: 1rem;
 }
-form > button[type="submit"] { margin-top: 1rem; }
+
+form>button[type="submit"] {
+  margin-top: 1rem;
+}
 
 /* Tables ------------------------------------------------------- */
 /* Space between a filter row and the table it controls. */
-.row + table,
-.row + p + table { margin-top: 1rem; }
+.row+table,
+.row+p+table {
+  margin-top: 1rem;
+}
 
 table {
   width: 100%;
@@ -494,12 +680,15 @@ table {
   border-radius: var(--radius);
   overflow: hidden;
 }
-th, td {
+
+th,
+td {
   padding: .7rem .9rem;
   text-align: left;
   border-bottom: 1px solid var(--c-border-2);
   vertical-align: middle;
 }
+
 th {
   background: var(--c-surface-2);
   color: var(--c-text-2);
@@ -508,28 +697,62 @@ th {
   text-transform: uppercase;
   letter-spacing: .03em;
 }
-tbody tr:last-child td { border-bottom: none; }
-tbody tr { transition: background var(--transition); }
-tbody tr:hover { background: var(--c-surface-2); }
-td button { padding: .35rem .65rem; font-size: 12px; }
-td button + button { margin-left: .35rem; }
-td button:disabled { opacity: .45; cursor: not-allowed; }
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr {
+  transition: background var(--transition);
+}
+
+tbody tr:hover {
+  background: var(--c-surface-2);
+}
+
+td button {
+  padding: .35rem .65rem;
+  font-size: 12px;
+}
+
+td button+button {
+  margin-left: .35rem;
+}
+
+td button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
 
 /* Inline slide-out detail row (e.g. student My Attendance details) */
-.detail-row:hover { background: transparent; }
-.detail-row > td { padding: 0; background: var(--c-surface-2); }
+.detail-row:hover {
+  background: transparent;
+}
+
+.detail-row>td {
+  padding: 0;
+  background: var(--c-surface-2);
+}
+
 .detail-slide {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows .25s ease;
 }
-.detail-slide.open { grid-template-rows: 1fr; }
-.detail-slide > .detail-content {
+
+.detail-slide.open {
+  grid-template-rows: 1fr;
+}
+
+.detail-slide>.detail-content {
   min-height: 0;
   overflow: hidden;
   padding: 0 1rem;
 }
-.detail-slide.open > .detail-content { padding: .85rem 1rem; }
+
+.detail-slide.open>.detail-content {
+  padding: .85rem 1rem;
+}
 
 /* Status / badges --------------------------------------------- */
 .status-present,
@@ -544,11 +767,31 @@ td button:disabled { opacity: .45; cursor: not-allowed; }
   font-weight: 600;
   text-transform: capitalize;
 }
-.status-present    { color: var(--c-success); background: var(--c-success-bg); }
-.status-late       { color: var(--c-warning); background: var(--c-warning-bg); }
-.status-absent     { color: var(--c-danger);  background: var(--c-danger-bg); }
-.status-early_left { color: var(--c-warning); background: var(--c-warning-bg); }
-.status-leave      { color: var(--c-primary); background: var(--c-primary-soft); }
+
+.status-present {
+  color: var(--c-success);
+  background: var(--c-success-bg);
+}
+
+.status-late {
+  color: var(--c-warning);
+  background: var(--c-warning-bg);
+}
+
+.status-absent {
+  color: var(--c-danger);
+  background: var(--c-danger-bg);
+}
+
+.status-early_left {
+  color: var(--c-warning);
+  background: var(--c-warning-bg);
+}
+
+.status-leave {
+  color: var(--c-primary);
+  background: var(--c-primary-soft);
+}
 
 .badge {
   display: inline-block;
@@ -562,18 +805,25 @@ td button:disabled { opacity: .45; cursor: not-allowed; }
 }
 
 /* Media / camera ---------------------------------------------- */
-video, img.preview, canvas {
+video,
+img.preview,
+canvas {
   max-width: 100%;
   border-radius: var(--radius);
   border: 1px solid var(--c-border);
   background: #0f172a;
 }
-img.preview { background: var(--c-surface-2); }
+
+img.preview {
+  background: var(--c-surface-2);
+}
 
 /* Analytics charts: clean light surface (override the dark camera canvas
    background) so the line/doughnut charts and their legends are readable. */
-#ana-trend, #ana-breakdown,
-#sana-trend, #sana-breakdown,
+#ana-trend,
+#ana-breakdown,
+#sana-trend,
+#sana-breakdown,
 #monthly-chart {
   background: #ffffff;
   border-color: var(--c-border);
@@ -588,6 +838,7 @@ img.preview { background: var(--c-surface-2); }
   margin: 1rem auto 0;
   max-width: 520px;
 }
+
 .camera-frame {
   width: 100%;
   display: flex;
@@ -597,6 +848,7 @@ img.preview { background: var(--c-surface-2); }
   border: 1px solid var(--c-border-2);
   border-radius: var(--radius);
 }
+
 .camera-frame video,
 .camera-frame canvas,
 .camera-frame img.preview {
@@ -607,10 +859,12 @@ img.preview { background: var(--c-surface-2); }
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
+
 .camera-frame--dual {
   flex-wrap: wrap;
   gap: .75rem;
 }
+
 .camera-actions {
   display: flex;
   flex-wrap: wrap;
@@ -618,8 +872,56 @@ img.preview { background: var(--c-surface-2); }
   gap: .5rem;
   width: 100%;
 }
-.camera-actions--start { justify-content: flex-start; }
-.camera-actions button { min-width: 140px; }
+
+.camera-actions--start {
+  justify-content: flex-start;
+}
+
+.camera-actions button {
+  min-width: 140px;
+}
+
+/* Wider scan stage (teacher classroom scan) ------------------- */
+.camera-stage--wide {
+  max-width: 960px;
+}
+
+.camera-stage--wide .camera-frame video,
+.camera-stage--wide .camera-frame canvas,
+.camera-stage--wide .camera-frame img.preview {
+  max-width: 100%;
+}
+
+/* Scan action grid: aligned columns --------------------------- */
+.scan-actions {
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: .75rem;
+}
+
+.scan-actions__col {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+.scan-actions__col--checks {
+  justify-content: center;
+}
+
+.scan-actions__col--checks .small {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+@media (max-width: 640px) {
+  .scan-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
 .camera-msg {
   width: 100%;
   text-align: center;
@@ -635,7 +937,11 @@ img.preview { background: var(--c-surface-2); }
   flex-direction: column;
   gap: .75rem;
 }
-.upload-form button { align-self: flex-end; min-width: 140px; }
+
+.upload-form button {
+  align-self: flex-end;
+  min-width: 140px;
+}
 
 /* Face-mode segmented control (used inside .panel) ------------ */
 .face-mode-tabs {
@@ -647,6 +953,7 @@ img.preview { background: var(--c-surface-2); }
   gap: 2px;
   margin-bottom: 1rem;
 }
+
 .face-mode-btn {
   margin: 0;
   padding: .35rem .9rem;
@@ -657,7 +964,12 @@ img.preview { background: var(--c-surface-2); }
   font-weight: 500;
   border: none;
 }
-.face-mode-btn:hover { background: rgba(15, 23, 42, .04); color: var(--c-text); }
+
+.face-mode-btn:hover {
+  background: rgba(15, 23, 42, .04);
+  color: var(--c-text);
+}
+
 .face-mode-btn.active {
   background: var(--c-surface);
   color: var(--c-primary);
@@ -666,10 +978,104 @@ img.preview { background: var(--c-surface-2); }
 
 /* Responsive --------------------------------------------------- */
 @media (max-width: 720px) {
-  header.topbar { padding: .75rem 1rem; }
-  .tabs { padding: .5rem .75rem; }
-  main { padding: 1rem .75rem 2rem; }
-  .panel { padding: 1.1rem; }
-  .card { padding: 1.5rem; }
-  th, td { padding: .55rem .65rem; }
+  header.topbar {
+    padding: .7rem 1rem;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+  }
+  header.topbar h1 {
+    font-size: .98rem;
+  }
+
+  /* Replace the horizontal tab bar with the dropdown on phones. */
+  .tabs {
+    display: none;
+  }
+  .tabs-select {
+    display: block;
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--c-border-2);
+    border-radius: 0;
+    background: var(--c-surface);
+    padding: .7rem .9rem;
+    font-weight: 600;
+    color: var(--c-primary);
+  }
+
+  main {
+    padding: 1rem .75rem 2rem;
+  }
+
+  .panel {
+    padding: 1.1rem;
+  }
+
+  .card {
+    padding: 1.5rem;
+  }
+
+  th,
+  td {
+    padding: .55rem .65rem;
+  }
+
+  /* Wide data tables: let each table scroll horizontally inside the panel
+     instead of forcing the whole page wider than the screen. */
+  .panel table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel table thead th,
+  .panel table tbody td {
+    white-space: nowrap;
+  }
+  /* Inline detail / slide-out rows should still wrap normally. */
+  .panel table .detail-row td,
+  .panel table .detail-content,
+  .panel table .detail-content * {
+    white-space: normal;
+  }
+
+  /* Prevent iOS from auto-zooming when focusing a small-font input. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  header.topbar {
+    padding: .6rem .8rem;
+  }
+  header.topbar h1 {
+    font-size: .9rem;
+  }
+  /* The email/identity label eats width on tiny screens — hide it; the
+     dashboard heading already says which role you're in. */
+  header.topbar #who {
+    display: none;
+  }
+
+  main {
+    padding: .85rem .6rem 2rem;
+  }
+  .panel {
+    padding: .9rem;
+    border-radius: var(--radius);
+  }
+  .panel h2 {
+    font-size: 1.15rem;
+  }
+
+  /* Filter / control rows: stack their inputs full-width so nothing is
+     squashed below a usable size. */
+  .att-filters > input,
+  .att-filters > select,
+  .att-filters > label {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+  }
 }
