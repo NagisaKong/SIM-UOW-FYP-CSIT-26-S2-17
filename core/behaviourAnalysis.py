@@ -425,12 +425,20 @@ class DrowsinessDetector:
 
 
 class PhoneDetector:
-    """Ultralytics YOLO (nano) on the full frame; COCO class 67 = cell phone."""
+    """Ultralytics YOLO on the full frame; COCO class 67 = cell phone.
+
+    model_name / imgsz come from AIConfig (AI_PHONE_MODEL / AI_PHONE_IMGSZ):
+    inference at imgsz=1280 keeps a 720p frame at native scale so distant
+    (>3 m) phones stay detectable; yolov8s+ further improves small-object
+    recall on GPU rigs."""
 
     _COCO_CELL_PHONE = 67
 
-    def __init__(self, conf_threshold: float):
+    def __init__(self, conf_threshold: float,
+                 model_name: str = "yolov8n.pt", imgsz: int = 1280):
         self.conf_threshold = conf_threshold
+        self.model_name = model_name
+        self.imgsz = imgsz
         self._model = None
         self._failed = False
 
@@ -442,7 +450,8 @@ class PhoneDetector:
         try:
             from ultralytics import YOLO  # type: ignore
 
-            self._model = YOLO("yolov8n.pt")  # weights download once on first use
+            self._model = YOLO(self.model_name)  # weights download once on first use
+            print(f"[behaviour] phone detector: {self.model_name} @ imgsz={self.imgsz}")
             return True
         except Exception as exc:  # noqa: BLE001
             print(f"[behaviour] phone detection disabled (ultralytics unavailable): {exc}")
@@ -455,7 +464,7 @@ class PhoneDetector:
             return []
         results = self._model.predict(
             frame, verbose=False, conf=self.conf_threshold,
-            classes=[self._COCO_CELL_PHONE],
+            classes=[self._COCO_CELL_PHONE], imgsz=self.imgsz,
         )
         out: list[tuple[np.ndarray, float]] = []
         for r in results:
@@ -596,7 +605,7 @@ class BehaviourAnalysisService:
         self.cfg = cfg
         self.database_url = database_url
         self._drowsy = DrowsinessDetector()
-        self._phone = PhoneDetector(cfg.phone_conf)
+        self._phone = PhoneDetector(cfg.phone_conf, cfg.phone_model, cfg.phone_imgsz)
         self._sessions: dict[int, _SessionState] = {}
         # Frame-drop guard: if a frame is still being processed when the
         # next arrives (CPU too slow for 1 fps), the new one is skipped.

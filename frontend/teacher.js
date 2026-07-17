@@ -230,9 +230,13 @@ let scanBusy = false;
 let scanCountdown = 0;
 
 // Live box preview (detection-only, no attendance recording).
+// The loop is self-throttling: the next round starts PREVIEW_GAP_MS after
+// the previous one finishes, so the effective frame rate adapts to how fast
+// the backend can run inference (fast GPU → several fps; slow CPU → the
+// inference time itself becomes the pace and requests never pile up).
 let previewTimer = null;
 let previewBusy = false;
-const PREVIEW_INTERVAL_MS = 1000;
+const PREVIEW_GAP_MS = 200;
 const previewCanvas = document.createElement("canvas"); // off-screen, separate from capture
 
 // Default the auto-snapshot interval to the admin-configured detection
@@ -584,9 +588,9 @@ function startPreviewLoop() {
   stopPreviewLoop();
   const loop = async () => {
     await previewTick();
-    if (scanCams.length) previewTimer = setTimeout(loop, PREVIEW_INTERVAL_MS);
+    if (scanCams.length) previewTimer = setTimeout(loop, PREVIEW_GAP_MS);
   };
-  previewTimer = setTimeout(loop, 300);
+  previewTimer = setTimeout(loop, 100);
 }
 
 function stopPreviewLoop() {
@@ -983,7 +987,26 @@ function renderBehaviourHeatmap(zones) {
   }
 }
 
+// Colour legend strip: same cold→warm formula as the heatmap cells, painted
+// over the same dark backdrop, so the legend matches the plot exactly.
+// Leftmost = the backdrop itself (no detections at all).
+function drawHeatmapLegend() {
+  const canvas = document.getElementById("beh-legend");
+  if (!canvas || canvas.dataset.drawn) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, w, h);
+  for (let x = Math.round(w * 0.06); x < w; x++) {
+    const v = x / (w - 1); // 0..1 intensity, mirroring renderBehaviourHeatmap
+    ctx.fillStyle = `hsla(${Math.round(220 - 220 * v)}, 85%, 55%, ${0.25 + 0.65 * v})`;
+    ctx.fillRect(x, 0, 1, h);
+  }
+  canvas.dataset.drawn = "1";
+}
+
 async function loadBehaviourTab() {
+  drawHeatmapLegend();
   await loadBehaviourSessions();
   await loadBehaviourData();
 }

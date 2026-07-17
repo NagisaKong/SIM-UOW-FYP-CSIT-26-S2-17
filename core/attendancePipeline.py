@@ -260,6 +260,17 @@ class AIConfig:
     phone_consec_samples: int = field(
         default_factory=lambda: _env_int("AI_PHONE_CONSEC", 3)
     )
+    # YOLO weights for phone detection. yolov8n = lightest; on a GPU rig
+    # yolov8s/yolov8m markedly improve small-object (distant phone) recall.
+    phone_model: str = field(
+        default_factory=lambda: os.getenv("AI_PHONE_MODEL", "yolov8n.pt")
+    )
+    # YOLO inference size. The ultralytics default (640) halves a 720p frame
+    # and makes phones beyond ~3 m too small to detect; 1280 keeps them at
+    # native resolution at ~4x the (still tiny) nano compute cost.
+    phone_imgsz: int = field(
+        default_factory=lambda: _env_int("AI_PHONE_IMGSZ", 1280)
+    )
     heatmap_grid: tuple[int, int] = field(
         default_factory=lambda: _env_tiles("AI_HEATMAP_GRID", (8, 6))
     )

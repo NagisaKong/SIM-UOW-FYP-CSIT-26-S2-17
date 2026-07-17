@@ -106,6 +106,10 @@ AI_BEHAVIOUR=true            # master switch (default false)
 # AI_HEADPOSE_PITCH_DEG=30   # head-tilt cutoff (degrees)
 # AI_PHONE_CONF=0.35         # YOLO phone confidence
 # AI_PHONE_CONSEC=3          # consecutive ~1s samples to confirm phone use
+# AI_PHONE_MODEL=yolov8n.pt  # yolov8s/8m: much better distant-phone recall (GPU)
+# AI_PHONE_IMGSZ=1280        # YOLO input size; the 640 default shrinks frames
+#                            # and loses phones beyond ~3 m. Match your capture
+#                            # width on GPU: 1920 for 1080p cameras, 1280 for 720p
 # AI_HEATMAP_GRID=8x6        # heatmap cells (cols x rows)
 # AI_HEATMAP_FLUSH_SECONDS=60
 ```

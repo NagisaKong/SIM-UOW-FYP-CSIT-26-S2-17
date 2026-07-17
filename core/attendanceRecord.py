@@ -232,7 +232,7 @@ class AttendanceRecord:
         boxes = []
         for p in result.predictions:
             x1, y1, x2, y2 = (int(v) for v in p.bbox)
-            label = (p.student_id or p.full_name or f"acc#{p.account_id}") if p.recognised else "Unknown"
+            label = (p.full_name or p.student_id or f"acc#{p.account_id}") if p.recognised else "Unknown"
             boxes.append({
                 "bbox": [x1, y1, x2, y2],
                 "recognised": bool(p.recognised),
@@ -266,7 +266,7 @@ class AttendanceRecord:
         boxes = []
         for p in result.predictions:
             x1, y1, x2, y2 = (int(v) for v in p.bbox)
-            label = (p.student_id or p.full_name or f"acc#{p.account_id}") if p.recognised else "Unknown"
+            label = (p.full_name or p.student_id or f"acc#{p.account_id}") if p.recognised else "Unknown"
             boxes.append({
                 "bbox": [x1, y1, x2, y2],
                 "recognised": bool(p.recognised),

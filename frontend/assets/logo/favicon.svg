@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FRAS">
   <!-- Favicon-optimised: thicker scan corners, larger face and badge so the
-       mark stays legible at 16x16 / 32x32. -->
+       mark stays legible at 16x16 / 32x32. White rounded backplate keeps it
+       crisp on dark browser tab bars. -->
+  <rect x="0" y="0" width="64" height="64" rx="13" fill="#ffffff"/>
   <g stroke="#2a4b7f" stroke-width="7" fill="none" stroke-linecap="round">
     <path d="M7 20 V11 Q7 7 11 7 H20"/>
     <path d="M44 7 H53 Q57 7 57 11 V20"/>

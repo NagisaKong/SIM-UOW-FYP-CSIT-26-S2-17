@@ -422,7 +422,21 @@
           <h3 style="margin-top:0">Activity heatmap (U33)</h3>
           <canvas id="beh-heatmap" width="480" height="360"
             style="width:100%;max-width:480px;border-radius:8px"></canvas>
-          <p class="muted small">Camera-view grid — warmer cells saw more face activity.</p>
+          <div style="max-width:480px">
+            <canvas id="beh-legend" width="480" height="14"
+              style="width:100%;display:block;border-radius:4px;margin-top:.4rem"></canvas>
+            <div class="small muted" style="display:flex;justify-content:space-between">
+              <span>No faces detected</span>
+              <span>Most persistent presence</span>
+            </div>
+          </div>
+          <p class="muted small" style="max-width:480px">
+            The grid is the camera's view split into zones (not a floor plan).
+            Each cell's colour shows how often recognised faces appeared in that
+            area over the session, relative to the busiest cell — it maps where
+            students were seated and facing the camera, not how much they moved.
+            Dark cells are aisles, walls or empty seats.
+          </p>
         </div>
       </div>
     </section>
@@ -525,7 +539,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="app.js?v=5"></script>
-  <script src="teacher.js?v=17"></script>
+  <script src="teacher.js?v=19"></script>
 </body>
 
 </html>
