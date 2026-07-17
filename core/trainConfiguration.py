@@ -43,6 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pgvector.psycopg2 import register_vector
 from pydantic import BaseModel
 
+from core.attendancePipeline import vector_to_np
 from core.userInformation import CurrentUser, require_role
 
 VALID_MODELS = ("arcface", "facenet")
@@ -186,7 +187,7 @@ class TrainConfiguration:
                     (model_name,),
                 )
                 for account_id, vec in cur.fetchall():
-                    arr = _normalise(np.asarray(vec, dtype=np.float32))
+                    arr = _normalise(vector_to_np(vec))
                     by_account.setdefault(account_id, []).append(arr)
         return by_account
 

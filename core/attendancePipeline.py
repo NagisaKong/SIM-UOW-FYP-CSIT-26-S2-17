@@ -306,6 +306,23 @@ class EmbeddingRow:
     vector: np.ndarray
 
 
+def vector_to_np(value) -> np.ndarray:
+    """Coerce a pgvector column value to float32 across pgvector-python
+    versions: 0.2/0.3 hand back np.ndarray, 0.4+ hands back a Vector
+    object (with .to_numpy()), and without register_vector it's the raw
+    '[0.1,0.2,…]' text."""
+    if isinstance(value, np.ndarray):
+        return value.astype(np.float32)
+    to_numpy = getattr(value, "to_numpy", None)
+    if callable(to_numpy):
+        return np.asarray(to_numpy(), dtype=np.float32)
+    if isinstance(value, str):
+        return np.asarray(
+            [float(x) for x in value.strip()[1:-1].split(",")], dtype=np.float32
+        )
+    return np.asarray(value, dtype=np.float32)
+
+
 class EmbeddingRepo:
     """Thin repository over the FACE_EMBEDDING + PERSONAL_INFO tables."""
 
@@ -349,7 +366,7 @@ class EmbeddingRepo:
         print(f"  [db] model={model_name}  rows_fetched={len(rows)}")
         out: list[EmbeddingRow] = []
         for face_id, account_id, student_id, full_name, m_name, m_ver, dim, vec in rows:
-            arr = np.asarray(vec, dtype=np.float32)
+            arr = vector_to_np(vec)
             if arr.size != dim:
                 print(f"  [db] WARNING: skipping faceid={face_id} "
                       f"— vector has {arr.size} floats, expected {dim}")
