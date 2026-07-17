@@ -183,6 +183,7 @@ def test_event_and_heatmap_rows_round_trip():
     db = os.environ["DATABASE_URL"]
     cfg = SimpleNamespace(
         phone_conf=0.35, ear_consec_seconds=2.0, phone_consec_samples=3,
+        phone_model="yolov8n.pt", phone_imgsz=1280,
         heatmap_grid=(8, 6), heatmap_flush_seconds=60,
     )
     svc = BehaviourAnalysisService(cfg, db)
