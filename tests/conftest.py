@@ -305,6 +305,17 @@ def st_world(client, db_url: str, st_suffix: str, png_bytes) -> Iterator[SimpleN
             cur.execute("DELETE FROM course WHERE course_code LIKE 'ST%%'")
             cur.execute("DELETE FROM face_embedding WHERE accountid = ANY(%s)", (stale_ids,))
             cur.execute("DELETE FROM model_configs WHERE updated_by = ANY(%s)", (stale_ids,))
+            # The singleton threshold config may reference an ST admin via
+            # updated_by (ST-UF-34) — NULL it so the account can be deleted.
+            cur.execute(
+                "UPDATE attendance_threshold_config SET updated_by = NULL "
+                "WHERE updated_by = ANY(%s)",
+                (stale_ids,),
+            )
+            cur.execute(
+                "UPDATE behaviour_config SET updated_by = NULL WHERE updated_by = ANY(%s)",
+                (stale_ids,),
+            )
             cur.execute("DELETE FROM personal_info WHERE accountid = ANY(%s)", (stale_ids,))
             cur.execute("DELETE FROM user_account WHERE accountid = ANY(%s)", (stale_ids,))
         conn.commit()
@@ -485,6 +496,17 @@ def st_world(client, db_url: str, st_suffix: str, png_bytes) -> Iterator[SimpleN
             cur.execute("DELETE FROM face_embedding WHERE accountid = ANY(%s)", (ids,))
             cur.execute(
                 "DELETE FROM model_configs WHERE updated_by = ANY(%s)", (ids,)
+            )
+            # Singleton/global config rows survive the run — NULL any
+            # updated_by pointing at ST accounts (set by ST-UF-34 / U35).
+            cur.execute(
+                "UPDATE attendance_threshold_config SET updated_by = NULL "
+                "WHERE updated_by = ANY(%s)",
+                (ids,),
+            )
+            cur.execute(
+                "UPDATE behaviour_config SET updated_by = NULL WHERE updated_by = ANY(%s)",
+                (ids,),
             )
             cur.execute("DELETE FROM personal_info WHERE accountid = ANY(%s)", (ids,))
             cur.execute("DELETE FROM user_account WHERE accountid = ANY(%s)", (ids,))

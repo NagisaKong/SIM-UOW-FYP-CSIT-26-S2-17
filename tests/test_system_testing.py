@@ -14,6 +14,7 @@ import io
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -368,184 +369,927 @@ class TestST04_DatabaseAccuracy:
 # ═══════════════════════════════════════════════════════════════════════
 @requires_db
 class TestST05_UserFunctional:
-    """ST-UF-01 … ST-UF-11"""
+    """ST-UF-01 … ST-UF-35 (with U01–U35).
 
-    def test_01_st_uf_01_role_logins(self, client, st_world):
-        for role in ("admin", "teacher", "s1"):
-            r = client.post(
-                "/auth/login",
-                json={"email": st_world.emails[role], "password": st_world.password},
+    Implemented so far —
+      P0: U01, U03, U06, U08, U10, U14, U15, U16, U19, U20, U22, U23,
+          U25, U28, U31, U34.
+      P1: U04, U07, U27, U32, U33, U35.
+      P2: U05, U09, U12, U13, U21, U24, U26, U29, U30.
+    Remaining: the logout trio U02/U11/U18 (pending Part D wording — the
+    backend deliberately has no server-side logout/token-revocation
+    endpoint, so the acceptance criterion is frontend session clearing).
+    """
+
+    # ── ST-UF-01 (U01) Student Login ─────────────────────────────────
+    def test_01_st_uf_01_student_login(self, client, st_world):
+        r = client.post(
+            "/auth/login",
+            json={"email": st_world.emails["s1"], "password": st_world.password},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["token"]
+        assert body["user"]["role"] == "student"
+        assert body["user"]["full_name"] == st_world.names["s1"]
+
+    # ── ST-UF-03 (U03) Automated check-in (light ref to ST-TK-02/03) ─
+    def test_03_st_uf_03_auto_checkin_recorded(self, st_world, db_url):
+        import psycopg2
+
+        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM presence_check WHERE attendancesessionid = %s",
+                (st_world.session_id,),
             )
-            assert r.status_code == 200
-            assert r.json()["token"]
+            assert cur.fetchone()[0] >= 1, "scan (ST-TK-02) wrote no presence rows"
+            cur.execute(
+                """SELECT status FROM attendance_record
+                   WHERE attendancesessionid = %s AND accountid = %s""",
+                (st_world.session_id, st_world.account_ids["s1"]),
+            )
+            row = cur.fetchone()
+        assert row is not None, "endSession (ST-TK-03) wrote no record for s1"
 
-    def test_02_st_uf_02_face_enrol_identify(self, client, st_world):
+    # ── ST-UF-04 (U04) Student views own attendance records ─────────
+    def test_04_st_uf_04_view_attendance_records(self, client, st_world):
+        r = client.get("/student/attendance", headers=st_world.auth("s1"))
+        assert r.status_code == 200, r.text
+        records = r.json().get("records", [])
+        mine = [x for x in records if x.get("session_id") == st_world.session_id]
+        assert mine, "s1 must see the ST session in their attendance list"
+        assert mine[0]["course_code"] == st_world.course_code
+        assert mine[0]["status"] is not None  # written by endSession (ST-TK-03)
+
+    # ── ST-UF-05 (U05) Attendance status notification (late/absent) ──
+    # Acceptance per Part D wording: notifications are GENERATED/QUEUED for
+    # every late/absent student; delivery needs SMTP. _send_email is patched
+    # so no machine with real SMTP credentials can mail anyone during tests.
+    def test_05_st_uf_05_attendance_notifications(self, client, st_world):
+        with patch("core.notification._send_email", return_value=True) as fake:
+            r = client.post(
+                f"/teacher/sessions/{st_world.session_id}/notify",
+                headers=st_world.auth("teacher"),
+            )
+            assert r.status_code == 200, r.text
+            queued = r.json()["queued"]
+        assert queued >= 1, "ended ST session must have late/absent students"
+        # TestClient runs BackgroundTasks synchronously → one email per recipient.
+        assert fake.call_count == queued
+        for call in fake.call_args_list:
+            to_addr = call.args[0]
+            assert to_addr.endswith("@test.local"), to_addr  # only ST accounts
+
+        missing = client.post(
+            "/teacher/sessions/99999999/notify", headers=st_world.auth("teacher")
+        )
+        assert missing.status_code == 404
+
+    # ── ST-UF-06 (U06) Student self-service face registration ───────
+    def test_06_st_uf_06_student_self_face_registration(self, client, st_world):
+        r = client.post(
+            "/register",
+            headers=st_world.auth("s2"),
+            data={"account_id": str(st_world.account_ids["s2"])},
+            files=_multipart_png(st_world.other_png),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("success") is True
+
+        # A student may only enrol their own face.
+        denied = client.post(
+            "/register",
+            headers=st_world.auth("s2"),
+            data={"account_id": str(st_world.account_ids["s3"])},
+            files=_multipart_png(st_world.other_png),
+        )
+        assert denied.status_code == 403
+
+    # ── ST-UF-07 (U07) View single-session attendance detail ────────
+    def test_07_st_uf_07_view_session_detail(self, client, st_world):
+        r = client.get(
+            f"/student/sessions/{st_world.session_id}", headers=st_world.auth("s1")
+        )
+        assert r.status_code == 200, r.text
+        session = r.json()["session"]
+        assert session["course_code"] == st_world.course_code
+        assert session["session_status"] == "ended"
+        assert session["attendance_status"] is not None
+
+        missing = client.get(
+            "/student/sessions/99999999", headers=st_world.auth("s1")
+        )
+        assert missing.status_code == 404
+
+    # ── ST-UF-08 (U08) Appeal visible to its student (flow: ST-TK-03) ─
+    def test_08_st_uf_08_submit_appeal_visible_to_student(
+        self, client, st_world, db_url
+    ):
+        import psycopg2
+
+        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT a.appealid, a.accountid, a.status
+                   FROM attendance_appeal a
+                   JOIN attendance_record r
+                     ON r.attendancerecordid = a.attendancerecordid
+                   WHERE r.attendancesessionid = %s""",
+                (st_world.session_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            pytest.skip("no appeal from ST-TK-03 — run the task suite first")
+        appeal_id, account_id, status = row
+        role_key = next(k for k, v in st_world.account_ids.items() if v == account_id)
+        listed = client.get("/student/appeals", headers=st_world.auth(role_key))
+        assert listed.status_code == 200
+        mine = {a["appealid"]: a for a in listed.json().get("appeals", [])}
+        assert appeal_id in mine
+        assert mine[appeal_id]["status"] == status == "approved"
+
+    # ── ST-UF-09 (U09) Update student facial image (re-registration) ─
+    # U09 has no separate endpoint by design: POSTing /register again
+    # soft-deletes the previous embedding and activates the new one.
+    def test_09_st_uf_09_update_face_image(self, client, st_world, db_url, png_bytes):
+        import psycopg2
+
+        s1 = st_world.account_ids["s1"]
+        r = client.post(
+            "/register",
+            headers=st_world.auth("s1"),
+            data={"account_id": str(s1)},
+            files=_multipart_png(png_bytes(seed=303)),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("success") is True
+        new_face_id = r.json()["written"]["arcface"]
+
+        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT faceid, is_active FROM face_embedding
+                   WHERE accountid = %s AND model_name = 'arcface'
+                   ORDER BY created_at DESC""",
+                (s1,),
+            )
+            rows = cur.fetchall()
+        active = [fid for fid, act in rows if act]
+        assert active == [new_face_id], "exactly the new embedding must be active"
+        assert len(rows) >= 2, "the replaced embedding must be kept (soft-deleted)"
+
+        # Restore the original face so later suites keep recognising s1.
+        r = client.post(
+            "/register",
+            headers=st_world.auth("s1"),
+            data={"account_id": str(s1)},
+            files=_multipart_png(st_world.student_png),
+        )
+        assert r.status_code == 200, r.text
+
+    # ── ST-UF-10 (U10) Teacher Login ─────────────────────────────────
+    def test_10_st_uf_10_teacher_login(self, client, st_world):
+        r = client.post(
+            "/auth/login",
+            json={"email": st_world.emails["teacher"], "password": st_world.password},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["role"] == "teacher"
+        assert r.json()["token"]
+
+    # ── ST-UF-12 (U12) Real-time attendance roster ───────────────────
+    def test_12_st_uf_12_realtime_attendance(self, client, st_world):
+        r = client.get(
+            f"/teacher/sessions/{st_world.session_id}/live",
+            headers=st_world.auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["session"]["course_code"] == st_world.course_code
+        roster = body["roster"]
+        assert len(roster) == 3  # s1/s2/s3 enrolled
+        s1_row = next(
+            x for x in roster if x["accountid"] == st_world.account_ids["s1"]
+        )
+        assert s1_row["attendance_status"] is not None
+        summary = body["summary"]
+        assert sum(summary.values()) == len(roster)
+
+    # ── ST-UF-13 (U13) Per-student attendance history (teacher view) ─
+    def test_13_st_uf_13_student_history(self, client, st_world):
+        r = client.get(
+            f"/teacher/students/{st_world.account_ids['s1']}/attendance",
+            headers=st_world.auth("teacher"),
+            params={"course_id": st_world.course_id},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        records = body["records"]
+        assert len(records) >= 1
+        assert all(x["course_code"] == st_world.course_code for x in records)
+        assert body["total"] == len(records)
+        assert 0.0 <= float(body["rate"]) <= 100.0
+
+    # ── ST-UF-14 (U14) Export Attendance Report ──────────────────────
+    def test_14_st_uf_14_report_export(self, client, st_world):
+        r = client.get(
+            "/teacher/reports/export",
+            headers=st_world.auth("teacher"),
+            params={"course_id": st_world.course_id},
+        )
+        assert r.status_code == 200, r.text
+        assert "text/csv" in r.headers.get("content-type", "")
+        text = r.content.decode("utf-8")
+        header = text.splitlines()[0]
+        assert "course_code" in header and "attendance_status" in header
+        assert st_world.course_code in text
+
+    # ── ST-UF-15 (U15) Session lifecycle: scheduled → active → ended ─
+    def test_15_st_uf_15_session_lifecycle_states(self, client, st_world, db_url):
+        import psycopg2
+
+        r = client.post(
+            "/admin/sessions",
+            headers=st_world.auth("admin"),
+            json={
+                "course_id": st_world.course_id,
+                "start_time": "2030-03-01T09:00:00+08:00",
+                "end_time": "2030-03-01T11:00:00+08:00",
+                "status": "scheduled",
+            },
+        )
+        assert r.status_code == 200, r.text
+        sid = r.json()["session_id"]
+        try:
+            start = client.post(
+                f"/teacher/sessions/{sid}/start", headers=st_world.auth("teacher")
+            )
+            assert start.status_code == 200, start.text
+            assert start.json().get("status") == "active"
+
+            active = client.get(
+                "/teacher/sessions",
+                headers=st_world.auth("teacher"),
+                params={"course_id": st_world.course_id, "status": "active"},
+            )
+            assert sid in {
+                s["attendancesessionid"] for s in active.json()["sessions"]
+            }
+
+            again = client.post(
+                f"/teacher/sessions/{sid}/start", headers=st_world.auth("teacher")
+            )
+            assert again.status_code == 409  # already in progress
+
+            end = client.post(
+                f"/teacher/sessions/{sid}/end", headers=st_world.auth("teacher")
+            )
+            assert end.status_code == 200, end.text
+
+            ended = client.get(
+                "/teacher/sessions",
+                headers=st_world.auth("teacher"),
+                params={"course_id": st_world.course_id, "status": "ended"},
+            )
+            assert sid in {
+                s["attendancesessionid"] for s in ended.json()["sessions"]
+            }
+        finally:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                for sql in (
+                    "DELETE FROM presence_check WHERE attendancesessionid = %s",
+                    "DELETE FROM session_recording WHERE attendancesessionid = %s",
+                    "DELETE FROM attendance_record WHERE attendancesessionid = %s",
+                    "DELETE FROM attendance_session WHERE attendancesessionid = %s",
+                ):
+                    cur.execute(sql, (sid,))
+                conn.commit()
+
+    # ── ST-UF-16 (U16) Early departure summary ───────────────────────
+    def test_16_st_uf_16_early_left_summary(self, client, st_world):
+        r = client.get(
+            f"/teacher/sessions/{st_world.session_id}/early-left",
+            headers=st_world.auth("teacher"),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("success") is True
+        assert isinstance(body.get("early_left"), list)
+
+    # ── ST-UF-19 (U19) Admin registration: Account+PersonalInfo+Face ─
+    def test_19_st_uf_19_admin_registration_three_tables(
+        self, client, st_world, db_url
+    ):
+        import psycopg2
+
+        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT ua.accountid, pi.full_name, f.faceid
+                   FROM user_account ua
+                   JOIN personal_info pi ON pi.accountid = ua.accountid
+                   JOIN face_embedding f
+                     ON f.accountid = ua.accountid AND f.is_active
+                   WHERE ua.accountid = %s""",
+                (st_world.account_ids["s1"],),
+            )
+            rows = cur.fetchall()
+        assert rows, "Account + PersonalInfo + FaceEmbedding must all exist for s1"
+
+        # End-to-end: the enrolled face is identifiable (absorbs the old
+        # identify test that previously sat at ST-UF-02).
         r = client.post(
             "/identify",
             headers=st_world.auth("admin"),
             files=_multipart_png(st_world.student_png),
         )
         assert r.status_code == 200, r.text
-        body = r.json()
-        assert body.get("success") is True
-        identities = body.get("identities", [])
-        assert identities
         assert any(
             i.get("recognised") and i.get("account_id") == st_world.account_ids["s1"]
-            for i in identities
+            for i in r.json().get("identities", [])
         )
 
-    def test_03_st_uf_03_session_lifecycle_already_exercised(self, st_world):
-        # Covered by ST-TK-02/03; assert fixture session id is set.
-        assert st_world.session_id > 0
-
-    def test_04_st_uf_04_scan_detects_enrolled(self, st_world):
-        # Covered by ST-TK-02 assertion on detected s1.
-        assert st_world.account_ids["s1"]
-
-    def test_05_st_uf_05_early_left_endpoint(self, client, st_world):
-        # Session already ended — endpoint should still respond.
-        r = client.get(
-            f"/teacher/sessions/{st_world.session_id}/early-left",
-            headers=st_world.auth("teacher"),
+    # ── ST-UF-20 (U20) Manage user accounts (deactivate + edit) ─────
+    def test_20_st_uf_20_manage_user_accounts(self, client, st_world):
+        s2 = st_world.account_ids["s2"]
+        token = st_world.tokens["s2"]
+        assert (
+            client.get(
+                "/auth/me", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 200
         )
-        assert r.status_code == 200
 
-    def test_06_st_uf_06_appeal_workflow(self, st_world):
-        # Covered by ST-TK-03.
-        assert True
-
-    def test_07_st_uf_07_leave_application(self, client, st_world, db_url):
-        import psycopg2
-
-        # Create a fresh scheduled session for leave (cannot leave ended session
-        # in some paths — use a new one).
-        r = client.post(
-            "/admin/sessions",
+        r = client.patch(
+            f"/admin/users/{s2}/status",
             headers=st_world.auth("admin"),
-            json={
-                "course_id": st_world.course_id,
-                "start_time": "2030-02-01T09:00:00+08:00",
-                "end_time": "2030-02-01T11:00:00+08:00",
-                "status": "scheduled",
-            },
+            json={"status": "inactive"},
         )
         assert r.status_code == 200, r.text
-        leave_session = r.json()["session_id"]
-        st_world._leave_session_id = leave_session  # type: ignore[attr-defined]
+        denied = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert denied.status_code == 403  # deactivation takes effect immediately
 
-        r = client.post(
-            "/student/leave-applications",
-            headers=st_world.auth("s3"),
-            json={"session_id": leave_session, "reason": "Medical appointment (ST)"},
-        )
-        assert r.status_code == 200, r.text
-        leave_id = r.json().get("leave_application_id")
-        assert leave_id
-
-        listed = client.get(
-            "/teacher/leave-applications", headers=st_world.auth("teacher")
-        )
-        assert listed.status_code == 200
-
-        review = client.patch(
-            f"/teacher/leave-applications/{leave_id}",
-            headers=st_world.auth("teacher"),
-            json={"decision": "approved"},
-        )
-        assert review.status_code == 200, review.text
-
-        # Approved leave may have written attendance_record — delete children first.
-        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM leave_application WHERE attendancesessionid = %s",
-                (leave_session,),
-            )
-            cur.execute(
-                "DELETE FROM attendance_record WHERE attendancesessionid = %s",
-                (leave_session,),
-            )
-            cur.execute(
-                "DELETE FROM attendance_session WHERE attendancesessionid = %s",
-                (leave_session,),
-            )
-            conn.commit()
-
-    def test_08_st_uf_08_teacher_report_export(self, client, st_world):
-        r = client.get(
-            "/teacher/reports/export",
-            headers=st_world.auth("teacher"),
-            params={"course_id": st_world.course_id},
+        r = client.patch(
+            f"/admin/users/{s2}/status",
+            headers=st_world.auth("admin"),
+            json={"status": "active"},
         )
         assert r.status_code == 200
-        assert len(r.content) > 0
 
-    def test_09_st_uf_09_admin_train_deploy(self, client, st_world):
+        # Edit branch: change full_name, verify in the admin list, restore.
+        original = st_world.names["s2"]
+        try:
+            r = client.patch(
+                f"/admin/users/{s2}",
+                headers=st_world.auth("admin"),
+                json={"full_name": original + " (edited)"},
+            )
+            assert r.status_code == 200, r.text
+            users = client.get(
+                "/admin/users", headers=st_world.auth("admin")
+            ).json()["users"]
+            names = {u["accountid"]: u.get("full_name") for u in users}
+            assert names.get(s2) == original + " (edited)"
+        finally:
+            client.patch(
+                f"/admin/users/{s2}",
+                headers=st_world.auth("admin"),
+                json={"full_name": original},
+            )
+
+    # ── ST-UF-21 (U21) Manage facial image database ──────────────────
+    # Add = /register, list = GET /admin/faces, remove = DELETE (soft),
+    # replace = re-register. No separate edit endpoint by design.
+    def test_21_st_uf_21_manage_face_database(self, client, st_world, png_bytes):
+        s3 = st_world.account_ids["s3"]
+
+        listed = client.get("/admin/faces", headers=st_world.auth("admin"))
+        assert listed.status_code == 200
+        active_accounts = {
+            f["accountid"]
+            for f in listed.json()["faces"]
+            if f.get("is_active") in (True, "t", 1)
+        }
+        assert st_world.account_ids["s1"] in active_accounts
+
+        # Replace s3's face, then delete the replacement (soft delete).
+        r = client.post(
+            "/register",
+            headers=st_world.auth("admin"),
+            data={"account_id": str(s3)},
+            files=_multipart_png(png_bytes(seed=555)),
+        )
+        assert r.status_code == 200, r.text
+        face_id = r.json()["written"]["arcface"]
+
+        deleted = client.delete(
+            f"/admin/faces/{face_id}", headers=st_world.auth("admin")
+        )
+        assert deleted.status_code == 200, deleted.text
+
+        after = {
+            f["faceid"]: f.get("is_active")
+            for f in client.get("/admin/faces", headers=st_world.auth("admin"))
+            .json()["faces"]
+        }
+        assert after.get(face_id) in (False, "f", 0), "delete must deactivate the row"
+
+        # Restore an active embedding for s3 (same photo as ST-TK-01).
+        r = client.post(
+            "/register",
+            headers=st_world.auth("admin"),
+            data={"account_id": str(s3)},
+            files=_multipart_png(png_bytes(seed=103)),
+        )
+        assert r.status_code == 200, r.text
+
+    # ── ST-UF-22 (U22) Assign training/testing data ──────────────────
+    def test_22_st_uf_22_assign_training_data(self, client, st_world):
+        r = client.post(
+            "/admin/training-data",
+            headers=st_world.auth("admin"),
+            json={"model_name": "arcface", "train_pct": 80},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        total = body["train_count"] + body["test_count"]
+        assert total >= 1
+        assert body["train_count"] == int(total * 80 / 100)
+
+        bad = client.post(
+            "/admin/training-data",
+            headers=st_world.auth("admin"),
+            json={"model_name": "arcface", "train_pct": 5},
+        )
+        assert bad.status_code == 400
+
+    # ── ST-UF-23 (U23) Configure + train (flow only; metrics: ST-ML-04)
+    def test_23_st_uf_23_configure_and_train(self, client, st_world):
         r = client.post(
             "/admin/training-data",
             headers=st_world.auth("admin"),
             json={"model_name": "arcface", "train_pct": 70},
         )
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
+        r = client.post(
+            "/admin/training-config",
+            headers=st_world.auth("admin"),
+            json={"epochs": 1, "batch_size": 8},
+        )
+        assert r.status_code == 200, r.text
         r = client.post("/admin/train", headers=st_world.auth("admin"))
         assert r.status_code == 200, r.text
-        # Poll async job
         deadline = time.time() + 30
-        status = "running"
+        status, payload = None, {}
         while time.time() < deadline:
-            s = client.get(
+            payload = client.get(
                 "/admin/training-status", headers=st_world.auth("admin")
-            )
-            assert s.status_code == 200
-            status = s.json().get("status")
+            ).json()
+            status = payload.get("status")
             if status in ("done", "failed"):
                 break
             time.sleep(0.2)
-        assert status == "done", s.json()
-        deploy = client.post(
+        assert status == "done", payload
+
+    # ── ST-UF-24 (U24) Configure ensemble voting ─────────────────────
+    def test_24_st_uf_24_configure_ensemble(self, client, st_world):
+        # Single available model → applied live, not an ensemble.
+        r = client.post(
+            "/admin/ensemble",
+            headers=st_world.auth("admin"),
+            json={"models": ["arcface"], "weighting": "equal"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_ensemble"] is False
+        assert body["models"] == ["arcface"]
+        assert body["applied_weights"]["arcface"] == 1.0
+
+        # Requesting a model that is not loaded on this server warns but
+        # keeps the available one active.
+        r = client.post(
+            "/admin/ensemble",
+            headers=st_world.auth("admin"),
+            json={"models": ["arcface", "facenet"], "weighting": "equal"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["models"] == ["arcface"]
+        assert body["warnings"], "unavailable facenet must be reported"
+
+        # Invalid inputs.
+        assert (
+            client.post(
+                "/admin/ensemble",
+                headers=st_world.auth("admin"),
+                json={"models": [], "weighting": "equal"},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/admin/ensemble",
+                headers=st_world.auth("admin"),
+                json={"models": ["arcface"], "weighting": "bogus"},
+            ).status_code
+            == 400
+        )
+
+    # ── ST-UF-25 (U25) Retrain & redeploy ────────────────────────────
+    def test_25_st_uf_25_redeploy_model(self, client, st_world):
+        r = client.post(
             "/admin/deploy",
             headers=st_world.auth("admin"),
             json={"force": True},
         )
-        assert deploy.status_code == 200, deploy.text
+        assert r.status_code == 200, r.text
+        assert r.json().get("success") is True
 
-    def test_10_st_uf_10_behaviour_endpoints_when_disabled(self, client, st_world):
-        # With AI_BEHAVIOUR=false, behaviour-scan may 503/400 — listing config OK.
-        r = client.get(
-            f"/admin/courses/{st_world.course_id}/behaviour-analysis",
+    # ── ST-UF-26 (U26) Manage courses (create/status/enrol/delete) ───
+    def test_26_st_uf_26_manage_courses(self, client, st_world, db_url):
+        import psycopg2
+
+        code = f"ST{st_world.suffix[:4].upper()}P2"  # matches ST% cleanup pattern
+        course_id = None
+        try:
+            r = client.post(
+                "/admin/courses",
+                headers=st_world.auth("admin"),
+                json={"course_code": code, "course_name": "ST-UF-26 temp course"},
+            )
+            assert r.status_code == 200, r.text
+            course_id = r.json()["course_id"]
+
+            dup = client.post(
+                "/admin/courses",
+                headers=st_world.auth("admin"),
+                json={"course_code": code, "course_name": "dup"},
+            )
+            assert dup.status_code == 409
+
+            # Inactive course refuses new sessions.
+            r = client.patch(
+                f"/admin/courses/{course_id}/status",
+                headers=st_world.auth("admin"),
+                json={"status": "inactive"},
+            )
+            assert r.status_code == 200
+            blocked = client.post(
+                "/admin/sessions",
+                headers=st_world.auth("admin"),
+                json={
+                    "course_id": course_id,
+                    "start_time": "2030-05-01T09:00:00+08:00",
+                    "status": "scheduled",
+                },
+            )
+            assert blocked.status_code == 400
+            r = client.patch(
+                f"/admin/courses/{course_id}/status",
+                headers=st_world.auth("admin"),
+                json={"status": "active"},
+            )
+            assert r.status_code == 200
+
+            # Enrolment add / list / remove.
+            r = client.post(
+                f"/admin/courses/{course_id}/enrollments",
+                headers=st_world.auth("admin"),
+                json={"account_id": st_world.account_ids["s1"]},
+            )
+            assert r.status_code == 200, r.text
+            enrolled = client.get(
+                f"/admin/courses/{course_id}/enrollments",
+                headers=st_world.auth("admin"),
+            ).json()["enrollments"]
+            assert st_world.account_ids["s1"] in {e["accountid"] for e in enrolled}
+            r = client.delete(
+                f"/admin/courses/{course_id}/enrollments/{st_world.account_ids['s1']}",
+                headers=st_world.auth("admin"),
+            )
+            assert r.status_code == 200
+
+            # Delete (no attendance records) and confirm it is gone.
+            r = client.delete(
+                f"/admin/courses/{course_id}", headers=st_world.auth("admin")
+            )
+            assert r.status_code == 200, r.text
+            remaining = client.get(
+                "/admin/courses", headers=st_world.auth("admin")
+            ).json()["courses"]
+            assert course_id not in {c["courseid"] for c in remaining}
+            course_id = None
+        finally:
+            if course_id is not None:  # belt-and-braces if an assert fired
+                with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM course_enrollment WHERE courseid = %s",
+                        (course_id,),
+                    )
+                    cur.execute(
+                        "DELETE FROM attendance_session WHERE courseid = %s",
+                        (course_id,),
+                    )
+                    cur.execute(
+                        "DELETE FROM course WHERE courseid = %s", (course_id,)
+                    )
+                    conn.commit()
+
+    # ── ST-UF-27 (U27) Student personal analytics ────────────────────
+    def test_27_st_uf_27_student_analytics(self, client, st_world):
+        r = client.get("/student/analytics", headers=st_world.auth("s1"))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("success") is True
+        assert isinstance(body.get("trend"), list)
+        breakdown = body.get("breakdown", {})
+        assert (breakdown.get("total") or 0) >= 1
+        assert 0.0 <= float(breakdown.get("rate", -1)) <= 100.0
+
+    # ── ST-UF-28 (U28) Submit leave application ──────────────────────
+    def test_28_st_uf_28_submit_leave_application(self, client, st_world):
+        r = client.post(
+            "/admin/sessions",
             headers=st_world.auth("admin"),
+            json={
+                "course_id": st_world.course_id,
+                "start_time": "2030-04-01T09:00:00+08:00",
+                "end_time": "2030-04-01T11:00:00+08:00",
+                "status": "scheduled",
+            },
         )
         assert r.status_code == 200, r.text
+        st_world._leave_session_id = r.json()["session_id"]  # type: ignore[attr-defined]
 
-        report = client.get(
-            f"/teacher/sessions/{st_world.session_id}/behaviour",
+        r = client.post(
+            "/student/leave-applications",
+            headers=st_world.auth("s3"),
+            json={
+                "session_id": st_world._leave_session_id,
+                "reason": "Medical appointment (ST-UF-28)",
+            },
+        )
+        assert r.status_code == 200, r.text
+        st_world._leave_id = r.json()["leave_application_id"]  # type: ignore[attr-defined]
+
+        mine = client.get(
+            "/student/leave-applications", headers=st_world.auth("s3")
+        )
+        assert mine.status_code == 200
+        rows = {a["leaveapplicationid"]: a for a in mine.json()["applications"]}
+        assert st_world._leave_id in rows
+        assert rows[st_world._leave_id]["status"] == "pending"
+
+    # ── ST-UF-29 (U29) Long-term absence reminder ────────────────────
+    # Acceptance = reminders are generated for students breaching the
+    # thresholds; _send_email is patched so nothing real is ever mailed
+    # (the scan runs over the WHOLE shared database, incl. real students).
+    def test_29_st_uf_29_long_term_absence_reminder(self, client, st_world):
+        with patch("core.notification._send_email", return_value=True) as fake:
+            r = client.post(
+                "/admin/notifications/long-term-absence",
+                headers=st_world.auth("admin"),
+            )
+            assert r.status_code == 200, r.text
+            assert r.json().get("queued") is True
+        # At least one ST student sits at 0% attendance → must be targeted.
+        recipients = {call.args[0] for call in fake.call_args_list}
+        assert any(a.endswith("@test.local") for a in recipients), recipients
+
+    # ── ST-UF-30 (U30) Class attendance analytics (teacher) ──────────
+    def test_30_st_uf_30_class_analytics(self, client, st_world):
+        r = client.get(
+            f"/teacher/courses/{st_world.course_id}/analytics",
             headers=st_world.auth("teacher"),
         )
-        assert report.status_code == 200, report.text
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("success") is True
+        assert isinstance(body.get("trend"), list) and body["trend"]
+        breakdown = body["breakdown"]
+        assert (breakdown.get("total") or 0) >= 1
+        assert 0.0 <= float(breakdown.get("rate", -1)) <= 100.0
 
-    def test_11_st_uf_11_deactivate_revokes_access(self, client, st_world):
-        token = st_world.tokens["s2"]
-        # Confirm token works
-        assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    # ── ST-UF-31 (U31) Review leave application ──────────────────────
+    def test_31_st_uf_31_review_leave_application(self, client, st_world, db_url):
+        import psycopg2
+
+        leave_id = getattr(st_world, "_leave_id", None)
+        session_id = getattr(st_world, "_leave_session_id", None)
+        if not leave_id:
+            pytest.skip("ST-UF-28 did not create a leave application")
+        try:
+            pending = client.get(
+                "/teacher/leave-applications", headers=st_world.auth("teacher")
+            )
+            assert pending.status_code == 200
+            assert leave_id in {
+                a["leaveapplicationid"] for a in pending.json()["applications"]
+            }
+
+            review = client.patch(
+                f"/teacher/leave-applications/{leave_id}",
+                headers=st_world.auth("teacher"),
+                json={"decision": "approved", "comment": "ST approve"},
+            )
+            assert review.status_code == 200, review.text
+
+            # Approval must mark the student's record as excused leave.
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    """SELECT status FROM attendance_record
+                       WHERE attendancesessionid = %s AND accountid = %s""",
+                    (session_id, st_world.account_ids["s3"]),
+                )
+                row = cur.fetchone()
+            assert row is not None and row[0] == "leave"
+        finally:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM leave_application WHERE attendancesessionid = %s",
+                    (session_id,),
+                )
+                cur.execute(
+                    "DELETE FROM attendance_record WHERE attendancesessionid = %s",
+                    (session_id,),
+                )
+                cur.execute(
+                    "DELETE FROM attendance_session WHERE attendancesessionid = %s",
+                    (session_id,),
+                )
+                conn.commit()
+
+    # ── ST-UF-32 (U32) Behaviour report: empty + with-data branches ──
+    def test_32_st_uf_32_behaviour_report_with_data(self, client, st_world, db_url):
+        import psycopg2
+
+        s1 = st_world.account_ids["s1"]
+        sid = st_world.session_id
+
+        # Disabled/no-data branch (was old ST-UF-10): endpoint still 200.
+        empty = client.get(
+            f"/teacher/sessions/{sid}/behaviour", headers=st_world.auth("teacher")
+        )
+        assert empty.status_code == 200, empty.text
+        assert isinstance(empty.json().get("students"), list)
+
+        # With-data branch: AI_BEHAVIOUR=false in tests, so seed derived
+        # event tuples directly (exactly what the live service would write).
+        try:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO behaviour_event
+                          (attendancesessionid, accountid, event_type,
+                           duration_seconds, confidence, metadata)
+                       VALUES (%s, %s, 'drowsiness', 30, NULL,
+                               '{"reasons": ["eyes_closed"]}'::jsonb),
+                              (%s, %s, 'phone', 10, 0.7,
+                               '{"conf": 0.7}'::jsonb)""",
+                    (sid, s1, sid, s1),
+                )
+                conn.commit()
+
+            report = client.get(
+                f"/teacher/sessions/{sid}/behaviour",
+                headers=st_world.auth("teacher"),
+            )
+            assert report.status_code == 200, report.text
+            body = report.json()
+            row = next(
+                (x for x in body["students"] if x["accountid"] == s1), None
+            )
+            assert row is not None, body
+            assert row["drowsy"] == 1 and row["phone"] == 1
+            assert row["drowsy_seconds"] == 30 and row["phone_seconds"] == 10
+            timeline = body.get("timeline", [])
+            assert len(timeline) >= 2
+            assert any(ev.get("metadata") for ev in timeline)
+        finally:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM behaviour_event WHERE attendancesessionid = %s",
+                    (sid,),
+                )
+                conn.commit()
+
+    # ── ST-UF-33 (U33) Classroom activity heatmap ────────────────────
+    def test_33_st_uf_33_activity_heatmap(self, client, st_world, db_url):
+        import psycopg2
+
+        sid = st_world.session_id
+        cells = [(0, 0, 1.0), (3, 2, 0.5), (7, 5, 0.25)]
+        try:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                for x, y, v in cells:
+                    cur.execute(
+                        """INSERT INTO heatmap_snapshot
+                              (attendancesessionid, zone_x, zone_y, intensity)
+                           VALUES (%s, %s, %s, %s)""",
+                        (sid, x, y, v),
+                    )
+                conn.commit()
+
+            r = client.get(
+                f"/teacher/sessions/{sid}/heatmap", headers=st_world.auth("teacher")
+            )
+            assert r.status_code == 200, r.text
+            zones = r.json().get("zones", [])
+            got = {(z["zone_x"], z["zone_y"]): float(z["intensity"]) for z in zones}
+            for x, y, v in cells:
+                assert got.get((x, y)) == v
+        finally:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM heatmap_snapshot WHERE attendancesessionid = %s",
+                    (sid,),
+                )
+                conn.commit()
+
+    # ── ST-UF-34 (U34) Configure absence threshold ───────────────────
+    def test_34_st_uf_34_configure_absence_threshold(self, client, st_world):
+        original = client.get(
+            "/config/attendance", headers=st_world.auth("admin")
+        ).json()
+        assert original.get("success") is True
+        try:
+            r = client.patch(
+                "/admin/config/absence-threshold",
+                headers=st_world.auth("admin"),
+                json={
+                    "consecutive_threshold": 4,
+                    "minimum_rate": 75.5,
+                    "late_grace_seconds": 300,
+                    "detection_interval_seconds": 600,
+                },
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["absence_threshold"] == 4
+            assert body["minimum_attendance_rate"] == 75.5
+            assert body["late_grace_seconds"] == 300
+            assert body["detection_interval_seconds"] == 600
+
+            bad = client.patch(
+                "/admin/config/absence-threshold",
+                headers=st_world.auth("admin"),
+                json={"minimum_rate": 150},
+            )
+            assert bad.status_code == 400
+        finally:
+            # Shared DB — always put the institution-wide config back.
+            client.patch(
+                "/admin/config/absence-threshold",
+                headers=st_world.auth("admin"),
+                json={
+                    "consecutive_threshold": int(original["absence_threshold"]),
+                    "minimum_rate": float(original["minimum_attendance_rate"]),
+                    "late_grace_seconds": int(original["late_grace_seconds"]),
+                    "detection_interval_seconds": int(
+                        original["detection_interval_seconds"]
+                    ),
+                },
+            )
+
+    # ── ST-UF-35 (U35) Configure classroom behaviour analysis ───────
+    def test_35_st_uf_35_configure_behaviour_analysis(self, client, st_world):
+        cid = st_world.course_id
+        url = f"/admin/courses/{cid}/behaviour-analysis"
 
         r = client.patch(
-            f"/admin/users/{st_world.account_ids['s2']}/status",
+            url,
             headers=st_world.auth("admin"),
-            json={"status": "inactive"},
+            json={
+                "enable": True,
+                "drowsiness": True,
+                "phone_usage": False,
+                "heatmap": True,
+            },
         )
         assert r.status_code == 200, r.text
+        cfg = r.json()["config"]
+        assert cfg["enabled"] is True
+        assert cfg["drowsiness"] is True
+        assert cfg["phone_usage"] is False  # sub-flag persisted
+        assert cfg["heatmap"] is True
 
-        denied = client.get(
-            "/auth/me", headers={"Authorization": f"Bearer {token}"}
+        readback = client.get(url, headers=st_world.auth("admin"))
+        assert readback.status_code == 200
+        assert readback.json()["config"] == cfg
+
+        off = client.patch(
+            url, headers=st_world.auth("admin"), json={"enable": False}
         )
-        assert denied.status_code == 403
+        assert off.status_code == 200, off.text
+        assert off.json()["config"]["enabled"] is False
+        assert (
+            client.get(url, headers=st_world.auth("admin")).json()["config"]["enabled"]
+            is False
+        )
 
-        # Reactivate for cleanup / later tests
-        client.patch(
-            f"/admin/users/{st_world.account_ids['s2']}/status",
+        missing = client.patch(
+            "/admin/courses/99999999/behaviour-analysis",
             headers=st_world.auth("admin"),
-            json={"status": "active"},
+            json={"enable": True},
         )
+        assert missing.status_code == 404
+        # behaviour_config row for the ST course is removed by st_world cleanup.
 
 
 # ═══════════════════════════════════════════════════════════════════════
