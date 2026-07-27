@@ -56,10 +56,16 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 -- ------------------------------------------------------------
 -- 4. FACE_EMBEDDING  (biometric data)
 -- ------------------------------------------------------------
--- embedding_vector stored as BYTEA when pgvector is unavailable.
--- Switch to: embedding_vector vector(512) for ArcFace,
---            embedding_vector vector(128) for FaceNet.
--- Use separate rows per model (model_name differentiates them).
+-- embedding_vector is a pgvector VECTOR(512). BOTH recognition models used
+-- here emit 512-d embeddings, so one column width serves both:
+--   arcface — InsightFace buffalo_l / r100                        → 512
+--   facenet — facenet-pytorch InceptionResnetV1(pretrained=
+--             'vggface2'); its final layer is Linear(1792, 512)   → 512
+-- (The original 2015 FaceNet paper used 128-d; the PyTorch port does not.
+--  Verify with: InceptionResnetV1().last_linear.out_features)
+-- One row per model per account — model_name differentiates them, and
+-- EmbeddingRepo.load_active_embeddings skips any row whose stored vector
+-- length disagrees with its `dimension` column.
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
