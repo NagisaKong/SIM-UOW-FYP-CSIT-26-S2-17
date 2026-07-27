@@ -108,6 +108,30 @@ BEGIN
     DELETE FROM personal_info;   -- cascades from user_account too, explicit for clarity
     DELETE FROM user_account;
 
+    -- Restart the identity counters of every table we just emptied, so a
+    -- re-seeded demo database numbers rows from 1 again. DELETE (unlike
+    -- TRUNCATE ... RESTART IDENTITY, which FK dependencies make awkward
+    -- here) leaves sequences untouched, so without this the FaceIDs,
+    -- AccountIDs, … keep climbing across every reset and demo screenshots
+    -- show arbitrary numbers. USER_PROFILES is deliberately excluded — it is
+    -- seeded by schema.sql and never deleted above.
+    FOR rec IN
+        SELECT s.relname AS seqname
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
+        JOIN pg_class t ON t.oid = d.refobjid
+        WHERE s.relkind = 'S'
+          AND t.relname = ANY (ARRAY[
+              'behaviour_event', 'heatmap_snapshot', 'presence_check',
+              'session_recording', 'leave_application', 'attendance_appeal',
+              'attendance_record', 'attendance_session', 'course_enrollment',
+              'model_configs', 'course', 'face_embedding', 'personal_info',
+              'user_account'
+          ])
+    LOOP
+        EXECUTE format('ALTER SEQUENCE %I RESTART WITH 1', rec.seqname);
+    END LOOP;
+
     -- role profile ids (seeded by schema.sql)
     SELECT profileid INTO p_student FROM user_profiles WHERE role='student' LIMIT 1;
     SELECT profileid INTO p_teacher FROM user_profiles WHERE role='teacher' LIMIT 1;

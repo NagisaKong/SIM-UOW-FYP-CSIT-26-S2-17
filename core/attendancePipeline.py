@@ -47,6 +47,7 @@ import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
+
 # Make the pip-installed NVIDIA CUDA/cuDNN DLLs discoverable by onnxruntime-gpu.
 # InsightFace (SCRFD + ArcFace) builds its onnxruntime session here, which loads
 # onnxruntime_providers_cuda.dll -> cublasLt64_12.dll / cudnn64_9.dll. Those ship
@@ -736,8 +737,8 @@ class GanEnhancer(_BaseEnhancer):
 
         if backend in ("auto", "realesrgan"):
             try:
-                from realesrgan import RealESRGANer  # type: ignore
                 from basicsr.archs.rrdbnet_arch import RRDBNet  # type: ignore
+                from realesrgan import RealESRGANer  # type: ignore
 
                 model = RRDBNet(
                     num_in_ch=3, num_out_ch=3, num_feat=64,

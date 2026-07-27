@@ -141,8 +141,8 @@
 
 <body>
   <header class="topbar">
-    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
-        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Teacher Dashboard</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt="" style="height:26px;vertical-align:-6px;margin-right:8px">FRAS
+      Teacher Dashboard</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -397,6 +397,7 @@
             <th>Drowsy time</th>
             <th>Phone events</th>
             <th>Phone time</th>
+            <th>Coverage</th>
           </tr>
         </thead>
         <tbody id="beh-summary-body"></tbody>
@@ -419,7 +420,13 @@
           </table>
         </div>
         <div style="min-width:300px;max-width:520px;flex:1">
-          <h3 style="margin-top:0">Activity heatmap (U33)</h3>
+          <h3 style="margin-top:0">Activity heatmap</h3>
+          <div class="row row--compact" style="margin-bottom:.5rem;max-width:480px">
+            <label class="small">From<input type="datetime-local" id="beh-heat-from"></label>
+            <label class="small">To<input type="datetime-local" id="beh-heat-to"></label>
+            <button id="beh-heat-apply" class="secondary">Apply</button>
+            <button id="beh-heat-reset" class="secondary">Whole session</button>
+          </div>
           <canvas id="beh-heatmap" width="480" height="360"
             style="width:100%;max-width:480px;border-radius:8px"></canvas>
           <div style="max-width:480px">
@@ -517,17 +524,36 @@
         <h2>Appeal Details</h2>
         <table>
           <tbody>
-            <tr><th style="width:180px">Student</th><td id="tappeal-student">-</td></tr>
-            <tr><th>Course / Session</th><td id="tappeal-session">-</td></tr>
-            <tr><th>Recorded As</th><td id="tappeal-record">-</td></tr>
-            <tr><th>Submitted</th><td id="tappeal-created">-</td></tr>
-            <tr><th>Status</th><td id="tappeal-status">-</td></tr>
-            <tr><th>Reviewed At</th><td id="tappeal-reviewed">-</td></tr>
+            <tr>
+              <th style="width:180px">Student</th>
+              <td id="tappeal-student">-</td>
+            </tr>
+            <tr>
+              <th>Course / Session</th>
+              <td id="tappeal-session">-</td>
+            </tr>
+            <tr>
+              <th>Recorded As</th>
+              <td id="tappeal-record">-</td>
+            </tr>
+            <tr>
+              <th>Submitted</th>
+              <td id="tappeal-created">-</td>
+            </tr>
+            <tr>
+              <th>Status</th>
+              <td id="tappeal-status">-</td>
+            </tr>
+            <tr>
+              <th>Reviewed At</th>
+              <td id="tappeal-reviewed">-</td>
+            </tr>
           </tbody>
         </table>
         <h3 style="margin-top:1rem">Reason for Appeal</h3>
         <p id="tappeal-reason" class="small"
-          style="background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap;min-height:3em">-</p>
+          style="background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap;min-height:3em">
+          -</p>
         <div id="tappeal-actions" class="row row--compact" style="margin-top:.5rem">
           <button id="tappeal-approve">Approve — mark Present</button>
           <button id="tappeal-reject" class="danger">Reject</button>
@@ -538,7 +564,8 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=5"></script>
+  <script src="config.js?v=1"></script>
+  <script src="app.js?v=6"></script>
   <script src="teacher.js?v=19"></script>
 </body>
 

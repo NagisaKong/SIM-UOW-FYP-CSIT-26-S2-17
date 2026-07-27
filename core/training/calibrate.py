@@ -1,7 +1,9 @@
-from core.attendancePipeline import AIConfig, ArcFaceRecognizer
-from sklearn.metrics import precision_recall_curve
+import cv2  # Required for image padding
 import numpy as np
-import cv2 # Required for image padding
+from sklearn.metrics import precision_recall_curve
+
+from core.attendancePipeline import AIConfig, ArcFaceRecognizer
+
 
 def calibrate_threshold(synthetic_pairs, labels):
     scores = []

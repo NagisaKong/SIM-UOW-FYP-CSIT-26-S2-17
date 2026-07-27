@@ -903,21 +903,34 @@ async function loadBehaviourData() {
   try {
     const [report, heat] = await Promise.all([
       api(`/teacher/sessions/${id}/behaviour`),
-      api(`/teacher/sessions/${id}/heatmap`),
+      api(`/teacher/sessions/${id}/heatmap${heatmapRangeQuery()}`),
     ]);
+    seedHeatmapRange(heat);
 
     const students = report.students || [];
     if (!students.length) {
       summaryBody.append(el("tr", {},
-        el("td", {colspan: 5, class: "muted"}, "No behaviour events recorded for this session.")));
+        el("td", {colspan: 6, class: "muted"}, "No behaviour events recorded for this session.")));
     }
     for (const s of students) {
+      // U32: a student the analyser never got usable landmarks for is
+      // reported as inconclusive, not as well-behaved.
+      const status = s.analysis_status || "not_analysed";
+      const coverage = status === "inconclusive"
+        ? el("span", {class: "badge", title:
+            "Insufficient camera coverage — no usable facial landmarks were captured for this student",
+          }, "Inconclusive")
+        : status === "analysed"
+          ? el("span", {class: "muted small"},
+              s.samples_analysed ? `${s.samples_analysed} samples` : "analysed")
+          : el("span", {class: "muted small"}, "—");
       summaryBody.append(el("tr", {},
         el("td", {}, s.full_name || `acc#${s.accountid}`),
         el("td", {}, String(s.drowsy || 0)),
         el("td", {}, fmtDur(s.drowsy_seconds)),
         el("td", {}, String(s.phone || 0)),
         el("td", {}, fmtDur(s.phone_seconds)),
+        el("td", {}, coverage),
       ));
     }
 
@@ -941,12 +954,54 @@ async function loadBehaviourData() {
     }
 
     renderBehaviourHeatmap(heat.zones || []);
+    const inconclusive = report.inconclusive_count || 0;
     msg.textContent = report.note || heat.note ||
-      `${students.length} student(s) with events · ${timeline.length} event(s)`;
+      `${students.length} student(s) · ${timeline.length} event(s)` +
+      (inconclusive ? ` · ${inconclusive} inconclusive (insufficient coverage)` : "");
   } catch (e) {
     msg.textContent = "Error: " + e.message;
   }
 }
+
+// ── U33 heatmap time-range filter ─────────────────────────────
+// Builds the ?time_from/&time_to query from the two pickers. The inputs
+// are datetime-local (no timezone), so convert to ISO before sending.
+function heatmapRangeQuery() {
+  const from = document.getElementById("beh-heat-from").value;
+  const to = document.getElementById("beh-heat-to").value;
+  const params = new URLSearchParams();
+  if (from) params.set("time_from", new Date(from).toISOString());
+  if (to) params.set("time_to", new Date(to).toISOString());
+  const q = params.toString();
+  return q ? "?" + q : "";
+}
+
+// Seed empty pickers with the session's full capture window so the teacher
+// can narrow from a sensible starting point.
+function seedHeatmapRange(heat) {
+  const fromEl = document.getElementById("beh-heat-from");
+  const toEl = document.getElementById("beh-heat-to");
+  const toLocal = (ts) => {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+           `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  if (heat.captured_from) {
+    fromEl.min = toLocal(heat.captured_from);
+    if (!fromEl.value) fromEl.placeholder = fromEl.min;
+  }
+  if (heat.captured_to) {
+    toEl.max = toLocal(heat.captured_to);
+  }
+}
+
+document.getElementById("beh-heat-apply").addEventListener("click", loadBehaviourData);
+document.getElementById("beh-heat-reset").addEventListener("click", () => {
+  document.getElementById("beh-heat-from").value = "";
+  document.getElementById("beh-heat-to").value = "";
+  loadBehaviourData();
+});
 
 // U33: aggregate all snapshots into one grid (mean intensity per cell),
 // then paint cold→warm cells onto the canvas.

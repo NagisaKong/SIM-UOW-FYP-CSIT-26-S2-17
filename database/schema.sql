@@ -56,10 +56,16 @@ CREATE TABLE IF NOT EXISTS PERSONAL_INFO (
 -- ------------------------------------------------------------
 -- 4. FACE_EMBEDDING  (biometric data)
 -- ------------------------------------------------------------
--- embedding_vector stored as BYTEA when pgvector is unavailable.
--- Switch to: embedding_vector vector(512) for ArcFace,
---            embedding_vector vector(128) for FaceNet.
--- Use separate rows per model (model_name differentiates them).
+-- embedding_vector is a pgvector VECTOR(512). BOTH recognition models used
+-- here emit 512-d embeddings, so one column width serves both:
+--   arcface — InsightFace buffalo_l / r100                        → 512
+--   facenet — facenet-pytorch InceptionResnetV1(pretrained=
+--             'vggface2'); its final layer is Linear(1792, 512)   → 512
+-- (The original 2015 FaceNet paper used 128-d; the PyTorch port does not.
+--  Verify with: InceptionResnetV1().last_linear.out_features)
+-- One row per model per account — model_name differentiates them, and
+-- EmbeddingRepo.load_active_embeddings skips any row whose stored vector
+-- length disagrees with its `dimension` column.
 CREATE TABLE IF NOT EXISTS FACE_EMBEDDING (
     FaceID           SERIAL          PRIMARY KEY,
     AccountID        INTEGER         NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
@@ -285,6 +291,29 @@ CREATE INDEX IF NOT EXISTS idx_behaviour_session_acc
     ON BEHAVIOUR_EVENT(AttendanceSessionID, AccountID);
 CREATE INDEX IF NOT EXISTS idx_behaviour_type
     ON BEHAVIOUR_EVENT(event_type);
+
+
+-- ------------------------------------------------------------
+-- 13b. BEHAVIOUR_COVERAGE  (U32 analysis coverage per student)
+-- ------------------------------------------------------------
+-- Behaviour events only record what WAS detected. To distinguish "no
+-- drowsiness/phone observed" from "this student could never be analysed"
+-- (face too small / occluded / outside the internal camera's view), the
+-- service also counts, per student per session, how many ~1 fps samples
+-- recognised them (samples_total) and how many of those yielded usable
+-- facial landmarks (samples_analysed). U32 reports a student whose
+-- samples_analysed is 0 as *inconclusive* rather than as well-behaved.
+CREATE TABLE IF NOT EXISTS BEHAVIOUR_COVERAGE (
+    AttendanceSessionID INTEGER     NOT NULL REFERENCES ATTENDANCE_SESSION(AttendanceSessionID) ON DELETE CASCADE,
+    AccountID           INTEGER     NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
+    samples_total       INTEGER     NOT NULL DEFAULT 0,
+    samples_analysed    INTEGER     NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (AttendanceSessionID, AccountID)
+);
+
+CREATE INDEX IF NOT EXISTS idx_behaviour_coverage_session
+    ON BEHAVIOUR_COVERAGE(AttendanceSessionID);
 
 
 -- ------------------------------------------------------------

@@ -113,23 +113,62 @@ class InClassBehaviour:
     def viewBehaviourReport(self, session_id: int) -> dict[str, Any]:
         try:
             with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
+                # Every student who was in the room (so a student with no
+                # events still appears, and can be told apart from one who
+                # could never be analysed — see analysis_status below).
                 cur.execute(
-                    """SELECT be.accountid, pi.full_name,
-                              COUNT(*) FILTER (WHERE be.event_type='drowsiness') AS drowsy,
-                              COUNT(*) FILTER (WHERE be.event_type='phone')      AS phone,
+                    """SELECT r.accountid, pi.full_name,
+                              COUNT(be.behavioureventid)
+                                FILTER (WHERE be.event_type='drowsiness')        AS drowsy,
+                              COUNT(be.behavioureventid)
+                                FILTER (WHERE be.event_type='phone')             AS phone,
                               COALESCE(SUM(be.duration_seconds) FILTER
                                        (WHERE be.event_type='drowsiness'), 0)    AS drowsy_seconds,
                               COALESCE(SUM(be.duration_seconds) FILTER
                                        (WHERE be.event_type='phone'), 0)         AS phone_seconds
-                       FROM behaviour_event be
-                       LEFT JOIN personal_info pi ON pi.accountid = be.accountid
-                       WHERE be.attendancesessionid = %s
-                       GROUP BY be.accountid, pi.full_name
+                       FROM attendance_record r
+                       LEFT JOIN personal_info pi ON pi.accountid = r.accountid
+                       LEFT JOIN behaviour_event be
+                              ON be.attendancesessionid = r.attendancesessionid
+                             AND be.accountid = r.accountid
+                       WHERE r.attendancesessionid = %s
+                         AND r.status IN ('present', 'late', 'early_left')
+                       GROUP BY r.accountid, pi.full_name
                        ORDER BY pi.full_name NULLS LAST""",
                     (session_id,),
                 )
                 cols = [c[0] for c in cur.description]
                 rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+                # Analysis coverage (optional table — absent before the
+                # migration runs, in which case no student is flagged).
+                coverage: dict[int, tuple[int, int]] = {}
+                try:
+                    cur.execute(
+                        """SELECT accountid, samples_total, samples_analysed
+                           FROM behaviour_coverage WHERE attendancesessionid = %s""",
+                        (session_id,),
+                    )
+                    coverage = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+                except psycopg2.errors.UndefinedTable:
+                    conn.rollback()
+
+                # U32 alt-flow 2: a student the analyser never got usable
+                # landmarks for is *inconclusive*, not well-behaved. Only
+                # applied when the session actually produced behaviour data.
+                session_analysed = bool(coverage) or any(
+                    (r["drowsy"] or 0) + (r["phone"] or 0) > 0 for r in rows
+                )
+                for row in rows:
+                    total, analysed = coverage.get(row["accountid"], (0, 0))
+                    row["samples_total"] = total
+                    row["samples_analysed"] = analysed
+                    if not session_analysed:
+                        row["analysis_status"] = "not_analysed"
+                    elif analysed > 0 or (row["drowsy"] or 0) + (row["phone"] or 0) > 0:
+                        row["analysis_status"] = "analysed"
+                    else:
+                        row["analysis_status"] = "inconclusive"
                 # Timeline for the frontend chart: newest 500 raw events.
                 cur.execute(
                     """SELECT be.behavioureventid, be.accountid, pi.full_name,
@@ -145,8 +184,13 @@ class InClassBehaviour:
                 cols = [c[0] for c in cur.description]
                 timeline = [dict(zip(cols, r)) for r in cur.fetchall()]
             self.behaviour = {"events_by_student": rows}
-            return {"success": True, "session_id": session_id,
-                    "students": rows, "timeline": timeline}
+            return {
+                "success": True, "session_id": session_id,
+                "students": rows, "timeline": timeline,
+                "inconclusive_count": sum(
+                    1 for r in rows if r.get("analysis_status") == "inconclusive"
+                ),
+            }
         except psycopg2.errors.UndefinedTable:
             return {"success": True, "session_id": session_id, "students": [],
                     "timeline": [],
@@ -157,25 +201,50 @@ class InClassBehaviour:
                     "students": [], "timeline": []}
 
     # ── U33 viewHeatmap ─────────────────────────────────────────────
-    def viewHeatmap(self, session_id: int) -> dict[str, Any]:
+    def viewHeatmap(
+        self, session_id: int,
+        time_from: str | None = None, time_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Zone intensities for a session. `time_from` / `time_to` (ISO
+        timestamps) narrow the view to one part of the lesson (U33 step 4),
+        so the teacher can compare, e.g., the first and last 20 minutes."""
+        clauses = ["attendancesessionid = %s"]
+        params: list[Any] = [session_id]
+        if time_from:
+            clauses.append("captured_at >= %s")
+            params.append(time_from)
+        if time_to:
+            clauses.append("captured_at <= %s")
+            params.append(time_to)
+        sql = f"""SELECT zone_x, zone_y, intensity, captured_at
+                  FROM heatmap_snapshot
+                  WHERE {" AND ".join(clauses)}
+                  ORDER BY captured_at"""
         try:
             with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
-                cur.execute(
-                    """SELECT zone_x, zone_y, intensity, captured_at
-                       FROM heatmap_snapshot
-                       WHERE attendancesessionid = %s
-                       ORDER BY captured_at""",
-                    (session_id,),
-                )
+                cur.execute(sql, params)
                 cols = [c[0] for c in cur.description]
                 rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-            return {"success": True, "session_id": session_id, "zones": rows}
+                # Full extent of the session's data, so the UI can seed its
+                # time-range pickers even when a narrower window is applied.
+                cur.execute(
+                    """SELECT MIN(captured_at), MAX(captured_at)
+                       FROM heatmap_snapshot WHERE attendancesessionid = %s""",
+                    (session_id,),
+                )
+                first, last = cur.fetchone()
+            return {
+                "success": True, "session_id": session_id, "zones": rows,
+                "captured_from": first, "captured_to": last,
+            }
         except psycopg2.errors.UndefinedTable:
             return {"success": True, "session_id": session_id, "zones": [],
+                    "captured_from": None, "captured_to": None,
                     "note": "heatmap_snapshot table not yet created (run schema.sql)"}
         except Exception as exc:  # noqa: BLE001 — heatmap view must not 500
             print(f"[behaviour] viewHeatmap failed: {exc}")
-            return {"success": True, "session_id": session_id, "zones": []}
+            return {"success": True, "session_id": session_id, "zones": [],
+                    "captured_from": None, "captured_to": None}
 
     # ── U35 enable / disable (DB-backed) ────────────────────────────
     def enableBehaviourAnalysis(
@@ -585,6 +654,11 @@ class _SessionState:
     heatmap: HeatmapAccumulator | None = None
     last_heatmap_flush: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
+    # U32 coverage: account_id -> [samples_total, samples_analysed] since the
+    # last flush. Lets the report tell "nothing detected" apart from
+    # "never analysable" (insufficient camera coverage).
+    coverage: dict[int, list[int]] = field(default_factory=dict)
+    last_coverage_flush: float = field(default_factory=time.time)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -708,6 +782,12 @@ class BehaviourAnalysisService:
         if flags.get("drowsiness"):
             for p in recognised:
                 obs = self._drowsy.observe(self._face_crop(frame, p.bbox))
+                # U32 coverage: this sample recognised the student; it only
+                # counts as *analysed* when landmarks were actually usable.
+                cov = state.coverage.setdefault(p.account_id, [0, 0])
+                cov[0] += 1
+                if obs is not None:
+                    cov[1] += 1
                 reasons = []
                 if obs is not None:
                     if obs["ear"] < self.cfg.ear_threshold:
@@ -753,6 +833,11 @@ class BehaviourAnalysisService:
                 session_id, state.heatmap.snapshot_and_reset()
             )
             state.last_heatmap_flush = now
+        if (state.coverage
+                and now - state.last_coverage_flush >= self.cfg.heatmap_flush_seconds):
+            self._write_coverage(session_id, state.coverage)
+            state.coverage = {}
+            state.last_coverage_flush = now
 
         return {
             "faces_in_frame": len(result.predictions),
@@ -783,6 +868,33 @@ class BehaviourAnalysisService:
             return len(events)
         except Exception as exc:  # noqa: BLE001 — a DB blip must not kill the scan loop
             print(f"[behaviour] event write failed ({len(events)} events): {exc}")
+            return 0
+
+    def _write_coverage(
+        self, session_id: int, coverage: dict[int, list[int]],
+    ) -> int:
+        """Accumulate per-student analysis coverage (U32 'inconclusive')."""
+        if not coverage:
+            return 0
+        try:
+            with psycopg2.connect(self.database_url) as conn, conn.cursor() as cur:
+                for account_id, (total, analysed) in coverage.items():
+                    cur.execute(
+                        """INSERT INTO behaviour_coverage
+                              (attendancesessionid, accountid,
+                               samples_total, samples_analysed)
+                           VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (attendancesessionid, accountid) DO UPDATE
+                             SET samples_total =
+                                   behaviour_coverage.samples_total + EXCLUDED.samples_total,
+                                 samples_analysed =
+                                   behaviour_coverage.samples_analysed + EXCLUDED.samples_analysed,
+                                 updated_at = NOW()""",
+                        (session_id, account_id, total, analysed),
+                    )
+            return len(coverage)
+        except Exception as exc:  # noqa: BLE001 — coverage is diagnostic only
+            print(f"[behaviour] coverage write failed: {exc}")
             return 0
 
     def _write_heatmap(
@@ -834,9 +946,10 @@ def teacher_view_behaviour(
 @router.get("/teacher/sessions/{session_id}/heatmap")
 def teacher_view_heatmap(
     session_id: int, request: Request,
+    time_from: str | None = None, time_to: str | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
-    return _svc(request).viewHeatmap(session_id)
+    return _svc(request).viewHeatmap(session_id, time_from, time_to)
 
 
 # Teacher: CR-06 behaviour frame ingest (~1 fps from the scan page).

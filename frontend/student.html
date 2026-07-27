@@ -320,6 +320,11 @@
     <section id="tab-analytics" class="panel" style="display:none">
       <h2>Attendance Analytics</h2>
       <div class="row row--compact">
+        <label>Module
+          <select id="sana-course">
+            <option value="">All modules</option>
+          </select>
+        </label>
         <label>From<input type="date" id="sana-from"></label>
         <label>To<input type="date" id="sana-to"></label>
         <button id="sana-refresh">Apply</button>
@@ -448,7 +453,8 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=5"></script>
+  <script src="config.js?v=1"></script>
+  <script src="app.js?v=6"></script>
   <script src="student.js?v=3"></script>
 </body>
 

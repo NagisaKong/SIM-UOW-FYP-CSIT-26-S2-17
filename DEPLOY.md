@@ -132,13 +132,27 @@ Notes:
 2. Set **Root Directory = `frontend`** (the static files + `vercel.json` live there).
    Framework preset: **Other** (no build step).
 3. Deploy. You get `https://<your-frontend>.vercel.app`.
-4. Point the frontend at the backend — two options:
-   - Visit `https://<your-frontend>.vercel.app/?api=https://<backend>.railway.app`
-     once; `app.js` saves it to `localStorage` for subsequent visits, **or**
-   - Add an inline `<script>window.API_BASE="https://<backend>.railway.app"</script>`
-     before `app.js` in the HTML files for a fixed default.
+4. **Point the frontend at the backend — edit `frontend/config.js`:**
+
+   ```js
+   window.API_BASE = "https://<backend>.up.railway.app";
+   ```
+
+   That single file is the deployment default, loaded before `app.js` on every
+   page. Without it the pages fall back to `<current-host>:8000`, which does not
+   exist on Vercel — visitors would get "Cannot reach the API".
+   Commit and redeploy the frontend after changing it.
+
+   Runtime overrides (no rebuild needed) still work and take precedence:
+   - `?api=https://other-backend` — use and remember another backend. This is how
+     the hosted UI is pointed at a **local GPU machine** so behaviour analysis
+     (CR-06) can run; that machine must be reachable from the browser.
+   - `?api=default` — forget the override and go back to `config.js`.
+
 5. Go back to Railway and make sure `ALLOWED_ORIGINS` matches the Vercel URL exactly
-   (scheme + host, no trailing slash), then redeploy the backend.
+   (scheme + host, no trailing slash), then redeploy the backend. A mismatch here
+   shows up as "Cannot reach the API …" in the UI and a CORS error in the console,
+   even though the backend itself is healthy.
 
 ## 3. Post-launch checklist
 

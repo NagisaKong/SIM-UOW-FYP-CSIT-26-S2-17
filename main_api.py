@@ -31,7 +31,6 @@ from core import all_routers
 from core.attendancePipeline import AIConfig, AttendancePipeline
 from core.attendanceSession import purge_expired_recordings
 
-
 # ── Connection timezone patch ─────────────────────────────────────────
 # Supabase's connection pooler (Supavisor) ignores database/role-level
 # `ALTER ... SET timezone` and startup `options`, so pooled sessions always
@@ -165,9 +164,31 @@ def root():
 
 @app.get("/health")
 def health():
+    """Liveness plus the AI configuration this instance is actually running.
+
+    The ensemble is environment-dependent: the CPU cloud deployment runs
+    ArcFace only (AI_USE_MTCNN/FACENET=false, see DEPLOY.md) while the GPU
+    workstation runs the full dual-model ensemble and behaviour analysis.
+    Reporting it here makes the tested configuration verifiable rather than
+    assumed — test evidence can cite this payload.
+    """
     pipeline: AttendancePipeline = app.state.pipeline
+    cfg = app.state.cfg
     stores = {name: len(s) for name, s in pipeline.store_manager.stores.items()}
-    return {"success": True, "stores": stores}
+    active = [name for name, w in pipeline._weights.items() if w > 0]
+    return {
+        "success": True,
+        "stores": stores,
+        "recognition": {
+            "detectors": ["scrfd"] + (["mtcnn"] if pipeline._mtcnn else []),
+            "recognisers": active,
+            "ensemble": len(active) >= 2,
+            "voting_weights": dict(pipeline._weights),
+            "device": cfg.device,
+            "enhancer": pipeline.enhancer.name if pipeline.enhancer else None,
+        },
+        "behaviour_analysis": bool(getattr(app.state, "behaviour", None)),
+    }
 
 
 # Mount every business-class router (userInformation, attendanceRecord,
