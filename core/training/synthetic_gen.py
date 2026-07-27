@@ -1,7 +1,8 @@
-import sys
 import os
-import torch
+import sys
+
 import cv2  # Required to convert tensors to images
+import torch
 
 # Tell Python to look in THIS specific folder for NVIDIA's libraries
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,6 +11,7 @@ if _CURRENT_DIR not in sys.path:
 
 import dnnlib
 import legacy
+
 
 class SyntheticDataGenerator:
     def __init__(self, model_path="models/stylegan/stylegan2-ffhq-config-f.pkl"):

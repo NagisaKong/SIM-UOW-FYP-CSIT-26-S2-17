@@ -26,10 +26,15 @@ jobs:
           cache: 'pip'
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned on purpose. An unpinned `pip install ruff` picks up whatever
+        # is latest, and ruff expands its DEFAULT rule set between releases —
+        # that alone turned this job red once with no code change. Bump this
+        # version deliberately, and run `ruff check` locally with the same
+        # version before doing so. The rule set itself is pinned in ruff.toml.
+        run: pip install ruff==0.16.0
 
       - name: Ruff check
-        run: ruff check core main_api.py
+        run: ruff check core main_api.py tests
 
   # ────────────────────────────────────────────────────────────────
   # 2. Database schema — verify schema.sql applies cleanly
@@ -148,8 +153,10 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   # 4. Frontend — only runs when the folder has been populated
   # ────────────────────────────────────────────────────────────────
+  # The frontend is native HTML/CSS/vanilla JS (CR-01) with no build step, so
+  # this job only runs if someone later adds a package.json toolchain.
   frontend:
-    name: Frontend (React)
+    name: Frontend (static)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

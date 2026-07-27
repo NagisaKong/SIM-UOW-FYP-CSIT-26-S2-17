@@ -23,7 +23,6 @@ from core import (
     userInformation,
 )
 
-
 all_routers: list[APIRouter] = [
     userInformation.router,
     attendanceRecord.router,

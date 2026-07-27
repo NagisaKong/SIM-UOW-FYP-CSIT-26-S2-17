@@ -27,7 +27,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-
 # ── JWT / hashing config (private) ───────────────────────────────────
 # A weak/known secret lets anyone forge admin tokens. In production we refuse
 # to start unless JWT_SECRET is set to a strong (>=32 char) random value.

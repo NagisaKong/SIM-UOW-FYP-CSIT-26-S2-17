@@ -31,7 +31,6 @@ from core import all_routers
 from core.attendancePipeline import AIConfig, AttendancePipeline
 from core.attendanceSession import purge_expired_recordings
 
-
 # ── Connection timezone patch ─────────────────────────────────────────
 # Supabase's connection pooler (Supavisor) ignores database/role-level
 # `ALTER ... SET timezone` and startup `options`, so pooled sessions always

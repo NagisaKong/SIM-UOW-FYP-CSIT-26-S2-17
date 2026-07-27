@@ -11,6 +11,27 @@ extend-exclude = [
     "core/training/torch_utils",
 ]
 
+[lint]
+# Pin the rule set EXPLICITLY — do not rely on ruff's defaults.
+# Ruff changed its default selection between 0.12 and 0.16 (it now enables
+# flake8-bugbear, flake8-bandit, isort, pep8-naming, … out of the box), which
+# turned CI red overnight without a single line of our code changing, because
+# the workflow installed ruff unpinned. Selecting explicitly makes the gate
+# reproducible across ruff upgrades.
+#   E4/E7/E9 — pycodestyle errors     F — pyflakes      I — import sorting
+select = ["E4", "E7", "E9", "F", "I"]
+
+# Deliberately NOT enabled, with reasons (so nobody "helpfully" adds them):
+#   N999 invalid-module-name — the modules under core/ are named after the
+#     classes in the FYP UML class diagram (attendanceAppeal, facialImage,
+#     behaviourAnalysis, …). Renaming them to snake_case would break the
+#     design-to-code traceability the FTD relies on.
+#   B008 function-call-in-default-argument — this *is* FastAPI's dependency
+#     injection idiom (Depends(...), File(...), Form(...)); 129 hits, all false.
+#   BLE001 blind-except — the broad handlers are deliberate: a failed
+#     notification, behaviour write or config read must never take down a
+#     request. They log and degrade instead.
+
 [lint.per-file-ignores]
 # main_api.py deliberately manipulates sys.path before importing
 # `core.*` so the file can be run as a script (python main_api.py)

@@ -28,7 +28,6 @@ from pydantic import BaseModel
 
 from core.userInformation import CurrentUser, require_role
 
-
 # Default fall-back values used when the attendance_threshold_config
 # table is empty or unreachable (these mirror the row inserted by
 # database/schema.sql).

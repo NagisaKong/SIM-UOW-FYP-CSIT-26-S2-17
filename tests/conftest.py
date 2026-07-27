@@ -247,8 +247,9 @@ def client() -> Iterator[Any]:
         "main_api.AttendancePipeline.from_env",
         side_effect=build_stub_pipeline,
     ):
-        from main_api import app
         from fastapi.testclient import TestClient
+
+        from main_api import app
 
         with TestClient(app) as c:
             yield c
