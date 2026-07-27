@@ -53,6 +53,24 @@ Production stack: **Vercel** (static frontend) + **Railway** (FastAPI backend, C
 4. Deploy. Confirm the healthcheck at `https://<backend>.railway.app/health`
    returns `{"success": true, ...}`. `/docs` is disabled in production (expected).
 
+### Model weights are baked into the image — do not remove that build step
+
+`Dockerfile` runs `scripts/prefetch_models.py` during the build to download the
+SCRFD + ArcFace pack (`buffalo_l`, ~280 MB) into `/root/.insightface`.
+
+This is not an optimisation, it is a correctness fix. InsightFace otherwise
+downloads the pack lazily when `FaceAnalysis` is first constructed — which
+happens inside the FastAPI **lifespan handler**. On a PaaS the container
+filesystem is ephemeral, so every cold start re-downloads it, and a single
+failed download raises inside lifespan and takes the whole application down
+(login, dashboards, reports included). Railway then restarts it, fails again,
+and the deployment crash-loops with `RuntimeError: Failed downloading url
+.../buffalo_l.zip`. Fetching at build time turns that into a loud build
+failure instead, and leaves the running container independent of GitHub.
+
+If a build ever fails at this step, GitHub releases were unreachable from the
+builder — re-run the build; the old deployment keeps serving in the meantime.
+
 ### Detection range tuning (far / small faces)
 
 The classroom-scan frontend captures at **1080p**, but detection range is still

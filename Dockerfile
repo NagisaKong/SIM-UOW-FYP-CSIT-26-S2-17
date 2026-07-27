@@ -24,6 +24,14 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu \
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# Bake the SCRFD + ArcFace weights (buffalo_l, ~280 MB) into the image.
+# Without this, InsightFace downloads them from GitHub during the FastAPI
+# lifespan handler on every cold start — a failed download then aborts
+# application startup and the platform crash-loops the deployment. Copied
+# before the source tree so ordinary code changes reuse this cached layer.
+COPY scripts/prefetch_models.py scripts/prefetch_models.py
+RUN python scripts/prefetch_models.py
+
 COPY . .
 
 # Railway/most PaaS inject $PORT; main_api.py reads HOST/PORT from env.
