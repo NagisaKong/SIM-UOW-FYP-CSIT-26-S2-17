@@ -144,12 +144,23 @@ class AttendanceAppeal:
                    pi.full_name, pi.student_id,
                    c.course_code, c.course_name, s.start_time,
                    r.status AS record_status,
-                   a.reason, a.status, a.created_at, a.reviewed_at
+                   a.reason, a.status, a.created_at, a.reviewed_at,
+                   -- Who decided the appeal (U08 audit trail): reviewers are
+                   -- teachers or admins, so their name lives in personal_info
+                   -- under staff_id, and the role comes from user_profiles.
+                   a.reviewed_by,
+                   rpi.full_name AS reviewer_name,
+                   rpi.staff_id  AS reviewer_staff_id,
+                   rua.email     AS reviewer_email,
+                   rup.role      AS reviewer_role
             FROM attendance_appeal a
             JOIN attendance_record r ON r.attendancerecordid = a.attendancerecordid
             JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             LEFT JOIN personal_info pi ON pi.accountid = a.accountid
+            LEFT JOIN user_account  rua ON rua.accountid = a.reviewed_by
+            LEFT JOIN user_profiles rup ON rup.profileid = rua.profileid
+            LEFT JOIN personal_info rpi ON rpi.accountid = a.reviewed_by
             ORDER BY (a.status = 'pending') DESC, a.created_at DESC
         """
         with _db(self.database_url) as c, c.cursor() as cur:

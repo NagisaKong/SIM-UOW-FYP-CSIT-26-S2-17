@@ -972,6 +972,24 @@ function openAppealDetail(appeal) {
   document.getElementById("detail-created-at").textContent = fmt(appeal.created_at);
   document.getElementById("detail-reviewed-at").textContent = appeal.reviewed_at ? fmt(appeal.reviewed_at) : "Not reviewed yet";
 
+  // U08 audit trail: who decided this appeal. A reviewer only exists once the
+  // appeal leaves 'pending'; the account may also have been deleted since,
+  // which leaves reviewed_by set but the joined name NULL.
+  const reviewedBy = document.getElementById("detail-reviewed-by");
+  const reviewerMeta = document.getElementById("detail-reviewer-meta");
+  if (!appeal.reviewed_by) {
+    reviewedBy.textContent = "Not reviewed yet";
+    reviewerMeta.textContent = "";
+  } else {
+    reviewedBy.textContent =
+      appeal.reviewer_name || `Account #${appeal.reviewed_by} (deleted)`;
+    const parts = [];
+    if (appeal.reviewer_role) parts.push(appeal.reviewer_role);
+    if (appeal.reviewer_staff_id) parts.push(appeal.reviewer_staff_id);
+    if (appeal.reviewer_email) parts.push(appeal.reviewer_email);
+    reviewerMeta.textContent = parts.join(" · ");
+  }
+
   const statusEl = document.getElementById("detail-status");
   const currentStatus = appeal.status || "pending";
   statusEl.textContent = currentStatus.toUpperCase();
