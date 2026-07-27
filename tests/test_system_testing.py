@@ -371,14 +371,14 @@ class TestST04_DatabaseAccuracy:
 class TestST05_UserFunctional:
     """ST-UF-01 … ST-UF-35 (with U01–U35).
 
-    Implemented so far —
-      P0: U01, U03, U06, U08, U10, U14, U15, U16, U19, U20, U22, U23,
-          U25, U28, U31, U34.
-      P1: U04, U07, U27, U32, U33, U35.
-      P2: U05, U09, U12, U13, U21, U24, U26, U29, U30.
-    Remaining: the logout trio U02/U11/U18 (pending Part D wording — the
-    backend deliberately has no server-side logout/token-revocation
-    endpoint, so the acceptance criterion is frontend session clearing).
+    All 35 user functional cases are implemented (ST-UF-NN ↔ U0NN).
+
+    Note on U02/U11/U18 (logout): the backend deliberately exposes no
+    logout/token-revocation endpoint — logout is a client-side boundary
+    flow (frontend/app.js clears localStorage and redirects), and JWTs
+    stay valid until their 12-hour expiry. These cases therefore assert
+    the logout contract plus 401-without-token, per Part D §3.3.2.
+    Immediate revocation is covered by ST-UF-20 (account deactivation).
     """
 
     # ── ST-UF-01 (U01) Student Login ─────────────────────────────────
@@ -392,6 +392,27 @@ class TestST05_UserFunctional:
         assert body["token"]
         assert body["user"]["role"] == "student"
         assert body["user"]["full_name"] == st_world.names["s1"]
+
+    # ── ST-UF-02 (U02) Student logout (client-side boundary flow) ───
+    # The backend intentionally exposes no logout/token-revocation endpoint
+    # (core/userInformation.py), so the acceptance criterion is local-session
+    # clearing plus 401 on token-less requests — not server-side rejection of
+    # the old token. Immediate revocation is ST-UF-20 (account deactivation).
+    def test_02_st_uf_02_student_logout_contract(self, client, st_world):
+        app_js = (REPO / "frontend" / "app.js").read_text(encoding="utf-8")
+        start = app_js.index("function logout()")
+        body = app_js[start : app_js.index("\n}", start)]
+        assert 'removeItem("token")' in body
+        assert 'removeItem("user")' in body
+        assert "index.html" in body  # redirect back to the login page
+        # One shared implementation backs all three role dashboards.
+        for page in ("student.html", "teacher.html", "admin.html"):
+            assert "app.js" in (REPO / "frontend" / page).read_text(encoding="utf-8")
+
+        # Student holds a working session before logging out …
+        assert client.get("/auth/me", headers=st_world.auth("s1")).status_code == 200
+        # … and after local clearing no credential is sent, so the API refuses.
+        assert client.get("/auth/me").status_code == 401
 
     # ── ST-UF-03 (U03) Automated check-in (light ref to ST-TK-02/03) ─
     def test_03_st_uf_03_auto_checkin_recorded(self, st_world, db_url):
@@ -555,6 +576,23 @@ class TestST05_UserFunctional:
         assert r.json()["user"]["role"] == "teacher"
         assert r.json()["token"]
 
+    # ── ST-UF-11 (U11) Teacher logout (client-side boundary flow) ───
+    def test_11_st_uf_11_teacher_logout_contract(self, client, st_world):
+        login = client.post(
+            "/auth/login",
+            json={"email": st_world.emails["teacher"], "password": st_world.password},
+        )
+        assert login.status_code == 200, login.text
+        token = login.json()["token"]
+        assert (
+            client.get(
+                "/teacher/courses", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 200
+        )
+        # After logout the frontend sends no token → protected teacher API 401s.
+        assert client.get("/teacher/courses").status_code == 401
+
     # ── ST-UF-12 (U12) Real-time attendance roster ───────────────────
     def test_12_st_uf_12_realtime_attendance(self, client, st_world):
         r = client.get(
@@ -673,6 +711,39 @@ class TestST05_UserFunctional:
         body = r.json()
         assert body.get("success") is True
         assert isinstance(body.get("early_left"), list)
+
+    # ── ST-UF-17 (U17) Administrator login ───────────────────────────
+    def test_17_st_uf_17_admin_login(self, client, st_world):
+        r = client.post(
+            "/auth/login",
+            json={"email": st_world.emails["admin"], "password": st_world.password},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["token"]
+        assert body["user"]["role"] == "admin"
+        # The admin console's data endpoint is reachable with that JWT.
+        listed = client.get(
+            "/admin/users", headers={"Authorization": f"Bearer {body['token']}"}
+        )
+        assert listed.status_code == 200
+
+    # ── ST-UF-18 (U18) Administrator logout (client-side boundary) ──
+    def test_18_st_uf_18_admin_logout_contract(self, client, st_world):
+        login = client.post(
+            "/auth/login",
+            json={"email": st_world.emails["admin"], "password": st_world.password},
+        )
+        assert login.status_code == 200, login.text
+        token = login.json()["token"]
+        assert (
+            client.get(
+                "/admin/users", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 200
+        )
+        # After logout the frontend sends no token → admin API 401s.
+        assert client.get("/admin/users").status_code == 401
 
     # ── ST-UF-19 (U19) Admin registration: Account+PersonalInfo+Face ─
     def test_19_st_uf_19_admin_registration_three_tables(
