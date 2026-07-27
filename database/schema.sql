@@ -288,6 +288,29 @@ CREATE INDEX IF NOT EXISTS idx_behaviour_type
 
 
 -- ------------------------------------------------------------
+-- 13b. BEHAVIOUR_COVERAGE  (U32 analysis coverage per student)
+-- ------------------------------------------------------------
+-- Behaviour events only record what WAS detected. To distinguish "no
+-- drowsiness/phone observed" from "this student could never be analysed"
+-- (face too small / occluded / outside the internal camera's view), the
+-- service also counts, per student per session, how many ~1 fps samples
+-- recognised them (samples_total) and how many of those yielded usable
+-- facial landmarks (samples_analysed). U32 reports a student whose
+-- samples_analysed is 0 as *inconclusive* rather than as well-behaved.
+CREATE TABLE IF NOT EXISTS BEHAVIOUR_COVERAGE (
+    AttendanceSessionID INTEGER     NOT NULL REFERENCES ATTENDANCE_SESSION(AttendanceSessionID) ON DELETE CASCADE,
+    AccountID           INTEGER     NOT NULL REFERENCES USER_ACCOUNT(AccountID) ON DELETE CASCADE,
+    samples_total       INTEGER     NOT NULL DEFAULT 0,
+    samples_analysed    INTEGER     NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (AttendanceSessionID, AccountID)
+);
+
+CREATE INDEX IF NOT EXISTS idx_behaviour_coverage_session
+    ON BEHAVIOUR_COVERAGE(AttendanceSessionID);
+
+
+-- ------------------------------------------------------------
 -- 14. HEATMAP_SNAPSHOT  (U33 spatial activity heatmap data)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS HEATMAP_SNAPSHOT (

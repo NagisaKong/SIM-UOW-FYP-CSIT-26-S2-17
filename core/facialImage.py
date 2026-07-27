@@ -35,6 +35,53 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     return img
 
 
+# ── Image-quality validation (UCD: «include» Validate Image Quality) ──
+# Enrolment quality gate applied before any embedding is computed. A blurred,
+# under/over-exposed or tiny photo yields a weak embedding that silently
+# degrades recognition for that student, so it is rejected up front with an
+# actionable message instead. Thresholds are env-tunable.
+_MIN_IMAGE_PX = int(os.getenv("AI_ENROL_MIN_IMAGE_PX", "96"))
+_MIN_SHARPNESS = float(os.getenv("AI_ENROL_MIN_SHARPNESS", "60"))
+_MIN_BRIGHTNESS = float(os.getenv("AI_ENROL_MIN_BRIGHTNESS", "40"))
+_MAX_BRIGHTNESS = float(os.getenv("AI_ENROL_MAX_BRIGHTNESS", "225"))
+
+
+def assess_image_quality(image: np.ndarray) -> tuple[bool, str, dict[str, float]]:
+    """Return (ok, message, metrics) for an enrolment photo.
+
+    Metrics: `sharpness` is the variance of the Laplacian (low = blurred);
+    `brightness` is the mean grey level (low = under-exposed, high = washed
+    out / back-lit); `min_side` is the shorter image edge in pixels.
+    """
+    h, w = image.shape[:2]
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(grey, cv2.CV_64F).var())
+    brightness = float(grey.mean())
+    metrics = {
+        "sharpness": round(sharpness, 1),
+        "brightness": round(brightness, 1),
+        "min_side": float(min(h, w)),
+    }
+    if min(h, w) < _MIN_IMAGE_PX:
+        return False, (
+            f"Photo is too small ({w}x{h}). Please upload an image at least "
+            f"{_MIN_IMAGE_PX}x{_MIN_IMAGE_PX} pixels."
+        ), metrics
+    if sharpness < _MIN_SHARPNESS:
+        return False, (
+            "Photo looks blurred. Please hold the camera steady and retake."
+        ), metrics
+    if brightness < _MIN_BRIGHTNESS:
+        return False, (
+            "Photo is too dark. Please move to a better-lit place and retake."
+        ), metrics
+    if brightness > _MAX_BRIGHTNESS:
+        return False, (
+            "Photo is over-exposed. Please avoid strong backlight and retake."
+        ), metrics
+    return True, "", metrics
+
+
 # ════════════════════════════════════════════════════════════════════════
 # Business class — FacialImage (per FYP class diagram).
 # ════════════════════════════════════════════════════════════════════════
@@ -123,6 +170,13 @@ class FacialImage:
     def _enrol(
         self, account_id: int, images: list[np.ndarray],
     ) -> dict[str, Any]:
+        # «include» Validate Image Quality — reject unusable photos before
+        # any embedding is written (see assess_image_quality above). The
+        # single-face rule below is the second half of the same validation.
+        for img in images:
+            ok, message, metrics = assess_image_quality(img)
+            if not ok:
+                return {"success": False, "message": message, "quality": metrics}
         try:
             written = self.pipeline.enrol_student(
                 account_id=account_id, images=images, reject_multiple=True,

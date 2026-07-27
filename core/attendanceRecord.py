@@ -293,7 +293,7 @@ class AttendanceRecord:
             SELECT r.attendancerecordid AS record_id,
                    s.attendancesessionid AS session_id,
                    s.start_time, s.end_time, s.status AS session_status,
-                   c.course_code, c.course_name,
+                   c.courseid, c.course_code, c.course_name,
                    r.status, r.marked_at
             FROM attendance_session s
             JOIN course c ON c.courseid = s.courseid
@@ -314,9 +314,14 @@ class AttendanceRecord:
     def viewStudentGraphicalReport(
         self, account_id: int,
         date_from: str | None = None, date_to: str | None = None,
+        course_id: int | None = None,
     ) -> dict[str, Any]:
         clauses = ["r.accountid = %s"]
         params: list[Any] = [account_id]
+        # U27: the student may narrow the view to a single module (course).
+        if course_id is not None:
+            clauses.append("s.courseid = %s")
+            params.append(course_id)
         if date_from:
             clauses.append("s.start_time >= %s")
             params.append(date_from)
@@ -643,9 +648,12 @@ def student_analytics(
     request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
+    course_id: int | None = None,
     user: CurrentUser = Depends(require_role("student")),
 ):
-    return _svc(request).viewStudentGraphicalReport(user.account_id, date_from, date_to)
+    return _svc(request).viewStudentGraphicalReport(
+        user.account_id, date_from, date_to, course_id
+    )
 
 
 # Teacher: U03 — record one detection-window snapshot for an active session.

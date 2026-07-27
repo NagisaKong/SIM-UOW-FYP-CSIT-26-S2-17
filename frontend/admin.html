@@ -11,8 +11,8 @@
 
 <body>
   <header class="topbar">
-    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
-        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Admin Console</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt="" style="height:26px;vertical-align:-6px;margin-right:8px">FRAS
+      Admin Console</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -358,7 +358,7 @@
     <section id="tab-appeals" class="panel" style="display:none">
       <div id="appeals-list-view">
         <h2>Student Appeals</h2>
-        <p class="muted small">View-only oversight — appeals are reviewed and decided by the course teacher (U08).</p>
+        <p class="muted small">View-only oversight — appeals are reviewed and decided by the course teacher.</p>
         <table>
           <thead>
             <tr>
@@ -497,7 +497,14 @@
       <div id="train-result" style="display:none;margin-top:.5rem">
         <table style="max-width:560px">
           <thead>
-            <tr><th>Model</th><th>New threshold</th><th>Accuracy</th><th>FP rate</th><th>FN rate</th><th>Pairs (gen/imp)</th></tr>
+            <tr>
+              <th>Model</th>
+              <th>New threshold</th>
+              <th>Accuracy</th>
+              <th>FP rate</th>
+              <th>FN rate</th>
+              <th>Pairs (gen/imp)</th>
+            </tr>
           </thead>
           <tbody id="train-result-body"></tbody>
         </table>
@@ -549,7 +556,8 @@
 
   </main>
 
-  <script src="app.js?v=5"></script>
+  <script src="config.js?v=1"></script>
+  <script src="app.js?v=6"></script>
   <script src="admin.js?v=9"></script>
 </body>
 

@@ -91,6 +91,7 @@ async function loadAttendance() {
   try {
     const res = await api("/student/attendance");
     attRecords = res.records || [];
+    fillAnalyticsCourses(attRecords);
     renderMonthlySummary(res.records || []);
     if (document.getElementById("att-calendar-view").style.display !== "none") {
       renderAttCalendar();
@@ -432,10 +433,34 @@ async function loadAppeals() {
 // ── Analytics (U27) ───────────────────────────────────────────
 let sTrendChart = null, sBreakdownChart = null;
 
+// U27: populate the module filter from the courses the student is enrolled
+// in (derived from their own attendance records — no extra endpoint needed).
+function fillAnalyticsCourses(records) {
+  const sel = document.getElementById("sana-course");
+  if (!sel) return;
+  const seen = new Map();
+  for (const r of records || []) {
+    if (r.courseid && !seen.has(r.courseid)) {
+      seen.set(r.courseid, `${r.course_code} — ${r.course_name}`);
+    }
+  }
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All modules</option>';
+  for (const [id, label] of seen) {
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  if (prev && seen.has(Number(prev))) sel.value = prev;
+}
+
 async function loadStudentAnalytics() {
   const params = new URLSearchParams();
+  const courseId = document.getElementById("sana-course").value;
   const from = document.getElementById("sana-from").value;
   const to = document.getElementById("sana-to").value;
+  if (courseId) params.set("course_id", courseId);
   if (from) params.set("date_from", from);
   if (to) params.set("date_to", to);
   const summaryEl = document.getElementById("sana-summary");
@@ -505,6 +530,7 @@ function renderStudentBreakdown(b) {
 }
 
 document.getElementById("sana-refresh").addEventListener("click", loadStudentAnalytics);
+document.getElementById("sana-course").addEventListener("change", loadStudentAnalytics);
 
 // ── Leave Application (U28) ───────────────────────────────────
 function showLeaveView(view) {

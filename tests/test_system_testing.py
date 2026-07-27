@@ -60,8 +60,19 @@ class TestST01_BasicSettings:
     def test_02_st_bs_02_recognition_pipeline_loaded(self, client, st_world):
         health = client.get("/health")
         assert health.status_code == 200
-        assert health.json().get("success") is True
-        assert "stores" in health.json()
+        body = health.json()
+        assert body.get("success") is True
+        assert "stores" in body
+        # The instance reports the model set it is actually running, so test
+        # evidence can state the configuration under test rather than assume
+        # it (the CPU deployment runs ArcFace only; the GPU rig runs the
+        # full ensemble — see DEPLOY.md).
+        rec = body["recognition"]
+        assert "scrfd" in rec["detectors"]
+        assert rec["recognisers"], rec
+        assert isinstance(rec["ensemble"], bool)
+        assert rec["ensemble"] == (len(rec["recognisers"]) >= 2)
+        assert "behaviour_analysis" in body
 
         # Preview-detect proves the capture/recognition path responds.
         r = client.post(
@@ -485,6 +496,48 @@ class TestST05_UserFunctional:
             files=_multipart_png(st_world.other_png),
         )
         assert denied.status_code == 403
+
+        # «include» Validate Image Quality — unusable photos are rejected
+        # before any embedding is written (blurred / too dark / too small).
+        import cv2
+
+        from tests.conftest import _png_bytes
+
+        def _encode(img):
+            return cv2.imencode(".png", img)[1].tobytes()
+
+        rejects = {
+            "too_small": _png_bytes(seed=11, size=48),
+            "too_dark": _encode(np.full((160, 160, 3), 5, np.uint8)),
+            "blurred": _encode(
+                cv2.GaussianBlur(
+                    cv2.imdecode(
+                        np.frombuffer(_png_bytes(seed=12), np.uint8), cv2.IMREAD_COLOR
+                    ),
+                    (0, 0), sigmaX=9,
+                )
+            ),
+        }
+        for label, payload in rejects.items():
+            r = client.post(
+                "/register",
+                headers=st_world.auth("s2"),
+                data={"account_id": str(st_world.account_ids["s2"])},
+                files=_multipart_png(payload),
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["success"] is False, f"{label} should fail quality gate: {body}"
+            assert "quality" in body and body["message"]
+
+        # The good photo from the start of this case is still the active one.
+        r = client.post(
+            "/register",
+            headers=st_world.auth("s2"),
+            data={"account_id": str(st_world.account_ids["s2"])},
+            files=_multipart_png(st_world.other_png),
+        )
+        assert r.json().get("success") is True
 
     # ── ST-UF-07 (U07) View single-session attendance detail ────────
     def test_07_st_uf_07_view_session_detail(self, client, st_world):
@@ -1074,6 +1127,30 @@ class TestST05_UserFunctional:
         assert (breakdown.get("total") or 0) >= 1
         assert 0.0 <= float(breakdown.get("rate", -1)) <= 100.0
 
+        # U27 step 4: the view can be narrowed to a single module. The ST
+        # course is the student's only one, so its total matches the whole.
+        scoped = client.get(
+            "/student/analytics",
+            headers=st_world.auth("s1"),
+            params={"course_id": st_world.course_id},
+        )
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["breakdown"]["total"] == breakdown["total"]
+        # A course the student has no records in yields an empty breakdown.
+        empty = client.get(
+            "/student/analytics",
+            headers=st_world.auth("s1"),
+            params={"course_id": 99999999},
+        )
+        assert empty.status_code == 200
+        assert (empty.json()["breakdown"].get("total") or 0) == 0
+
+        # The module filter's data source: records carry their course id.
+        records = client.get(
+            "/student/attendance", headers=st_world.auth("s1")
+        ).json()["records"]
+        assert all("courseid" in r for r in records)
+
     # ── ST-UF-28 (U28) Submit leave application ──────────────────────
     def test_28_st_uf_28_submit_leave_application(self, client, st_world):
         r = client.post(
@@ -1232,6 +1309,15 @@ class TestST05_UserFunctional:
             timeline = body.get("timeline", [])
             assert len(timeline) >= 2
             assert any(ev.get("metadata") for ev in timeline)
+            # U32 alt-flow 2: students the analyser produced nothing for are
+            # reported as inconclusive rather than as well-behaved. s1 has
+            # events, so it must be classified as analysed.
+            assert row["analysis_status"] == "analysed"
+            assert "inconclusive_count" in body
+            others = [x for x in body["students"] if x["accountid"] != s1]
+            assert all(
+                x["analysis_status"] in ("analysed", "inconclusive") for x in others
+            )
         finally:
             with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
                 cur.execute(
@@ -1261,10 +1347,25 @@ class TestST05_UserFunctional:
                 f"/teacher/sessions/{sid}/heatmap", headers=st_world.auth("teacher")
             )
             assert r.status_code == 200, r.text
-            zones = r.json().get("zones", [])
+            body = r.json()
+            zones = body.get("zones", [])
             got = {(z["zone_x"], z["zone_y"]): float(z["intensity"]) for z in zones}
             for x, y, v in cells:
                 assert got.get((x, y)) == v
+
+            # U33 step 4: the teacher can narrow the heatmap to part of the
+            # lesson. The response also reports the full capture window so
+            # the UI can seed its pickers.
+            assert body["captured_from"] and body["captured_to"]
+            future = "2099-01-01T00:00:00+08:00"
+            narrowed = client.get(
+                f"/teacher/sessions/{sid}/heatmap",
+                headers=st_world.auth("teacher"),
+                params={"time_from": future},
+            )
+            assert narrowed.status_code == 200, narrowed.text
+            assert narrowed.json()["zones"] == []  # window excludes every row
+            assert narrowed.json()["captured_from"]  # extent still reported
         finally:
             with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
                 cur.execute(

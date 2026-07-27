@@ -180,8 +180,14 @@ def build_stub_pipeline(cfg=None):
     return pipe
 
 
-def _png_bytes(seed: int = 0, size: int = 64) -> bytes:
-    """Tiny PNG for multipart uploads (content varies with seed).
+def _png_bytes(seed: int = 0, size: int = 160) -> bytes:
+    """Small PNG for multipart uploads (content varies with seed).
+
+    Size defaults above the enrolment quality gate's minimum edge
+    (AI_ENROL_MIN_IMAGE_PX, see core/facialImage.assess_image_quality) so
+    fixture uploads exercise the real enrolment path rather than being
+    rejected as too small. Random-noise content is sharp and mid-grey, so
+    it passes the blur and exposure checks.
 
     Prefer Pillow; fall back to OpenCV; last resort a minimal hand-rolled PNG.
     """
