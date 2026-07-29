@@ -1,12 +1,4 @@
 """Service Class: AttendancePipeline.
-
-This file holds the **Service Class** layer that backs all face-related
-business operations. It is intentionally separate from the 9 business
-classes under core/ — those classes describe *what* the system does for
-its actors (student / teacher / admin), while this file describes *how*
-faces are detected, aligned, embedded, voted on, persisted, and looked
-up.
-
 Absorbed from previous standalone files:
   • config.py             →  AIConfig dataclass + env-loading helpers
   • database_manager.py   →  EmbeddingRow dataclass + EmbeddingRepo
@@ -213,6 +205,23 @@ class AIConfig:
         default_factory=lambda: _env_float("AI_LOW_LIGHT_MEAN", 80.0)
     )
 
+    # ── Match confidence ────────────────────────────────────────────────
+    # Passing the similarity threshold is not enough: with a small gallery a
+    # live face often sits just above it for SEVERAL people, and plain argmax
+    # then reports the runner-up's neighbour with full confidence. Requiring
+    # the winner to beat the second-best *different* account by this margin
+    # turns those ambiguous cases into "Unknown" instead of a wrong name.
+    # Set AI_MATCH_MARGIN=0 to restore the old argmax-only behaviour.
+    match_margin: float = field(
+        default_factory=lambda: _env_float("AI_MATCH_MARGIN", 0.05)
+    )
+    # Synthetic (GAN / seeded demo) embeddings are useful for calibration and
+    # for populating demo screens, but they must not compete with real people
+    # during a live scan. Set AI_MATCH_SYNTHETIC=true to include them.
+    match_synthetic: bool = field(
+        default_factory=lambda: _env_bool("AI_MATCH_SYNTHETIC", False)
+    )
+
     # ── Ensemble ────────────────────────────────────────────────────────
     arcface_weight: float = field(
         default_factory=lambda: _env_float("AI_ARCFACE_WEIGHT", 0.65)
@@ -254,12 +263,41 @@ class AIConfig:
         default_factory=lambda: _env_float("AI_HEADPOSE_PITCH_DEG", 30.0)
     )
     phone_conf: float = field(
-        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.35)
+        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.45)
+    )
+    # ── Drowsiness robustness (see behaviourAnalysis) ────────────────────
+    # A fixed EAR cut-off is unreliable across people: eye aperture differs
+    # more between individuals than between one person's alert and drowsy
+    # states, so 0.21 marks some students as permanently asleep and never
+    # trips for others. With adaptive_ear on, each student's own open-eye
+    # median becomes the reference and closure is judged relative to it.
+    adaptive_ear: bool = field(
+        default_factory=lambda: _env_bool("AI_ADAPTIVE_EAR", True)
+    )
+    ear_baseline_samples: int = field(
+        default_factory=lambda: _env_int("AI_EAR_BASELINE_SAMPLES", 20)
+    )
+    ear_baseline_ratio: float = field(
+        default_factory=lambda: _env_float("AI_EAR_BASELINE_RATIO", 0.75)
+    )
+    # PERCLOS: share of samples with closed eyes over a rolling window. The
+    # standard drowsiness measure — far steadier at ~1 fps than reacting to
+    # any single frame, which is what a blink looks like.
+    perclos_window_seconds: float = field(
+        default_factory=lambda: _env_float("AI_PERCLOS_WINDOW_SECONDS", 60.0)
+    )
+    perclos_threshold: float = field(
+        default_factory=lambda: _env_float("AI_PERCLOS_THRESHOLD", 0.40)
+    )
+    # Facial landmarks below this face size are noise; such samples are left
+    # unanalysed (reported as "inconclusive") instead of guessed at.
+    behaviour_min_face_px: int = field(
+        default_factory=lambda: _env_int("AI_BEHAVIOUR_MIN_FACE_PX", 64)
     )
     # At ~1 fps sampling, N consecutive samples ≈ N seconds of phone use
     # before an episode is confirmed (debounces YOLO flicker).
     phone_consec_samples: int = field(
-        default_factory=lambda: _env_int("AI_PHONE_CONSEC", 3)
+        default_factory=lambda: _env_int("AI_PHONE_CONSEC", 5)
     )
     # YOLO weights for phone detection. yolov8n = lightest; on a GPU rig
     # yolov8s/yolov8m markedly improve small-object (distant phone) recall.
@@ -352,7 +390,16 @@ class EmbeddingRepo:
             cur.execute("SELECT 1")
             return cur.fetchone()[0] == 1
 
-    def load_active_embeddings(self, model_name: str) -> list[EmbeddingRow]:
+    def load_active_embeddings(
+        self, model_name: str, include_synthetic: bool = False,
+    ) -> list[EmbeddingRow]:
+        """Gallery rows for one model.
+
+        Synthetic rows (GAN-generated or demo-seeded, ``is_synthetic``) are
+        excluded by default: they exist to populate screens and to calibrate
+        thresholds, and letting them compete with real students during a live
+        scan can only produce wrong identifications.
+        """
         sql = """
             SELECT f.faceid, f.accountid, p.student_id, p.full_name,
                    f.model_name, f.model_version, f.dimension,
@@ -361,6 +408,8 @@ class EmbeddingRepo:
             LEFT JOIN personal_info p ON p.accountid = f.accountid
             WHERE f.is_active = TRUE AND f.model_name = %s
         """
+        if not include_synthetic:
+            sql += " AND f.is_synthetic = FALSE"
         with self._conn() as c, c.cursor() as cur:
             cur.execute(sql, (model_name,))
             rows = cur.fetchall()
@@ -1017,10 +1066,14 @@ class FaceNetRecognizer:
 class EmbeddingStore:
     """In-memory matrix of (N, dim) for a single recognition model."""
 
-    def __init__(self, model_name: str, dim: int, threshold: float):
+    def __init__(
+        self, model_name: str, dim: int, threshold: float, margin: float = 0.0,
+    ):
         self.model_name = model_name
         self.dim = dim
         self.threshold = threshold
+        # Minimum lead the winner must have over the runner-up account.
+        self.margin = margin
         self._ids: list[int] = []
         self._info: dict[int, StudentInfo] = {}
         self._matrix: np.ndarray = np.zeros((0, dim), dtype=np.float32)
@@ -1042,10 +1095,17 @@ class EmbeddingStore:
 
     def upsert(
         self, account_id: int, vector: np.ndarray,
-        info: StudentInfo | None = None,
+        info: StudentInfo | None = None, replace: bool = True,
     ) -> None:
+        """Add a gallery entry.
+
+        ``replace=True`` (default) keeps one vector per account — the
+        behaviour for "update my photo". ``replace=False`` appends another
+        entry, letting a student's gallery cover several angles; matching
+        then takes the best-scoring entry per account (see rank()).
+        """
         vec = _normalise(vector).astype(np.float32)
-        if account_id in self._ids:
+        if replace and account_id in self._ids:
             idx = self._ids.index(account_id)
             self._matrix[idx] = vec
         else:
@@ -1054,16 +1114,46 @@ class EmbeddingStore:
         if info is not None:
             self._info[account_id] = info
 
-    def best_match(self, query: np.ndarray) -> tuple[int | None, float]:
+    def rank(self, query: np.ndarray, top_k: int = 3) -> list[tuple[int, float]]:
+        """Best score per ACCOUNT, highest first.
+
+        A student may hold several gallery entries (different angles and
+        lighting), so scores are collapsed per account — otherwise one
+        well-enrolled person could occupy every top slot and mask the real
+        runner-up that the margin test below has to consider.
+        """
         if self._matrix.shape[0] == 0:
-            return None, 0.0
+            return []
         q = _normalise(query).astype(np.float32)
         scores = self._matrix @ q
-        idx = int(np.argmax(scores))
-        score = float(scores[idx])
-        if score >= self.threshold:
-            return self._ids[idx], score
-        return None, score
+        best_per_account: dict[int, float] = {}
+        for account_id, score in zip(self._ids, scores):
+            s = float(score)
+            if s > best_per_account.get(account_id, -2.0):
+                best_per_account[account_id] = s
+        ranked = sorted(best_per_account.items(), key=lambda kv: kv[1], reverse=True)
+        return ranked[:top_k]
+
+    def best_match(self, query: np.ndarray) -> tuple[int | None, float]:
+        """Identify a face, or return (None, best_score) when unsure.
+
+        Two conditions must hold, not one:
+          1. the top score clears `threshold` (is this anyone we know?), and
+          2. it beats the runner-up account by `margin` (are we sure WHICH
+             one?). Without (2) a face that scores 0.45 against student A and
+             0.42 against its true owner B is reported confidently as A.
+        """
+        ranked = self.rank(query, top_k=2)
+        if not ranked:
+            return None, 0.0
+        account_id, score = ranked[0]
+        if score < self.threshold:
+            return None, score
+        if len(ranked) > 1 and (score - ranked[1][1]) < self.margin:
+            # Too close to call — an unknown face resembling two students is
+            # far more likely than a genuine tie between them.
+            return None, score
+        return account_id, score
 
     def info_for(self, account_id: int) -> StudentInfo | None:
         return self._info.get(account_id)
@@ -1078,6 +1168,8 @@ class SupabaseEmbeddingStore:
 
     repo: EmbeddingRepo
     stores: dict[str, EmbeddingStore] = field(default_factory=dict)
+    # Whether synthetic gallery rows take part in live matching (see AIConfig).
+    include_synthetic: bool = False
 
     def register_store(self, store: EmbeddingStore) -> None:
         self.stores[store.model_name] = store
@@ -1085,7 +1177,9 @@ class SupabaseEmbeddingStore:
     def hydrate_all(self) -> dict[str, int]:
         summary: dict[str, int] = {}
         for name, store in self.stores.items():
-            rows = self.repo.load_active_embeddings(name)
+            rows = self.repo.load_active_embeddings(
+                name, include_synthetic=self.include_synthetic
+            )
             store.load_rows(rows)
             summary[name] = len(rows)
         return summary
@@ -1120,7 +1214,10 @@ class SupabaseEmbeddingStore:
             written[model_name] = face_id
             store = self.stores.get(model_name)
             if store is not None:
-                store.upsert(account_id, avg)
+                # Appending adds a gallery entry rather than replacing the
+                # account's existing one, so the in-memory matrix must gain a
+                # row too — upsert() would overwrite the previous angle.
+                store.upsert(account_id, avg, replace=deactivate_previous)
         return written
 
 
@@ -1170,13 +1267,21 @@ class AttendancePipeline:
     def from_env(cls, cfg: AIConfig | None = None) -> "AttendancePipeline":
         cfg = cfg or AIConfig()
         repo = EmbeddingRepo(cfg.database_url)
-        manager = SupabaseEmbeddingStore(repo=repo)
+        manager = SupabaseEmbeddingStore(
+            repo=repo, include_synthetic=cfg.match_synthetic
+        )
         manager.register_store(
-            EmbeddingStore(ARCFACE_MODEL_NAME, ARCFACE_DIM, cfg.arcface_threshold)
+            EmbeddingStore(
+                ARCFACE_MODEL_NAME, ARCFACE_DIM,
+                cfg.arcface_threshold, cfg.match_margin,
+            )
         )
         if cfg.use_facenet:
             manager.register_store(
-                EmbeddingStore(FACENET_MODEL_NAME, FACENET_DIM, cfg.facenet_threshold)
+                EmbeddingStore(
+                    FACENET_MODEL_NAME, FACENET_DIM,
+                    cfg.facenet_threshold, cfg.match_margin,
+                )
             )
         loaded = manager.hydrate_all()
         print(f"[pipeline] DB hydrate: {loaded}")
@@ -1220,8 +1325,19 @@ class AttendancePipeline:
 
     def enrol_student(
         self, account_id: int, images: list[np.ndarray],
-        reject_multiple: bool = False,
+        reject_multiple: bool = False, append: bool = False,
     ) -> dict[str, int]:
+        """Enrol a student's face.
+
+        ``append=False`` (default) replaces the student's gallery — the right
+        behaviour for "update my photo". ``append=True`` keeps the existing
+        entries and adds another one, which is how a student builds a gallery
+        covering several angles and lighting conditions. A single-entry
+        gallery is the main driver of look-alike confusion: a live frame taken
+        under different conditions drifts away from that one vector, and the
+        person whose single photo happens to match the room best then wins
+        everyone else's comparisons too.
+        """
         vectors: dict[str, list[np.ndarray]] = {ARCFACE_MODEL_NAME: []}
         if self._facenet is not None:
             vectors[FACENET_MODEL_NAME] = []
@@ -1251,6 +1367,7 @@ class AttendancePipeline:
                 ARCFACE_MODEL_NAME: ARCFACE_MODEL_VERSION,
                 FACENET_MODEL_NAME: FACENET_MODEL_VERSION,
             },
+            deactivate_previous=not append,
         )
         return written
 

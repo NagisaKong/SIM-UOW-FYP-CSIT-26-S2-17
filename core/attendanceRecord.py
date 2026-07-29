@@ -98,6 +98,27 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     return img
 
 
+# ── Match diagnostics ────────────────────────────────────────────────
+# The primary recogniser's runner-up scores. Surfacing them turns "Unknown"
+# from an opaque result into a debuggable one: a top score of 0.38 against a
+# 0.43 threshold is a threshold problem, whereas 0.45 vs 0.44 is the margin
+# rule correctly refusing to guess between two look-alikes.
+_PRIMARY_MODEL = "arcface"
+
+
+def _primary(prediction) -> dict[str, Any]:
+    per_model = getattr(prediction, "per_model", None) or {}
+    return per_model.get(_PRIMARY_MODEL) or next(iter(per_model.values()), {})
+
+
+def _match_candidates(prediction) -> list[dict[str, Any]]:
+    return _primary(prediction).get("candidates", [])
+
+
+def _match_threshold(prediction) -> float | None:
+    return _primary(prediction).get("threshold")
+
+
 class AttendanceRecord:
     """Attendance entity covering student/teacher/admin views.
 
@@ -238,6 +259,8 @@ class AttendanceRecord:
                 "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
+                "candidates": _match_candidates(p),
+                "threshold": _match_threshold(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
 
@@ -272,6 +295,11 @@ class AttendanceRecord:
                 "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
+                # Runners-up, so an operator can see WHY a face came back
+                # Unknown (below threshold vs. too close to call) instead of
+                # guessing. Diagnostic only — never used for attendance.
+                "candidates": _match_candidates(p),
+                "threshold": _match_threshold(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
         return {

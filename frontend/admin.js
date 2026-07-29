@@ -1104,10 +1104,157 @@ async function loadBehaviourConfig() {
     document.getElementById("behaviour-drowsiness").checked = !!cfg.drowsiness;
     document.getElementById("behaviour-phone").checked = !!cfg.phone_usage;
     document.getElementById("behaviour-heatmap").checked = !!cfg.heatmap;
+    // Tuning: null means "no override", shown as an empty field whose
+    // placeholder reads "server default".
+    document.getElementById("behaviour-adaptive").checked = cfg.adaptive_ear !== false;
+    renderBehaviourSliders();
+    for (const f of BEHAVIOUR_TUNING_FIELDS) {
+      const range = document.getElementById(`beh-range-${f.key}`);
+      const overridden = cfg[f.key] != null;
+      range.dataset.overridden = String(overridden);
+      range.value = overridden ? cfg[f.key] : f.fallback;
+      range._sync();
+    }
   } catch (e) {
     msg.style.color = "#c0392b";
     msg.textContent = e.message;
   }
+}
+
+// Per-course detection thresholds (U35), rendered as sliders.
+//
+// `sensitive` says which direction makes the detector fire MORE often — it
+// is not the same for every field, which is exactly why a bare number box
+// was confusing: raising the eye threshold makes the model more trigger
+// happy, while raising the phone threshold makes it more conservative.
+// `up` / `down` are shown live as the slider moves.
+const BEHAVIOUR_TUNING_FIELDS = [
+  {
+    key: "ear_threshold",
+    label: "Eye-closure (EAR) threshold",
+    min: 0.05, max: 0.60, step: 0.01, fallback: 0.21, decimals: 2,
+    sensitive: "up",
+    lowLabel: "0.05 · strict", highLabel: "0.60 · sensitive",
+    up: "Eyes count as closed sooner. Catches light drowsiness, but alert students — " +
+        "especially anyone with naturally narrow eyes — get flagged more often.",
+    down: "Eyes must be more fully closed before it counts. Far fewer false alarms; " +
+          "brief or partial drowsiness may go unrecorded.",
+    note: "Only used before individual calibration finishes, or when calibration is off.",
+  },
+  {
+    key: "mar_threshold",
+    label: "Yawn (MAR) threshold",
+    min: 0.20, max: 1.50, step: 0.05, fallback: 0.60, decimals: 2,
+    sensitive: "down",
+    lowLabel: "0.20 · sensitive", highLabel: "1.50 · strict",
+    up: "The mouth must open wider to count as a yawn. Talking and laughing stop " +
+        "triggering it; small yawns are missed.",
+    down: "Smaller mouth movements count as yawns. Catches more real yawns, but " +
+          "speaking students may be flagged.",
+  },
+  {
+    key: "headpose_pitch_deg",
+    label: "Head-tilt limit (degrees)",
+    min: 5, max: 89, step: 1, fallback: 30, decimals: 0,
+    sensitive: "down",
+    lowLabel: "5° · sensitive", highLabel: "89° · strict",
+    up: "The head must be further down before it counts. Students looking at their " +
+        "desk or notes are left alone; genuine head-nodding may be missed.",
+    down: "A slight downward tilt already counts. Catches head-nodding early, but " +
+          "anyone writing or reading on the desk is flagged.",
+  },
+  {
+    key: "phone_conf",
+    label: "Phone detection confidence",
+    min: 0.05, max: 0.95, step: 0.05, fallback: 0.45, decimals: 2,
+    sensitive: "down",
+    lowLabel: "0.05 · sensitive", highLabel: "0.95 · strict",
+    up: "The detector must be more certain before calling something a phone. " +
+        "Cuts false alarms from pencil cases, calculators and hands; partly hidden " +
+        "phones are missed.",
+    down: "Weaker detections count too. Finds phones held low or half-covered, at the " +
+          "cost of more objects being mistaken for one.",
+  },
+  {
+    key: "drowsy_confirm_seconds",
+    label: "Confirm drowsiness after (seconds)",
+    min: 1, max: 120, step: 1, fallback: 2, decimals: 0,
+    sensitive: "down",
+    lowLabel: "1s · sensitive", highLabel: "120s · strict",
+    up: "The state must persist longer before it is recorded. Blinks and glances are " +
+        "ignored; a short nap may end before it is confirmed.",
+    down: "Reacts faster. Short lapses are captured, but ordinary blinking and " +
+          "looking down start producing events.",
+  },
+];
+
+// Build the slider controls once, from the metadata above.
+function renderBehaviourSliders() {
+  const host = document.getElementById("behaviour-sliders");
+  if (!host || host.childElementCount) return;
+  for (const f of BEHAVIOUR_TUNING_FIELDS) {
+    const value = el("span", {class: "beh-slider__value beh-slider__value--default"});
+    const reset = el("button", {
+      type: "button", class: "secondary beh-slider__reset",
+      title: "Clear this course's override and follow the server default",
+    }, "Use default");
+    const range = el("input", {
+      type: "range", id: `beh-range-${f.key}`,
+      min: f.min, max: f.max, step: f.step, value: f.fallback,
+    });
+    const effect = el("p", {class: "beh-slider__effect"});
+
+    // `overridden` is the difference between "this course sets 0.21" and
+    // "this course follows whatever the server default happens to be".
+    range.dataset.overridden = "false";
+    const sync = () => {
+      const overridden = range.dataset.overridden === "true";
+      const current = Number(range.value);
+      value.textContent = overridden
+        ? current.toFixed(f.decimals)
+        : `${f.fallback.toFixed(f.decimals)} (server default)`;
+      value.classList.toggle("beh-slider__value--default", !overridden);
+      reset.disabled = !overridden;
+      describeBehaviourEffect(f, current, overridden, effect);
+    };
+    range.addEventListener("input", () => {
+      range.dataset.overridden = "true";
+      sync();
+    });
+    reset.addEventListener("click", () => {
+      range.dataset.overridden = "false";
+      range.value = f.fallback;
+      sync();
+    });
+    range._sync = sync;  // used by loadBehaviourConfig after fetching values
+
+    host.append(el("div", {class: "beh-slider"},
+      el("div", {class: "beh-slider__head"},
+        el("span", {class: "beh-slider__name"}, f.label), value, reset),
+      range,
+      el("div", {class: "beh-slider__scale"},
+        el("span", {}, f.lowLabel), el("span", {}, f.highLabel)),
+      effect,
+      f.note ? el("p", {class: "muted small", style: "margin:.35rem 0 0"}, f.note) : null,
+    ));
+    sync();
+  }
+}
+
+// Explain what the current position does, relative to the default.
+function describeBehaviourEffect(f, current, overridden, node) {
+  node.classList.remove("beh-slider__effect--sensitive", "beh-slider__effect--strict");
+  if (!overridden || Math.abs(current - f.fallback) < f.step / 2) {
+    node.textContent = "Using the server default for this course.";
+    return;
+  }
+  const raised = current > f.fallback;
+  const moreSensitive = (f.sensitive === "up") === raised;
+  node.classList.add(moreSensitive ? "beh-slider__effect--sensitive" : "beh-slider__effect--strict");
+  node.textContent =
+    `${raised ? "Higher" : "Lower"} than the default (${f.fallback.toFixed(f.decimals)}) — ` +
+    `${moreSensitive ? "MORE sensitive: " : "MORE conservative: "}` +
+    (raised ? f.up : f.down);
 }
 
 document.getElementById("behaviour-course").addEventListener("change", loadBehaviourConfig);
@@ -1122,7 +1269,15 @@ document.getElementById("behaviour-form").addEventListener("submit", async (e) =
     drowsiness: document.getElementById("behaviour-drowsiness").checked,
     phone_usage: document.getElementById("behaviour-phone").checked,
     heatmap: document.getElementById("behaviour-heatmap").checked,
+    adaptive_ear: document.getElementById("behaviour-adaptive").checked,
   };
+  // An empty field sends null, which clears the override server-side and
+  // returns the course to the server default — that is how an admin undoes
+  // a setting without needing to know the default value.
+  for (const f of BEHAVIOUR_TUNING_FIELDS) {
+    const range = document.getElementById(`beh-range-${f.key}`);
+    body[f.key] = range && range.dataset.overridden === "true" ? Number(range.value) : null;
+  }
   try {
     const res = await api(`/admin/courses/${cid}/behaviour-analysis`, {
       method: "PATCH",
@@ -1131,7 +1286,11 @@ document.getElementById("behaviour-form").addEventListener("submit", async (e) =
     });
     const cfg = res.config || {};
     msg.style.color = "#16a34a";
-    msg.textContent = `Saved. Behaviour analysis ${cfg.enabled ? "ENABLED" : "disabled"} for this course.`;
+    const overrides = BEHAVIOUR_TUNING_FIELDS.filter(f => cfg[f.key] != null).length;
+    msg.style.color = "#16a34a";
+    msg.textContent =
+      `Saved. Behaviour analysis ${cfg.enabled ? "ENABLED" : "disabled"} for this course` +
+      (cfg.enabled ? ` · ${overrides} threshold override(s) · individual eye calibration ${cfg.adaptive_ear === false ? "off" : "on"}.` : ".");
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

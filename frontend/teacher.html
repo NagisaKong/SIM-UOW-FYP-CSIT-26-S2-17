@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teacher — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
   <style>
     /* ── Multi-camera classroom scan grid ─────────────────────── */
     .scan-cams {
@@ -217,8 +217,9 @@
           Live boxes:
           <span style="color:#16a34a;font-weight:600">■ recognised</span> ·
           <span style="color:#e3a008;font-weight:600">■ unknown face</span> ·
-          <span style="color:#dc2626;font-weight:600">■ sleeping / using phone</span>
-          (red requires behaviour analysis to be enabled for this course)
+          <span style="color:#dc2626;font-weight:600">■ not paying attention</span>
+          (red requires behaviour analysis to be enabled for this course; the
+          per-student breakdown of drowsiness vs phone use is in the Behaviour tab)
         </p>
         <div class="camera-stage camera-stage--wide">
           <div class="camera-frame">
@@ -258,6 +259,9 @@
                 <input type="number" id="scan-interval" value="15" min="3" max="86400" style="width:5rem"> s</label>
               <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
                   id="scan-countdown-toggle" checked> Show countdown</label>
+              <label class="small" style="display:flex;align-items:center;gap:.35rem"
+                title="Under each unrecognised face, show the closest enrolled students and the score they needed. Use it to tell a too-strict threshold from two look-alikes the system refuses to guess between.">
+                <input type="checkbox" id="scan-diagnostics"> Match diagnostics</label>
             </div>
           </div>
           <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>

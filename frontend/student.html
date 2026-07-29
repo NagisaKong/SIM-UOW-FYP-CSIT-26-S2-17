@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Student — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
   <style>
     /* ── Attendance view toggle ───────────────────────────────── */
     .att-view-toggle {
@@ -439,6 +439,9 @@
           <button type="button" id="face-cam-capture" disabled>Capture</button>
           <button type="button" id="face-cam-retake" class="secondary" style="display:none">Retake</button>
           <button type="button" id="face-cam-submit" disabled>Submit Photo</button>
+          <button type="button" id="face-cam-add" class="secondary" disabled
+            title="Keep your existing photos and store this one as an extra angle">Add as extra
+            angle</button>
         </div>
       </div>
 
@@ -448,7 +451,8 @@
         <button type="submit">Upload</button>
       </form>
 
-      <p id="face-msg" class="small" style="margin-top:1rem"></p>
+      <p id="face-gallery-count" class="small muted" style="margin-top:1rem"></p>
+      <p id="face-msg" class="small" style="margin-top:.25rem"></p>
     </section>
   </main>
 

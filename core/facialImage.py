@@ -97,21 +97,21 @@ class FacialImage:
 
     # ── U09: student updates their own face ──────────────────────────
     def updateFacialImageForMe(
-        self, account_id: int, image: np.ndarray,
+        self, account_id: int, image: np.ndarray, append: bool = False,
     ) -> dict[str, Any]:
-        return self._enrol(account_id, [image])
+        return self._enrol(account_id, [image], append=append)
 
     # ── U06: student self-enrol (alias as per class diagram) ─────────
     def registerFacialImageForMe(
-        self, account_id: int, image: np.ndarray,
+        self, account_id: int, image: np.ndarray, append: bool = False,
     ) -> dict[str, Any]:
-        return self._enrol(account_id, [image])
+        return self._enrol(account_id, [image], append=append)
 
     # ── U19: admin registers anyone ──────────────────────────────────
     def registerFacialImageForStu(
-        self, account_id: int, image: np.ndarray,
+        self, account_id: int, image: np.ndarray, append: bool = False,
     ) -> dict[str, Any]:
-        return self._enrol(account_id, [image])
+        return self._enrol(account_id, [image], append=append)
 
     # ── U21: admin CRUD on face_embedding ────────────────────────────
     def manageFacialImageForStu(self, action: str, **kwargs) -> dict[str, Any]:
@@ -168,7 +168,7 @@ class FacialImage:
 
     # ── internals ────────────────────────────────────────────────────
     def _enrol(
-        self, account_id: int, images: list[np.ndarray],
+        self, account_id: int, images: list[np.ndarray], append: bool = False,
     ) -> dict[str, Any]:
         # «include» Validate Image Quality — reject unusable photos before
         # any embedding is written (see assess_image_quality above). The
@@ -180,6 +180,7 @@ class FacialImage:
         try:
             written = self.pipeline.enrol_student(
                 account_id=account_id, images=images, reject_multiple=True,
+                append=append,
             )
         except MultipleFacesError as e:
             return {
@@ -248,17 +249,23 @@ async def register_face(
     request: Request,
     account_id: int = Form(...),
     file: UploadFile = File(...),
+    append: bool = Form(False),
     user: CurrentUser = Depends(get_current_user),
 ):
     """U06/U09/U19: register or update a face image.
-    Students may only register their own face; admins may register anyone."""
+
+    Students may only register their own face; admins may register anyone.
+    ``append=true`` keeps the existing photos and adds another angle instead
+    of replacing them — a multi-angle gallery is markedly more reliable in a
+    classroom than a single frontal shot.
+    """
     if user.role != "admin" and user.account_id != account_id:
         raise HTTPException(status_code=403, detail="You may only enrol your own face")
     img = await _bytes_to_cv2(file)
     svc = _svc(request)
     if user.role == "admin" and user.account_id != account_id:
-        return svc.registerFacialImageForStu(account_id, img)
-    return svc.updateFacialImageForMe(account_id, img)
+        return svc.registerFacialImageForStu(account_id, img, append=append)
+    return svc.updateFacialImageForMe(account_id, img, append=append)
 
 
 @router.post("/identify")
@@ -288,6 +295,30 @@ async def identify_face(
             "bbox": list(p.bbox),
         })
     return {"success": True, "enhanced": result.enhanced, "identities": identities}
+
+
+@router.get("/student/faces")
+def student_list_own_faces(
+    request: Request,
+    user: CurrentUser = Depends(require_role("student")),
+):
+    """How many face angles the logged-in student currently has enrolled.
+
+    Scoped to the caller's own account — students must not be able to browse
+    anyone else's biometric records (that is the admin-only /admin/faces).
+    Returns metadata only; embeddings are never sent to a client.
+    """
+    sql = """
+        SELECT faceid, model_name, model_version, created_at
+        FROM face_embedding
+        WHERE accountid = %s AND is_active = TRUE AND model_name = 'arcface'
+        ORDER BY created_at
+    """
+    with psycopg2.connect(request.app.state.cfg.database_url) as conn, conn.cursor() as cur:
+        cur.execute(sql, (user.account_id,))
+        cols = [c[0] for c in cur.description]
+        faces = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return {"success": True, "count": len(faces), "faces": faces}
 
 
 @router.get("/admin/faces")

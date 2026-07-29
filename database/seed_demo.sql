@@ -368,7 +368,12 @@ BEGIN
     -- Alice & Bob are intentionally NOT pre-enrolled: the presenter
     -- enrols their faces LIVE in Act 1 (U19) and the live scan then
     -- recognises them. Carol/David/Eve/Frank populate the Face DB tab.
-    -- Vectors are synthetic placeholders (is_synthetic = TRUE).
+    -- Vectors are synthetic placeholders (is_synthetic = TRUE): each component
+    -- is ((g + seed) % 13) * 0.07, i.e. non-negative, so any two of them are
+    -- 0.58–0.78 cosine-similar to each other. They exist only to give the Face
+    -- DB screen realistic rows — EmbeddingRepo.load_active_embeddings excludes
+    -- is_synthetic rows from live matching (AI_MATCH_SYNTHETIC), so they can
+    -- never be mistaken for a real student during a scan.
     FOR rec IN
         SELECT * FROM (VALUES
             (a_carol, 3,  TRUE),

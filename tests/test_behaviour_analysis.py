@@ -27,10 +27,20 @@ from core.behaviourAnalysis import (
     BehaviourAnalysisService,
     HeatmapAccumulator,
     _EpisodeTracker,
+    _EyeClosureModel,
     eye_aspect_ratio,
     head_pitch_deg,
     mouth_aspect_ratio,
 )
+
+
+def _eye_model(**overrides):
+    params = {
+        "fixed_threshold": 0.21, "adaptive": True, "baseline_samples": 5,
+        "baseline_ratio": 0.75, "window_seconds": 60.0, "perclos_threshold": 0.4,
+    }
+    params.update(overrides)
+    return _EyeClosureModel(**params)
 
 
 # ── geometry helpers ─────────────────────────────────────────────────
@@ -120,6 +130,57 @@ def test_episode_chunking_emits_long_episodes():
     assert ep2["duration"] == 9        # 61 → 70 (last active sample)
 
 
+# ── adaptive eye-closure model (EAR baseline + PERCLOS) ──────────────
+def test_baseline_is_each_student_own_median():
+    """A narrow-eyed student must not be judged by a global constant."""
+    model = _eye_model()
+    # Alert, but consistently below the 0.21 literature threshold.
+    for i in range(5):
+        model.observe(0.18, float(i))
+    assert model.baseline == pytest.approx(0.18)
+    # Their "closed" cut-off is now relative to their own eyes …
+    assert model.threshold == pytest.approx(0.135)
+    # … so staying at 0.18 is NOT read as drowsy, unlike with a fixed 0.21.
+    assert model.perclos() == 0.0
+
+
+def test_baseline_median_ignores_blinks_during_calibration():
+    model = _eye_model()
+    for i, ear in enumerate([0.30, 0.05, 0.31, 0.29, 0.30]):  # one blink
+        model.observe(ear, float(i))
+    assert model.baseline == pytest.approx(0.30)
+
+
+def test_perclos_needs_sustained_closure_not_one_blink():
+    model = _eye_model(adaptive=False)
+    now = 1000.0
+    for i in range(10):  # establish an open-eye window
+        assert model.observe(0.30, now + i) is False
+    assert model.observe(0.05, now + 10) is False  # single blink → not drowsy
+    # Sustained closure eventually crosses the 40% PERCLOS threshold.
+    drowsy = any(model.observe(0.05, now + 11 + i) for i in range(12))
+    assert drowsy
+    assert model.perclos() >= 0.4
+
+
+def test_perclos_window_forgets_old_samples():
+    model = _eye_model(adaptive=False, window_seconds=10.0)
+    for i in range(10):
+        model.observe(0.05, float(i))          # all closed
+    assert model.perclos() == 1.0
+    for i in range(10):
+        model.observe(0.30, 100.0 + i)         # much later, all open
+    assert model.perclos() == 0.0              # old window dropped
+
+
+def test_fixed_threshold_used_until_calibrated():
+    model = _eye_model(baseline_samples=100)
+    assert model.calibrating()
+    assert model.threshold == pytest.approx(0.21)
+    model.observe(0.30, 0.0)
+    assert model.calibrating()
+
+
 # ── heatmap ──────────────────────────────────────────────────────────
 def test_heatmap_normalises_to_peak_and_resets():
     hm = HeatmapAccumulator(8, 6)
@@ -158,6 +219,16 @@ def test_phone_owner_none_when_out_of_reach():
     faces = [_P([100, 100, 200, 200], 11)]
     far_away = np.array([2000, 2000, 2050, 2050])
     assert BehaviourAnalysisService._phone_owner(far_away, faces) is None
+
+
+def test_phone_above_the_face_is_not_attributed():
+    """A phone is held below the face when looked at; anything above it is a
+    screen, poster or reflection and must not be blamed on a student."""
+    faces = [_P([100, 100, 200, 200], 11)]
+    above = np.array([120, 40, 160, 80])
+    assert BehaviourAnalysisService._phone_owner(above, faces) is None
+    below = np.array([120, 260, 160, 300])
+    assert BehaviourAnalysisService._phone_owner(below, faces) == 11
 
 
 # ── privacy guarantee (PDPC) ─────────────────────────────────────────

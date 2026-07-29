@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 
 <body>
@@ -549,15 +549,50 @@
       <h2>Classroom Behaviour Analysis Settings</h2>
       <p class="muted small">Per-course toggle for in-class behaviour analysis. When enabled, the
         system may flag drowsiness / phone use and build an activity heatmap for that course's sessions.</p>
-      <form id="behaviour-form" class="row">
-        <label>Course
+      <form id="behaviour-form" class="beh-form">
+        <label class="beh-course">Course
           <select id="behaviour-course"></select>
         </label>
-        <label><input type="checkbox" name="enable" id="behaviour-enable"> Enable behaviour analysis</label>
-        <label><input type="checkbox" name="drowsiness" id="behaviour-drowsiness" checked> Drowsiness detection</label>
-        <label><input type="checkbox" name="phone_usage" id="behaviour-phone" checked> Phone-use detection</label>
-        <label><input type="checkbox" name="heatmap" id="behaviour-heatmap" checked> Activity heatmap</label>
-        <button type="submit">Save Settings</button>
+
+        <!-- Feature switches: one row per capability, directly under the
+             course they apply to. -->
+        <div class="beh-switches">
+          <label><input type="checkbox" name="enable" id="behaviour-enable">
+            <span>Enable behaviour analysis</span></label>
+          <label><input type="checkbox" name="drowsiness" id="behaviour-drowsiness" checked>
+            <span>Drowsiness detection</span></label>
+          <label><input type="checkbox" name="phone_usage" id="behaviour-phone" checked>
+            <span>Phone-use detection</span></label>
+          <label><input type="checkbox" name="heatmap" id="behaviour-heatmap" checked>
+            <span>Activity heatmap</span></label>
+        </div>
+
+        <fieldset class="beh-sensitivity">
+          <legend>Detection sensitivity</legend>
+          <p class="muted small" style="margin:0 0 1rem">
+            Rooms differ in lighting and camera distance, so one global setting cannot suit
+            every class. Each slider starts at the server default; move it and the effect on
+            the model is explained underneath.
+          </p>
+
+          <div class="beh-adaptive">
+            <label>
+              <input type="checkbox" id="behaviour-adaptive" checked>
+              <span>Calibrate each student's eyes individually</span>
+            </label>
+            <p class="muted small">
+              Recommended — compares a student against their own open-eye measurement instead
+              of a fixed value, which varies far more between people than between alert and
+              drowsy for one person.
+            </p>
+          </div>
+
+          <!-- Sliders are rendered from BEHAVIOUR_TUNING_FIELDS in admin.js so
+               the range, default and guidance text live in one place. -->
+          <div id="behaviour-sliders"></div>
+        </fieldset>
+
+        <button type="submit" class="beh-save">Save Settings</button>
       </form>
       <p id="behaviour-msg" class="small"></p>
     </section>

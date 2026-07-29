@@ -346,6 +346,28 @@ CREATE TABLE IF NOT EXISTS BEHAVIOUR_CONFIG (
     updated_by          INTEGER         REFERENCES USER_ACCOUNT(AccountID)
 );
 
+-- Per-course detection tuning (U35). All NULL by default, meaning "use the
+-- server-wide AIConfig value"; an administrator overrides them per course
+-- from the Behaviour Analysis Settings screen. Rooms differ enormously in
+-- lighting and camera distance, and a single global threshold produced both
+-- false alarms and silent misses during testing.
+ALTER TABLE BEHAVIOUR_CONFIG
+    ADD COLUMN IF NOT EXISTS ear_threshold          FLOAT
+        CHECK (ear_threshold IS NULL OR ear_threshold BETWEEN 0.05 AND 0.60),
+    ADD COLUMN IF NOT EXISTS mar_threshold          FLOAT
+        CHECK (mar_threshold IS NULL OR mar_threshold BETWEEN 0.20 AND 1.50),
+    ADD COLUMN IF NOT EXISTS headpose_pitch_deg     FLOAT
+        CHECK (headpose_pitch_deg IS NULL OR headpose_pitch_deg BETWEEN 5 AND 89),
+    ADD COLUMN IF NOT EXISTS phone_conf             FLOAT
+        CHECK (phone_conf IS NULL OR phone_conf BETWEEN 0.05 AND 0.95),
+    ADD COLUMN IF NOT EXISTS drowsy_confirm_seconds FLOAT
+        CHECK (drowsy_confirm_seconds IS NULL OR drowsy_confirm_seconds BETWEEN 1 AND 120),
+    -- Adaptive baseline: judge each student against their own open-eye EAR
+    -- rather than a literature constant. Eye aperture varies far more between
+    -- individuals than between alert and drowsy states for one person, so a
+    -- fixed cut-off flags some students permanently and never flags others.
+    ADD COLUMN IF NOT EXISTS adaptive_ear           BOOLEAN NOT NULL DEFAULT TRUE;
+
 
 -- ------------------------------------------------------------
 -- 16. ATTENDANCE_THRESHOLD_CONFIG  (U34 global reminder trigger)

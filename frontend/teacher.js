@@ -221,6 +221,7 @@ const scanStop = document.getElementById("scan-stop");
 const scanAuto = document.getElementById("scan-auto");
 const scanInterval = document.getElementById("scan-interval");
 const scanCountdownToggle = document.getElementById("scan-countdown-toggle");
+const scanDiagnostics = document.getElementById("scan-diagnostics");
 const scanCountdownEl = document.getElementById("scan-countdown");
 const scanMsg = document.getElementById("scan-msg");
 // One entry per opened camera: {deviceId, stream, video, label}.
@@ -446,12 +447,19 @@ async function snapshotOneCamera(cam, sessionId) {
 const BEH_STATE_TTL_MS = 8000;
 const behLive = {drowsy: new Set(), phone: new Set(), ts: 0};
 
+// The live overlay reports a single state — "Not paying attention" — rather
+// than naming sleeping or phone use over a student's head in front of the
+// class. The distinction is still recorded: behaviour_event stores the
+// specific type, and the teacher's Behaviour report breaks it down per
+// student (U32). Merging only the public-facing label keeps the accusation
+// low-stakes while the underlying data stays precise, which matters given
+// these detections are assistive indicators rather than proof.
 function behStateFor(accountId) {
   if (accountId == null || Date.now() - behLive.ts > BEH_STATE_TTL_MS) return [];
-  const acts = [];
-  if (behLive.drowsy.has(accountId)) acts.push("Sleeping");
-  if (behLive.phone.has(accountId)) acts.push("Using phone");
-  return acts;
+  if (behLive.drowsy.has(accountId) || behLive.phone.has(accountId)) {
+    return ["Not paying attention"];
+  }
+  return [];
 }
 
 // Draw the detected face boxes returned for one camera onto its overlay.
@@ -495,7 +503,36 @@ function drawScanBoxes(cam, res) {
     ctx.fillRect(x1, ty - fontPx - 2, tw + 10, fontPx + 6);
     ctx.fillStyle = "#fff";
     ctx.fillText(text, x1 + 5, ty);
+
+    // Diagnostic sub-label under an unrecognised face: the nearest gallery
+    // entries and the threshold in force. It distinguishes "nobody is close"
+    // (raise enrolment quality) from "two people are equally close" (the
+    // margin rule refusing to guess) — invisible otherwise.
+    if (!b.recognised && scanDiagnostics.checked && (b.candidates || []).length) {
+      const hint = describeCandidates(b);
+      const smallPx = Math.round(fontPx * 0.62);
+      ctx.font = `${smallPx}px sans-serif`;
+      const hw = ctx.measureText(hint).width;
+      const hy = ty + smallPx + 6;
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(x1, hy - smallPx - 2, hw + 8, smallPx + 6);
+      ctx.fillStyle = "#fde68a";
+      ctx.fillText(hint, x1 + 4, hy);
+      ctx.font = `bold ${fontPx}px sans-serif`;
+    }
   }
+}
+
+// "≈ zhang jiqian 0.38 / DOMINIC 0.31 (need 0.43)" — the top-2 gallery
+// scores plus the active threshold, so the reason for a rejection is
+// readable straight off the video.
+function describeCandidates(box) {
+  const top = (box.candidates || []).slice(0, 2).map(c => {
+    const who = c.full_name || c.student_id || `acc#${c.account_id}`;
+    return `${who} ${Number(c.score).toFixed(2)}`;
+  });
+  const need = box.threshold != null ? ` (need ${Number(box.threshold).toFixed(2)})` : "";
+  return `≈ ${top.join(" / ")}${need}`;
 }
 
 // Render the "Detected N: name1, name2…" summary from the union of all
@@ -644,7 +681,9 @@ async function behaviourTick() {
     const drowsy = (res.drowsy_active || []).length;
     const phone = (res.phone_active || []).length;
     behStatusEl.textContent =
-      `Behaviour analysis: sampling ~1 fps · drowsy now ${drowsy} · on phone now ${phone}` +
+      `Behaviour analysis: sampling ~1 fps · not paying attention now: ` +
+      `${new Set([...(res.drowsy_active || []), ...(res.phone_active || [])]).size}` +
+      ` (drowsy ${drowsy} / phone ${phone})` +
       (res.events_written ? ` · +${res.events_written} event(s) recorded` : "");
   } catch (e) {
     // 503 = AI_BEHAVIOUR off on this server; anything else transient → keep trying.

@@ -1079,3 +1079,151 @@ img.preview {
     min-width: 0 !important;
   }
 }
+/* ── Behaviour Analysis Settings (admin) ─────────────────────────────
+   A vertical form: course, then the feature switches it applies to, then
+   the sensitivity sliders. Deliberately not .form-stacked — that caps at
+   420px, which is too narrow for a slider plus its guidance text. */
+.beh-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 780px;
+}
+
+.beh-course {
+  max-width: 380px;
+}
+
+.beh-switches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: .6rem 1.5rem;
+  padding: .9rem 1.1rem;
+  border: 1px solid var(--c-border-2, #e1e4e8);
+  border-radius: var(--radius, 8px);
+  background: var(--c-surface-2, #f8f9fa);
+}
+
+.beh-switches label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.beh-switches input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.beh-sensitivity {
+  border: 1px solid var(--c-border-2, #e1e4e8);
+  border-radius: var(--radius, 8px);
+  padding: 1rem 1.25rem 1.25rem;
+  margin: 0;
+}
+
+.beh-sensitivity legend {
+  padding: 0 .4rem;
+  font-weight: 600;
+  font-size: .9rem;
+}
+
+.beh-adaptive {
+  padding-bottom: .9rem;
+  margin-bottom: .4rem;
+  border-bottom: 1px solid var(--c-border-2, #eee);
+}
+
+.beh-adaptive label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.beh-adaptive p {
+  margin: .3rem 0 0 1.6rem;
+}
+
+/* One slider block: header (name + value + reset), track, effect note. */
+.beh-slider {
+  padding: .9rem 0;
+  border-bottom: 1px solid var(--c-border-2, #f0f2f5);
+}
+
+.beh-slider:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.beh-slider__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.beh-slider__name {
+  font-weight: 600;
+  font-size: .9rem;
+}
+
+.beh-slider__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--c-primary, #2a4b7f);
+}
+
+.beh-slider__value--default {
+  color: var(--c-text-2, #666);
+  font-weight: 400;
+}
+
+.beh-slider__reset {
+  font-size: .75rem;
+  padding: 2px 8px;
+}
+
+.beh-slider input[type="range"] {
+  width: 100%;
+  margin: .5rem 0 .35rem;
+  accent-color: var(--c-primary, #2a4b7f);
+}
+
+.beh-slider__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: .7rem;
+  color: var(--c-text-2, #777);
+  margin-top: -.25rem;
+}
+
+/* Live explanation of what the current position does to the model. */
+.beh-slider__effect {
+  font-size: .78rem;
+  line-height: 1.5;
+  margin: .4rem 0 0;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+  background: var(--c-surface-2, #f6f8fa);
+  border-left: 3px solid var(--c-border-2, #d0d7de);
+}
+
+.beh-slider__effect--sensitive {
+  background: #fff7ed;
+  border-left-color: #e3a008;
+}
+
+.beh-slider__effect--strict {
+  background: #eff6ff;
+  border-left-color: #2a4b7f;
+}
+
+.beh-save {
+  align-self: flex-start;
+  min-width: 160px;
+}
