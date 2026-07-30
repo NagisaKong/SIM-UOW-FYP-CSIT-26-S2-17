@@ -14,14 +14,18 @@ Attributes: applicant (account_id of the requester).
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg2
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from psycopg2 import errorcodes
 from pydantic import BaseModel
 
 from core.notification import send_review_outcome_email
 from core.userInformation import CurrentUser, require_role
+
+_APPEALABLE_STATUSES = frozenset({"absent", "late", "early_left"})
 
 
 @contextlib.contextmanager
@@ -54,14 +58,38 @@ class AttendanceAppeal:
             raise HTTPException(400, "Appeal reason cannot be empty")
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                "SELECT accountid FROM attendance_record WHERE attendancerecordid = %s",
+                """SELECT r.accountid, r.status,
+                          s.status AS session_status, s.start_time
+                   FROM attendance_record r
+                   JOIN attendance_session s
+                     ON s.attendancesessionid = r.attendancesessionid
+                   WHERE r.attendancerecordid = %s""",
                 (record_id,),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Record not found")
-            if row[0] != applicant:
+            owner, record_status, session_status, start_time = row
+            if owner != applicant:
                 raise HTTPException(403, "Cannot appeal another user's record")
+            if record_status not in _APPEALABLE_STATUSES:
+                raise HTTPException(
+                    400,
+                    "Only absent, late, or early-left records can be appealed "
+                    "(approved leave and present marks cannot)",
+                )
+            if session_status in ("scheduled", "cancelled"):
+                raise HTTPException(
+                    400, "Cannot appeal a session that has not finished yet",
+                )
+            if start_time is not None:
+                aware = start_time if start_time.tzinfo else start_time.replace(
+                    tzinfo=timezone.utc
+                )
+                if aware > datetime.now(timezone.utc):
+                    raise HTTPException(
+                        400, "Cannot appeal a session that has not started yet",
+                    )
             cur.execute(
                 """INSERT INTO attendance_appeal (attendancerecordid, accountid, reason)
                    VALUES (%s, %s, %s) RETURNING appealid""",
@@ -188,6 +216,18 @@ class AttendanceAppeal:
                 raise HTTPException(
                     400, "This session has already started/ended; please submit an attendance appeal instead",
                 )
+            if sstatus == "cancelled":
+                raise HTTPException(400, "Cannot request leave for a cancelled session")
+            if start_time is not None:
+                aware = start_time if start_time.tzinfo else start_time.replace(
+                    tzinfo=timezone.utc
+                )
+                if aware <= datetime.now(timezone.utc):
+                    raise HTTPException(
+                        400,
+                        "This session's start time has already passed; "
+                        "please submit an attendance appeal instead",
+                    )
             cur.execute(
                 """SELECT 1 FROM course_enrollment
                    WHERE courseid = %s AND accountid = %s AND status = 'active'""",
@@ -195,13 +235,20 @@ class AttendanceAppeal:
             )
             if not cur.fetchone():
                 raise HTTPException(403, "Not enrolled in this course")
-            cur.execute(
-                """INSERT INTO leave_application
-                       (accountid, attendancesessionid, reason, supporting_doc_url, status)
-                   VALUES (%s, %s, %s, %s, 'pending')
-                   RETURNING leaveapplicationid""",
-                (applicant, session_id, reason, supporting_doc_url),
-            )
+            try:
+                cur.execute(
+                    """INSERT INTO leave_application
+                           (accountid, attendancesessionid, reason, supporting_doc_url, status)
+                       VALUES (%s, %s, %s, %s, 'pending')
+                       RETURNING leaveapplicationid""",
+                    (applicant, session_id, reason, supporting_doc_url),
+                )
+            except psycopg2.Error as exc:
+                if getattr(exc, "pgcode", None) == errorcodes.UNIQUE_VIOLATION:
+                    raise HTTPException(
+                        409, "You already have a leave application for this session",
+                    ) from exc
+                raise
             leave_id = cur.fetchone()[0]
         return {"success": True, "leave_application_id": leave_id}
 

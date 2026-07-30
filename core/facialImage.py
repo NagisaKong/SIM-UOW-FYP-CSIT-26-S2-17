@@ -237,8 +237,14 @@ router = APIRouter(tags=["facialImage"])
 
 
 def _svc(request: Request) -> FacialImage:
+    pipeline = getattr(request.app.state, "pipeline", None)
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Face recognition is unavailable (AI pipeline failed to load)",
+        )
     return FacialImage(
-        request.app.state.pipeline,
+        pipeline,
         request.app.state.cfg.database_url,
     )
 
@@ -269,7 +275,13 @@ async def identify_face(
 ):
     """Generic face identification (used by demo + admin tools)."""
     img = await _bytes_to_cv2(file)
-    result = request.app.state.pipeline.process_frame(img)
+    pipeline = getattr(request.app.state, "pipeline", None)
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Face recognition is unavailable (AI pipeline failed to load)",
+        )
+    result = pipeline.process_frame(img)
     identities = []
     for p in result.predictions:
         label = (

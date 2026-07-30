@@ -157,6 +157,7 @@ class AttendanceRecord:
              AND e.accountid = %s
              AND e.status = 'active'
             WHERE s.status = 'scheduled'
+              AND s.start_time > NOW()
             ORDER BY s.start_time
         """
         with _db(self.database_url) as c, c.cursor() as cur:
@@ -183,6 +184,10 @@ class AttendanceRecord:
             course_id, status = row
             if status != "active":
                 raise HTTPException(409, "The scan can only run while the session is active")
+            if self.pipeline is None:
+                raise HTTPException(
+                    503, "Face recognition is unavailable (AI pipeline failed to load)",
+                )
 
             # Recognise faces present in this frame.
             result = self.pipeline.process_frame(image)
@@ -261,6 +266,10 @@ class AttendanceRecord:
     # rows. Safe to poll frequently; attendance is still driven by the proper
     # scan snapshots (recordDetectionSnapshot).
     def detectFacesPreview(self, image: np.ndarray) -> dict[str, Any]:
+        if self.pipeline is None:
+            raise HTTPException(
+                503, "Face recognition is unavailable (AI pipeline failed to load)",
+            )
         result = self.pipeline.process_frame(image)
         boxes = []
         for p in result.predictions:
@@ -611,7 +620,7 @@ router = APIRouter(tags=["attendanceRecord"])
 
 def _svc(request: Request) -> AttendanceRecord:
     return AttendanceRecord(
-        request.app.state.pipeline,
+        getattr(request.app.state, "pipeline", None),
         request.app.state.cfg.database_url,
     )
 

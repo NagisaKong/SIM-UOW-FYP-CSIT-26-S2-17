@@ -269,11 +269,18 @@ function statusCell(r) {
   return el("span", {class: "muted"}, labels[r.session_status] || "—");
 }
 
-// Appeal is only available for a finished record where the student was NOT
-// marked present — disabled for upcoming/not-started sessions and for
-// sessions the student already attended (present).
+// Appeal is only for finished sessions with a disputable attendance mark.
+// Exclude present/leave, and anything not yet started (scheduled / future).
+const APPEALABLE_STATUSES = new Set(["absent", "late", "early_left"]);
+function isAppealable(r) {
+  if (r.record_id == null || !APPEALABLE_STATUSES.has(r.status)) return false;
+  if (r.session_status === "scheduled" || r.session_status === "cancelled") return false;
+  if (r.start_time && new Date(r.start_time).getTime() > Date.now()) return false;
+  return true;
+}
+
 function appealButton(r) {
-  const appealable = r.record_id != null && r.status && r.status !== "present";
+  const appealable = isAppealable(r);
   const attrs = {class: "secondary"};
   if (appealable) {
     attrs.onclick = () => {
@@ -349,16 +356,15 @@ document.getElementById("show-appeal-form").addEventListener("click", () => {
 });
 document.getElementById("back-appeals").addEventListener("click", () => showAppealsView("list"));
 
-// Populate the appeal form's session dropdown with the student's sessions
-// that can be appealed (have a record and were NOT marked present). If there
-// are none, show a placeholder and disable submission.
+// Populate the appeal form's session dropdown with finished sessions that
+// have a disputable mark (absent / late / early_left). Leave, present, and
+// not-yet-started sessions are excluded. If none, disable submission.
 async function loadAppealableSessions(selectedRecordId) {
   const sel = document.getElementById("appeal-record");
   const submitBtn = document.querySelector('#appeal-form button[type="submit"]');
   try {
     const res = await api("/student/attendance");
-    const records = (res.records || []).filter(
-      r => r.record_id != null && r.status && r.status !== "present");
+    const records = (res.records || []).filter(isAppealable);
     if (!records.length) {
       sel.innerHTML = '<option value="">No courses available to appeal</option>';
       sel.disabled = true;
@@ -540,12 +546,13 @@ function showLeaveView(view) {
 document.getElementById("show-leave-form").addEventListener("click", () => {
   document.getElementById("leave-msg").textContent = "";
   showLeaveView("form");
+  loadLeaveSessions();
 });
 document.getElementById("back-leave").addEventListener("click", () => showLeaveView("list"));
 
-async function loadLeave() {
-  // Populate the upcoming-session dropdown.
+async function loadLeaveSessions() {
   const sel = document.getElementById("leave-session");
+  const msg = document.getElementById("leave-msg");
   try {
     const res = await api("/student/sessions/upcoming");
     const sessions = res.sessions || [];
@@ -558,7 +565,17 @@ async function loadLeave() {
       o.textContent = `#${s.session_id} ${s.course_code} — ${fmt(s.start_time)}`;
       sel.appendChild(o);
     }
-  } catch { /* leave dropdown empty */ }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Unable to load sessions</option>';
+    if (msg) {
+      msg.style.color = "#c0392b";
+      msg.textContent = e.message;
+    }
+  }
+}
+
+async function loadLeave() {
+  await loadLeaveSessions();
   loadMyLeave();
 }
 
