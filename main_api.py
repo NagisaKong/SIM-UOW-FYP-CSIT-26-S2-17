@@ -62,10 +62,19 @@ async def lifespan(app: FastAPI):
     cfg = AIConfig()
     print(cfg.log_summary())
     app.state.cfg = cfg
-    app.state.pipeline = AttendancePipeline.from_env(cfg)
+    # Face models are heavy and env-sensitive (CUDA / onnxruntime / numpy).
+    # Leave, appeal, auth, and attendance CRUD must still come up if the
+    # AI stack fails to import — otherwise the local UI only shows
+    # "Cannot reach the API at http://127.0.0.1:8000".
+    try:
+        app.state.pipeline = AttendancePipeline.from_env(cfg)
+    except Exception as exc:  # noqa: BLE001 — keep non-AI routes available
+        print(f"[pipeline] AI models failed to load: {exc}")
+        print("[pipeline] running without face recognition (leave/appeal/auth OK)")
+        app.state.pipeline = None
     # CR-06 behaviour analysis (drowsiness / phone / heatmap). Opt-in via
     # AI_BEHAVIOUR=true — detector models load lazily on the first frame.
-    if cfg.behaviour_enabled:
+    if cfg.behaviour_enabled and app.state.pipeline is not None:
         from core.behaviourAnalysis import BehaviourAnalysisService
 
         app.state.behaviour = BehaviourAnalysisService(cfg, cfg.database_url)
@@ -174,8 +183,17 @@ def health():
     Reporting it here makes the tested configuration verifiable rather than
     assumed — test evidence can cite this payload.
     """
-    pipeline: AttendancePipeline = app.state.pipeline
+    pipeline: AttendancePipeline | None = getattr(app.state, "pipeline", None)
     cfg = app.state.cfg
+    if pipeline is None:
+        return {
+            "success": True,
+            "degraded": True,
+            "stores": {},
+            "recognition": None,
+            "behaviour_analysis": False,
+            "message": "API up; AI pipeline not loaded",
+        }
     stores = {name: len(s) for name, s in pipeline.store_manager.stores.items()}
     active = [name for name, w in pipeline._weights.items() if w > 0]
     return {
