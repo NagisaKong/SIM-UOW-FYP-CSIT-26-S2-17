@@ -8,6 +8,51 @@
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
   <link rel="stylesheet" href="style.css?v=5">
   <style>
+    /* ── Left/right scan layout (video | controls + results) ──── */
+    /* Wider than the shared .camera-stage--wide cap (960px) so the video
+       and the side column both have real room instead of squeezing. */
+    .camera-stage.scan-layout {
+      max-width: 1220px;
+    }
+
+    .scan-layout {
+      display: flex;
+      /* Must be explicit: this div also carries the shared .camera-stage
+         class, which sets flex-direction:column for the other (single-
+         column) camera pages. Without overriding it here, .scan-layout's
+         own row-basis widths (640px / 300px) get applied to the *column*
+         axis instead — i.e. treated as heights, not widths — which is
+         exactly what produced the huge empty vertical gap and the missing
+         side-by-side layout. */
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 1.25rem;
+    }
+
+    .scan-layout__video {
+      flex: 1 1 640px;
+      min-width: 0;
+    }
+
+    .scan-layout__side {
+      flex: 1 1 300px;
+      max-width: 420px;
+      min-width: 260px;
+    }
+
+    /* The 3-column button row was designed for the old full-width stage;
+       in the narrower side column it needs to wrap onto its own rows. */
+    .scan-layout__side .scan-actions {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+    }
+
+    .scan-layout__side .scan-cam-picker {
+      max-width: none;
+      margin: 0;
+    }
+
     /* ── Multi-camera classroom scan grid ─────────────────────── */
     .scan-cams {
       align-items: flex-start;
@@ -26,11 +71,41 @@
       line-height: 0;
     }
 
-    .scan-cam-overlay {
+    /* Qualified with .camera-frame (not just .scan-cam-overlay alone) so this
+       beats style.css's global ".camera-frame video, .camera-frame canvas,
+       .camera-frame img.preview" rule on specificity (0,2,0 vs 0,1,1), not
+       just source order. That global rule also matches this element (it IS
+       a <canvas> inside .camera-frame) and was clamping it to its own
+       max-width:360px / aspect-ratio:4/3 — a leftover sizing meant for the
+       single small check-in camera elsewhere in the app. The overlay was
+       therefore rendering as a small, top-left-anchored 360x270 box instead
+       of filling the actual (760px, 16:9) video tile, so any box drawn near
+       the true video's lower/right portion landed far outside that shrunken
+       box — this, not the object-fit mismatch below, was what actually let
+       boxes drift past the frame edge. Confirmed by rendering the real
+       markup in a browser and reading the two canvases' computed
+       getBoundingClientRect(): the overlay measured 360x270 while its own
+       parent .scan-cam-stage measured ~589x331.
+       max-width/max-height: none explicitly cancels the global rule's caps;
+       width/height: 100% + inset: 0 together is what actually sizes this to
+       match .scan-cam-stage. */
+    .camera-frame .scan-cam-overlay {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
+      max-width: none;
+      max-height: none;
+      /* Must match the video's object-fit exactly. The canvas's drawing
+         buffer is sized to the raw uploaded frame (overlay.width/height =
+         frame_width/frame_height in JS), which usually isn't the exact
+         same aspect ratio as the CSS box above (real cameras rarely
+         negotiate a clean 16:9). The <video> crops to fit via
+         object-fit:cover; without the same rule here the canvas instead
+         stretched to fill 100%/100% (plain CSS scaling has no notion of
+         "cover"), so its coordinate space no longer matched the visibly
+         cropped video underneath. */
+      object-fit: cover;
       pointer-events: none;
       border-radius: var(--radius, 8px);
       /* The global `canvas { background:#0f172a }` rule would otherwise make
@@ -39,22 +114,43 @@
       border: 0 !important;
     }
 
-    /* Override the global .camera-frame video rule so several tiles fit. */
+    /* Override the global .camera-frame video rule so several tiles fit.
+       16:9 matches the {ideal: 1920x1080} capture request in teacher.js —
+       the old 4:3 box was both small and the wrong shape, so it silently
+       cropped part of every frame via object-fit:cover. Sized well above
+       the old 300px so a single camera is actually easy to read; when more
+       than one is open they wrap onto new rows (via the flex-wrap on
+       #scan-cams) rather than being squeezed to fit side by side. */
     .camera-frame .scan-cam-video {
-      width: 300px;
-      max-width: 42vw;
+      /* vw-based, not %, on purpose: this sits several shrink-wrapped flex
+         layers deep (tile → stage → video), where a plain 100% can't
+         resolve reliably and risks falling back to the video's raw
+         capture resolution (huge). 46vw keeps it comfortably inside the
+         video column next to the side panel at normal laptop widths. */
+      width: 760px;
+      max-width: 46vw;
       height: auto;
-      aspect-ratio: 4 / 3;
+      aspect-ratio: 16 / 9;
       object-fit: cover;
       background: #0b1020;
       border-radius: var(--radius, 8px);
       display: block;
     }
 
+    /* Below ~980px the side column drops beneath the video (that's where
+       the flex-wrap on .scan-layout kicks in too), so the video can go
+       back to claiming most of the viewport width instead of staying
+       artificially narrow next to a column that's no longer beside it. */
+    @media (max-width: 980px) {
+      .camera-frame .scan-cam-video {
+        max-width: 82vw;
+      }
+    }
+
     .scan-cam-label {
       font-size: .72rem;
       color: var(--c-text-2, #666);
-      max-width: 300px;
+      max-width: 760px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -106,35 +202,144 @@
     }
 
     /* ── Live detection summary (count + names) ───────────────── */
-    .scan-detected {
+    /* One card holds both: #scan-detected (rebuilt once per Auto-every-N
+       round) and #scan-behaviour (the separate ~1 fps live badge below it,
+       see teacher.js). They stay two DOM nodes updated by two independent
+       loops, but read as a single panel. */
+    .scan-summary-card {
       width: 100%;
-      text-align: center;
-      margin-top: .35rem;
+      margin-top: .5rem;
+      padding: .7rem .9rem;
+      background: var(--c-surface-2, #f8fafc);
+      border: 1px solid var(--c-border-2, #eef0f4);
+      border-radius: var(--radius, 10px);
+      text-align: left;
+    }
+
+    .scan-detected {
       min-height: 1.2em;
     }
 
-    .scan-detected .chip {
+    .scan-stats-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      margin-bottom: .5rem;
+    }
+
+    .scan-stat {
+      display: inline-flex;
+      align-items: baseline;
+      gap: .32rem;
+      padding: .22rem .65rem;
+      border-radius: 999px;
+      background: var(--c-primary-soft, #eaeff6);
+    }
+
+    .scan-stat__value {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--c-primary, #2a4b7f);
+    }
+
+    .scan-stat__label {
+      font-size: .72rem;
+      color: var(--c-text-2, #475569);
+    }
+
+    .scan-stat--alert {
+      background: var(--c-danger-bg, #fee2e2);
+    }
+
+    .scan-stat--alert .scan-stat__value {
+      color: var(--c-danger, #dc2626);
+    }
+
+    .scan-names {
+      line-height: 1.9;
+    }
+
+    .scan-names .scan-name {
       display: inline-block;
       font-size: .78rem;
-      margin: 2px;
-      padding: 2px 8px;
+      margin: 2px 4px 2px 0;
+      padding: 2px 10px;
       border-radius: 999px;
-      background: var(--c-success-bg, #e7f6e7);
+      background: var(--c-success-bg, #dcfce7);
       color: var(--c-success, #16a34a);
     }
 
-    .scan-detected .count {
+    .scan-names .scan-name--alert {
+      background: var(--c-danger-bg, #fee2e2);
+      color: var(--c-danger, #dc2626);
       font-weight: 600;
-      margin-right: .35rem;
     }
 
-    .scan-detected .scan-stats {
-      font-weight: 600;
-      margin-bottom: .25rem;
+    .scan-names .muted {
+      font-size: .82rem;
     }
 
-    .scan-detected .scan-names {
-      line-height: 1.8;
+    /* ── Live behaviour badge (separate ~1 fps loop) ───────────── */
+    .scan-live-badge {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      margin-top: .55rem;
+      padding-top: .5rem;
+      border-top: 1px dashed var(--c-border-2, #e2e2e2);
+      font-size: .78rem;
+      color: var(--c-text-2, #475569);
+      min-height: 1.1em;
+    }
+
+    .scan-live-badge:empty {
+      display: none;
+    }
+
+    .scan-live-badge__dot {
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--c-success, #16a34a);
+      animation: scan-live-pulse 1.4s ease-in-out infinite;
+    }
+
+    .scan-live-badge--muted .scan-live-badge__dot {
+      background: var(--c-text-2, #94a3b8);
+      animation: none;
+    }
+
+    @keyframes scan-live-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: .35; transform: scale(.7); }
+    }
+
+    /* ── Capture-in-progress bar ──────────────────────────────── */
+    /* We don't know the real % done for a single camera's inference (the
+       backend doesn't report intra-request progress), so this animates as
+       an indeterminate "still working" sweep. With several cameras, the
+       label above it additionally shows a real "camera X of N" count. */
+    .scan-progress__track {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--c-border-2, #e2e2e2);
+      overflow: hidden;
+      margin-top: .3rem;
+    }
+
+    .scan-progress__bar {
+      width: 40%;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--c-primary, #2c5282);
+      animation: scan-progress-sweep 1.1s ease-in-out infinite;
+    }
+
+    @keyframes scan-progress-sweep {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(250%); }
     }
   </style>
 </head>
@@ -221,54 +426,74 @@
           (red requires behaviour analysis to be enabled for this course; the
           per-student breakdown of drowsiness vs phone use is in the Behaviour tab)
         </p>
-        <div class="camera-stage camera-stage--wide">
-          <div class="camera-frame">
-            <div id="scan-cams" class="scan-cams"
-              style="display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;width:100%">
-              <p id="scan-cams-empty" class="muted small" style="margin:0">Camera preview will appear here after you
-                start the scan.</p>
-            </div>
-            <canvas id="scan-canvas" width="320" height="240" style="display:none"></canvas>
-          </div>
-
-          <div id="scan-cam-picker" class="scan-cam-picker">
-            <div class="scan-cam-picker__head">
-              <strong class="small">Cameras to use</strong>
-              <button type="button" id="scan-cam-refresh" class="secondary small">Detect cameras</button>
-            </div>
-            <div id="scan-cam-list" class="scan-cam-list">
-              <p class="muted small" style="margin:0">Click “Detect cameras” to list your connected cameras, then tick
-                the ones to use.</p>
+        <div class="camera-stage camera-stage--wide scan-layout">
+          <!-- Left: the camera itself — the thing you're actually looking at. -->
+          <div class="scan-layout__video">
+            <div class="camera-frame">
+              <div id="scan-cams" class="scan-cams"
+                style="display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;width:100%">
+                <p id="scan-cams-empty" class="muted small" style="margin:0">Camera preview will appear here after you
+                  start the scan.</p>
+              </div>
+              <canvas id="scan-canvas" width="320" height="240" style="display:none"></canvas>
             </div>
           </div>
 
-          <div class="camera-actions scan-actions"
-            style="display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:.75rem">
-            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
-              <button id="scan-start">Start Scan</button>
-              <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
+          <!-- Right: setup + controls + results, all visible alongside the
+               video instead of stacked below it (used to need scrolling to
+               see the detected-students card once the video got bigger). -->
+          <div class="scan-layout__side">
+            <div id="scan-cam-picker" class="scan-cam-picker">
+              <div class="scan-cam-picker__head">
+                <strong class="small">Cameras to use</strong>
+                <button type="button" id="scan-cam-refresh" class="secondary small">Detect cameras</button>
+              </div>
+              <div id="scan-cam-list" class="scan-cam-list">
+                <p class="muted small" style="margin:0">Click “Detect cameras” to list your connected cameras, then tick
+                  the ones to use.</p>
+              </div>
             </div>
-            <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
-              <button id="scan-capture" disabled>Capture Snapshot</button>
-              <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+
+            <div class="camera-actions scan-actions"
+              style="display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:.75rem">
+              <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+                <button id="scan-start">Start Scan</button>
+                <button id="scan-finalize" class="secondary" disabled>End Scan &amp; Finalize</button>
+              </div>
+              <div class="scan-actions__col" style="display:flex;flex-direction:column;gap:.5rem">
+                <button id="scan-capture" disabled>Capture Snapshot</button>
+                <button id="scan-stop" class="secondary" disabled>Stop Camera</button>
+              </div>
+              <div class="scan-actions__col scan-actions__col--checks"
+                style="display:flex;flex-direction:column;justify-content:center;gap:.5rem">
+                <label class="small" style="display:flex;align-items:center;gap:.35rem"
+                  title="The on-screen boxes and the detected-students summary now update on this exact cadence, using the same full recognition pass as attendance recording — nothing faster runs in between. A very short interval (especially with several cameras selected, since they are scanned one after another) may not leave enough time for a round to finish before the next one is due, so the display can fall behind. If that happens, try a longer interval."><input type="checkbox"
+                    id="scan-auto"> Auto every
+                  <input type="number" id="scan-interval" value="15" min="3" max="86400" style="width:5rem"> s</label>
+                <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
+                    id="scan-countdown-toggle" checked> Show countdown</label>
+                <label class="small" style="display:flex;align-items:center;gap:.35rem"
+                  title="Under each unrecognised face, show the closest enrolled students and the score they needed. Use it to tell a too-strict threshold from two look-alikes the system refuses to guess between.">
+                  <input type="checkbox" id="scan-diagnostics"> Match diagnostics</label>
+              </div>
             </div>
-            <div class="scan-actions__col scan-actions__col--checks"
-              style="display:flex;flex-direction:column;justify-content:center;gap:.5rem">
-              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
-                  id="scan-auto"> Auto every
-                <input type="number" id="scan-interval" value="15" min="3" max="86400" style="width:5rem"> s</label>
-              <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
-                  id="scan-countdown-toggle" checked> Show countdown</label>
-              <label class="small" style="display:flex;align-items:center;gap:.35rem"
-                title="Under each unrecognised face, show the closest enrolled students and the score they needed. Use it to tell a too-strict threshold from two look-alikes the system refuses to guess between.">
-                <input type="checkbox" id="scan-diagnostics"> Match diagnostics</label>
+            <p class="small muted" style="margin:.25rem 0 0">Tip: the boxes and the detected-students summary below refresh on this same "Auto every" cadence (there is no faster background loop). Too short an interval — especially with multiple cameras — may not leave enough time for one round to finish before the next is due.</p>
+            <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
+            <div id="scan-progress" class="scan-progress" style="display:none">
+              <div class="scan-progress__track">
+                <div class="scan-progress__bar"></div>
+              </div>
+              <p id="scan-progress-label" class="small muted" style="margin:.15rem 0 0"></p>
+            </div>
+            <p id="scan-msg" class="small camera-msg"></p>
+            <div class="scan-summary-card">
+              <div id="scan-detected" class="scan-detected"></div>
+              <!-- CR-06: live behaviour-analysis status (fed by the ~1 fps sampler,
+                   independent of the round above) -->
+              <div id="scan-behaviour" class="scan-live-badge"
+                title="Continuously updated about once a second — independent of the Auto-every-N-seconds round above."></div>
             </div>
           </div>
-          <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
-          <p id="scan-msg" class="small camera-msg"></p>
-          <div id="scan-detected" class="scan-detected"></div>
-          <!-- CR-06: live behaviour-analysis status (fed by the ~1 fps sampler) -->
-          <p id="scan-behaviour" class="small muted" style="margin:.25rem 0 0"></p>
         </div>
       </div>
 

@@ -224,21 +224,13 @@ const scanCountdownToggle = document.getElementById("scan-countdown-toggle");
 const scanDiagnostics = document.getElementById("scan-diagnostics");
 const scanCountdownEl = document.getElementById("scan-countdown");
 const scanMsg = document.getElementById("scan-msg");
+const scanProgressEl = document.getElementById("scan-progress");
+const scanProgressLabel = document.getElementById("scan-progress-label");
 // One entry per opened camera: {deviceId, stream, video, label}.
 let scanCams = [];
 let scanTimer = null;
 let scanBusy = false;
 let scanCountdown = 0;
-
-// Live box preview (detection-only, no attendance recording).
-// The loop is self-throttling: the next round starts PREVIEW_GAP_MS after
-// the previous one finishes, so the effective frame rate adapts to how fast
-// the backend can run inference (fast GPU → several fps; slow CPU → the
-// inference time itself becomes the pace and requests never pile up).
-let previewTimer = null;
-let previewBusy = false;
-const PREVIEW_GAP_MS = 200;
-const previewCanvas = document.createElement("canvas"); // off-screen, separate from capture
 
 // Default the auto-snapshot interval to the admin-configured detection
 // interval (U03/U34). Falls back to the input's existing value on error.
@@ -258,7 +250,6 @@ function currentSessionId() {
 
 function stopScanCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-  stopPreviewLoop();
   stopBehaviourLoop();
   for (const cam of scanCams) cam.stream.getTracks().forEach(t => t.stop());
   scanCams = [];
@@ -369,11 +360,18 @@ scanCamRefresh.addEventListener("click", async () => {
 
 function updateCountdownDisplay() {
   // Only show while auto-scanning is actively running and the toggle is on.
-  if (scanCountdownToggle.checked && scanTimer) {
-    scanCountdownEl.textContent = `Next snapshot in ${scanCountdown}s`;
-  } else {
+  if (!(scanCountdownToggle.checked && scanTimer)) {
     scanCountdownEl.textContent = "";
+    return;
   }
+  // While a round is actually in flight, say so honestly instead of letting
+  // the countdown keep ticking on its own 1-second clock — that used to
+  // desync from when the on-screen boxes really refreshed (the countdown
+  // could already be several seconds into the *next* cycle by the time a
+  // slow round finished).
+  scanCountdownEl.textContent = scanBusy
+    ? "Capturing…"
+    : `Next snapshot in ${scanCountdown}s`;
 }
 
 scanStart.addEventListener("click", async () => {
@@ -416,8 +414,11 @@ scanStart.addEventListener("click", async () => {
     scanCapture.disabled = false;
     scanFinalize.disabled = false;
     scanStop.disabled = false;
-    startPreviewLoop(); // real-time boxes
     startBehaviourLoop(); // CR-06 ~1 fps behaviour sampling (self-stops if disabled)
+    // The on-screen boxes are now driven only by the same accurate scan used
+    // for attendance (captureSnapshot) — no separate fast/approximate loop —
+    // so the box only updates on a manual "Capture Snapshot" click or on the
+    // next Auto-every-N-seconds tick, never off-cadence.
     if (scanAuto.checked) startAutoSnapshots();
   } catch (e) {
     scanMsg.style.color = "#c0392b";
@@ -535,20 +536,40 @@ function describeCandidates(box) {
   return `≈ ${top.join(" / ")}${need}`;
 }
 
-// Render the "Detected N: name1, name2…" summary from the union of all
-// cameras' recognised students in the latest snapshot cycle.
-function renderScanDetected(map, totalFaces) {
+// Render this round's result: a small stat row (Recognised / Not paying
+// attention) above a row of name chips. `map` is keyed by account_id, so
+// each recognised student can be cross-checked against the live behaviour
+// state (drowsy / phone) to flag and count how many are currently
+// distracted. The separate ~1 fps live badge (#scan-behaviour) sits right
+// below this card and is updated independently by behaviourTick().
+function renderScanDetected(map) {
   const host = document.getElementById("scan-detected");
   host.innerHTML = "";
-  // Stats line: total faces in frame vs. recognised students.
-  host.append(el("div", {class: "scan-stats small"},
-    `Faces in frame: ${totalFaces} · Recognised: ${map.size}`));
-  if (!map.size) {
-    host.append(el("div", {class: "muted small"}, "No students recognised."));
-    return;
+
+  let distracted = 0;
+  for (const accountId of map.keys()) {
+    if (behStateFor(accountId).length) distracted++;
   }
+
+  const stats = el("div", {class: "scan-stats-row"},
+    el("span", {class: "scan-stat"},
+      el("span", {class: "scan-stat__value"}, String(map.size)),
+      el("span", {class: "scan-stat__label"}, "recognised")),
+    el("span", {class: "scan-stat scan-stat--alert"},
+      el("span", {class: "scan-stat__value"}, String(distracted)),
+      el("span", {class: "scan-stat__label"}, "not paying attention (this round)")),
+  );
+  host.append(stats);
+
   const names = el("div", {class: "scan-names"});
-  for (const name of map.values()) names.append(el("span", {class: "chip"}, name));
+  if (!map.size) {
+    names.append(el("span", {class: "muted"}, "No students recognised."));
+  } else {
+    for (const [accountId, name] of map.entries()) {
+      const flagged = behStateFor(accountId).length > 0;
+      names.append(el("span", {class: flagged ? "scan-name scan-name--alert" : "scan-name"}, name));
+    }
+  }
   host.append(names);
 }
 
@@ -556,15 +577,24 @@ async function captureSnapshot() {
   const id = currentSessionId();
   if (!scanCams.length || !id || scanBusy) return;
   scanBusy = true;
-  let ok = 0, fail = 0, totalFaces = 0;
+  scanProgressEl.style.display = "";
+  let ok = 0, fail = 0;
   const detected = new Map(); // account_id -> display name (union across cameras)
   // Sequential: the capture canvas is shared, and it avoids hammering the
-  // backend with N simultaneous uploads.
+  // backend with N simultaneous uploads. Since it's sequential, "camera i
+  // of N" is real progress, not a guess — the bar itself is still just an
+  // indeterminate "still working" animation, because we have no visibility
+  // into how far a single camera's own recognition call has gotten.
+  const n = scanCams.length;
+  let i = 0;
   for (const cam of scanCams) {
+    i++;
+    scanProgressLabel.textContent = n > 1
+      ? `Scanning camera ${i} of ${n}…`
+      : "Scanning…";
     try {
       const res = await snapshotOneCamera(cam, id);
       drawScanBoxes(cam, res);
-      totalFaces += res.faces_in_frame || (res.boxes ? res.boxes.length : 0);
       for (const d of (res.detected || [])) {
         detected.set(d.account_id, d.full_name || d.student_id || `acc#${d.account_id}`);
       }
@@ -575,7 +605,8 @@ async function captureSnapshot() {
       console.warn(`Scan failed for ${cam.label}:`, ex);
     }
   }
-  renderScanDetected(detected, totalFaces);
+  scanProgressEl.style.display = "none";
+  renderScanDetected(detected);
   scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
   scanMsg.textContent =
     `Captured ${scanCams.length} camera${scanCams.length > 1 ? "s" : ""}` +
@@ -585,55 +616,6 @@ async function captureSnapshot() {
 }
 
 scanCapture.addEventListener("click", captureSnapshot);
-
-// ── Live box preview ──────────────────────────────────────────
-// Polls a detection-only endpoint per camera and redraws the boxes, giving a
-// near-real-time overlay without writing any attendance rows.
-async function previewOneCamera(cam) {
-  const v = cam.video;
-  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
-  previewCanvas.width = w; previewCanvas.height = h;
-  previewCanvas.getContext("2d").drawImage(v, 0, 0, w, h);
-  const blob = await new Promise(r => previewCanvas.toBlob(r, "image/jpeg", 0.7));
-  const fd = new FormData();
-  fd.append("file", blob, "preview.jpg");
-  return api("/teacher/preview-detect", {method: "POST", body: fd});
-}
-
-async function previewTick() {
-  if (previewBusy || !scanCams.length) return;
-  previewBusy = true;
-  const detected = new Map(); // label -> name (deduped across cameras)
-  let totalFaces = 0;
-  for (const cam of scanCams) {
-    try {
-      const res = await previewOneCamera(cam);
-      drawScanBoxes(cam, res);
-      totalFaces += res.faces_in_frame || 0;
-      for (const b of (res.boxes || [])) {
-        if (b.recognised) detected.set(b.label, b.label);
-      }
-    } catch (e) {
-      // Transient errors (busy model, network) — skip this round silently.
-    }
-  }
-  renderScanDetected(detected, totalFaces);
-  previewBusy = false;
-}
-
-function startPreviewLoop() {
-  stopPreviewLoop();
-  const loop = async () => {
-    await previewTick();
-    if (scanCams.length) previewTimer = setTimeout(loop, PREVIEW_GAP_MS);
-  };
-  previewTimer = setTimeout(loop, 100);
-}
-
-function stopPreviewLoop() {
-  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  previewBusy = false;
-}
 
 // ── CR-06 behaviour sampling (~1 fps) ─────────────────────────
 // While the classroom scan is running, one frame per second is sent to the
@@ -648,6 +630,18 @@ const behStatusEl = document.getElementById("scan-behaviour");
 let behTimer = null;
 let behBusy = false;
 let behCamIndex = 0;
+
+// Rebuilds the small badge below the round-summary card. `pulsing` is true
+// only for the actively-updating "N not paying attention" state; the rarer
+// status messages (starting / disabled / service off) get a static dot —
+// the full "what is this and how often does it update" explanation lives
+// in the badge's `title` tooltip (set once in teacher.html) rather than
+// repeated inline every time, which is what made the old text so long.
+function setLiveBadge(text, pulsing) {
+  behStatusEl.className = "scan-live-badge" + (pulsing ? "" : " scan-live-badge--muted");
+  behStatusEl.innerHTML = "";
+  behStatusEl.append(el("span", {class: "scan-live-badge__dot"}), el("span", {}, text));
+}
 
 async function behaviourTick() {
   if (behBusy || !scanCams.length) return;
@@ -669,7 +663,7 @@ async function behaviourTick() {
     });
     if (res.enabled === false) {
       // U35: switched off for this course — no point sampling further.
-      behStatusEl.textContent = "Behaviour analysis: disabled for this course (U35).";
+      setLiveBadge("Behaviour analysis disabled for this course (U35).", false);
       stopBehaviourLoop(true);
       return;
     }
@@ -680,15 +674,16 @@ async function behaviourTick() {
     behLive.ts = Date.now();
     const drowsy = (res.drowsy_active || []).length;
     const phone = (res.phone_active || []).length;
-    behStatusEl.textContent =
-      `Behaviour analysis: sampling ~1 fps · not paying attention now: ` +
+    setLiveBadge(
       `${new Set([...(res.drowsy_active || []), ...(res.phone_active || [])]).size}` +
-      ` (drowsy ${drowsy} / phone ${phone})` +
-      (res.events_written ? ` · +${res.events_written} event(s) recorded` : "");
+      ` not paying attention right now (drowsy ${drowsy} / phone ${phone})` +
+      (res.events_written ? ` · +${res.events_written} event(s) recorded` : ""),
+      true,
+    );
   } catch (e) {
     // 503 = AI_BEHAVIOUR off on this server; anything else transient → keep trying.
     if (/not running|AI_BEHAVIOUR/i.test(e.message)) {
-      behStatusEl.textContent = "Behaviour analysis: service not enabled on this server.";
+      setLiveBadge("Behaviour analysis service not enabled on this server.", false);
       stopBehaviourLoop(true);
     }
   } finally {
@@ -698,7 +693,7 @@ async function behaviourTick() {
 
 function startBehaviourLoop() {
   stopBehaviourLoop();
-  behStatusEl.textContent = "Behaviour analysis: starting…";
+  setLiveBadge("Starting…", false);
   const loop = async () => {
     await behaviourTick();
     if (scanCams.length && behTimer !== null) {
@@ -716,7 +711,10 @@ function stopBehaviourLoop(keepMessage = false) {
   behLive.drowsy.clear();
   behLive.phone.clear();
   behLive.ts = 0;
-  if (!keepMessage && behStatusEl) behStatusEl.textContent = "";
+  if (!keepMessage && behStatusEl) {
+    behStatusEl.className = "scan-live-badge";
+    behStatusEl.innerHTML = "";
+  }
 }
 
 function startAutoSnapshots() {
@@ -724,15 +722,30 @@ function startAutoSnapshots() {
   const secs = Math.max(3, Number(scanInterval.value) || 15);
   scanCountdown = secs;
   updateCountdownDisplay();
-  // 1-second tick drives both the countdown and the capture, so the
-  // displayed number always matches when the next snapshot fires.
-  scanTimer = setInterval(async () => {
+  // Ticks every 1s, but never starts a new cycle while the previous
+  // capture is still in flight: if the countdown would hit 0 before that
+  // round has actually finished, the display just holds at 0
+  // ("Capturing…") instead of quietly restarting a fresh count — that
+  // mismatch used to make the boxes look like they refreshed several
+  // seconds "late" compared to what the countdown showed, when really the
+  // countdown had just kept ticking on its own during a slow round.
+  scanTimer = setInterval(() => {
+    if (scanBusy) {
+      scanCountdown = 0;
+      updateCountdownDisplay();
+      return;
+    }
     scanCountdown -= 1;
     if (scanCountdown <= 0) {
-      scanCountdown = secs;
-      await captureSnapshot();
+      scanCountdown = 0;
+      updateCountdownDisplay();
+      captureSnapshot().then(() => {
+        scanCountdown = secs;
+        updateCountdownDisplay();
+      });
+    } else {
+      updateCountdownDisplay();
     }
-    updateCountdownDisplay();
   }, 1000);
 }
 

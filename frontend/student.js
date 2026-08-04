@@ -714,7 +714,12 @@ faceStartBtn.addEventListener("click", async () => {
   faceBlob = null;
   setFaceButtonsEnabled(false);
   try {
-    faceStream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    // `ideal` lets the browser fall back if the camera can't do 720p. A
+    // fixed 640x480 request left too little detail margin for SCRFD to
+    // reliably find a face on borderline angles/lighting during enrolment.
+    faceStream = await navigator.mediaDevices.getUserMedia({
+      video: {width: {ideal: 1280}, height: {ideal: 720}},
+    });
     faceVideo.srcObject = faceStream;
     faceStartBtn.disabled = true;
     faceCaptureBtn.disabled = false;

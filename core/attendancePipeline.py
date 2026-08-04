@@ -755,11 +755,26 @@ def vote(
             if store is None:
                 continue
             account_id, score = store.best_match(emb.vector)
+            # Runner-up scores for the "Match diagnostics" teacher view — lets
+            # an "Unknown" box be read as either "nobody enrolled is close"
+            # (low scores across the board) or "margin rule refusing to guess
+            # between look-alikes" (two close, similar scores), instead of an
+            # opaque rejection.
+            candidates = []
+            for cand_id, cand_score in store.rank(emb.vector, top_k=2):
+                cand_info = store.info_for(cand_id)
+                candidates.append({
+                    "account_id": cand_id,
+                    "score": cand_score,
+                    "student_id": cand_info.student_id if cand_info else None,
+                    "full_name": cand_info.full_name if cand_info else None,
+                })
             per_model[emb.model_name] = {
                 "matched": account_id is not None,
                 "account_id": account_id,
                 "score": score,
                 "threshold": store.threshold,
+                "candidates": candidates,
             }
             if account_id is None:
                 continue
