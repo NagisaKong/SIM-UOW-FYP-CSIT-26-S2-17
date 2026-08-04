@@ -21,20 +21,55 @@ The download target must match what the app asks for at runtime:
 ``FaceAnalysis(name="buffalo_l")`` defaults to ``root="~/.insightface"``, so
 this writes to the same expanded path under the build user's home.
 
-Only the models the deployed configuration actually loads are fetched. YOLO
-(phone detection) and the MediaPipe FaceLandmarker task file are deliberately
-NOT fetched here: behaviour analysis is off on the CPU deployment
-(``AI_BEHAVIOUR=false``) and would only bloat the image. The GPU workstation
-downloads those on first use.
+By default only the models the deployed configuration actually loads are
+fetched. YOLO (phone detection) and the MediaPipe FaceLandmarker task file are
+NOT part of the image build: behaviour analysis is off on the CPU deployment
+(``AI_BEHAVIOUR=false``) and they would only bloat it.
+
+Local development is the opposite case — there the behaviour models ARE used,
+and downloading them lazily means the first analysed frame stalls on a 50 MB
+transfer, or fails outright on a slow link. Pass ``--behaviour`` to fetch them
+up front; ``scripts/setup.py`` does this for you.
+
+Run:
+    python scripts/prefetch_models.py               # recognition only (Docker)
+    python scripts/prefetch_models.py --behaviour   # + YOLO and FaceLandmarker
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import sys
 import time
+import urllib.request
+from pathlib import Path
 
 _ATTEMPTS = 3
 _BACKOFF_SECONDS = 5
+
+# Same asset the DrowsinessDetector loads at runtime; keep the two in step.
+_FACE_LANDMARKER_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/1/face_landmarker.task"
+)
+
+
+def _load_env() -> None:
+    """Read .env so we prefetch the models the app will actually load.
+
+    Without this the fetch falls back to the built-in defaults and happily
+    downloads, say, yolov8n while the configured model is yolov8m — leaving
+    the real one to download lazily anyway. Absent .env (the Docker build) and
+    absent python-dotenv are both fine; env vars already set always win.
+    """
+    try:
+        from dotenv import load_dotenv  # type: ignore
+
+        load_dotenv(Path(__file__).resolve().parent.parent / ".env",
+                    override=False)
+    except Exception:  # noqa: BLE001 — configuration is optional here
+        pass
 
 
 def prefetch_insightface(name: str = "buffalo_l") -> str:
@@ -62,8 +97,60 @@ def prefetch_insightface(name: str = "buffalo_l") -> str:
     ) from last_error
 
 
+def prefetch_face_landmarker() -> str:
+    """Fetch the MediaPipe FaceLandmarker asset used for EAR / MAR."""
+    path = Path(os.getenv("AI_FACEMESH_MODEL", "models/face_landmarker.task"))
+    if path.is_file():
+        print(f"[prefetch] face_landmarker already at {path}")
+        return str(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[prefetch] downloading face_landmarker -> {path}")
+    urllib.request.urlretrieve(_FACE_LANDMARKER_URL, path)
+    print(f"[prefetch] face_landmarker ready at {path}")
+    return str(path)
+
+
+def prefetch_yolo(model_name: str | None = None) -> str:
+    """Fetch the Ultralytics weights used for phone detection.
+
+    Constructing YOLO() triggers the download; ultralytics caches it, so this
+    is a no-op once the file exists.
+    """
+    model_name = model_name or os.getenv("AI_PHONE_MODEL", "yolov8n.pt")
+    from ultralytics import YOLO
+
+    YOLO(model_name)
+    print(f"[prefetch] YOLO weights ready: {model_name}")
+    return model_name
+
+
+def prefetch_behaviour() -> None:
+    """Best-effort fetch of the behaviour models.
+
+    Unlike the recognition pack these are not fatal: BehaviourAnalysisService
+    disables the corresponding detector and keeps running when a model is
+    missing, so a failure here should not stop setup.
+    """
+    for label, fn in (("face_landmarker", prefetch_face_landmarker),
+                      ("YOLO", prefetch_yolo)):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[prefetch] WARNING: could not fetch {label}: {exc}")
+            print(f"[prefetch] {label} will be downloaded on first use instead.")
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--behaviour", action="store_true",
+                    help="also fetch the YOLO and FaceLandmarker models "
+                         "(local development; not wanted in the image)")
+    args = ap.parse_args()
+
+    _load_env()
     prefetch_insightface()
+    if args.behaviour:
+        prefetch_behaviour()
     return 0
 
 
