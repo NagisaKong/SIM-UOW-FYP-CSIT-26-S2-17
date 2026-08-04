@@ -204,7 +204,6 @@ async function loadEarlyLeft(id) {
 }
 
 document.getElementById("live-session").addEventListener("change", refreshLive);
-document.getElementById("live-refresh").addEventListener("click", refreshLive);
 
 // ──────────────────────────────────────────────────────────────
 // U03 Classroom camera scan (teacher-activated detection windows)
