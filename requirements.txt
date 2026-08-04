@@ -7,11 +7,24 @@ python-dotenv>=1.0.0
 
 # --- SCRFD + ArcFace (primary detection & recognition) ---------------
 insightface>=0.7.3
-# Pick one runtime:
-onnxruntime>=1.16.0          ; platform_system != "Linux" or python_version < "3.12"
-# onnxruntime-gpu>=1.16.0    # uncomment on GPU boxes; remove the CPU line above
+
+# This file installs the CPU runtimes, deliberately: it has to work on the
+# Railway host, in CI, and on machines without an NVIDIA card. GPU users
+# switch afterwards — see requirements-gpu.txt.
+#
+# Do NOT simply add onnxruntime-gpu below. Both distributions install into the
+# same `onnxruntime/` package directory, so with both present the CPU build
+# wins, CUDA silently disappears from the provider list, and pip still reports
+# onnxruntime-gpu as installed. The CPU one must be uninstalled first, which a
+# requirements file cannot express — hence the separate file and the checker.
+#
+#   python scripts/check_gpu.py            # tells you what is actually active
+onnxruntime>=1.16.0
 
 # --- MTCNN + FaceNet (ensemble) --------------------------------------
+# PyPI's default torch wheel is CPU-only on Windows and Linux alike. A CUDA
+# build has the same package name and comes from a separate index, so it is
+# also handled in requirements-gpu.txt rather than here.
 torch>=2.1.0
 torchvision>=0.16.0
 facenet-pytorch>=2.5.3

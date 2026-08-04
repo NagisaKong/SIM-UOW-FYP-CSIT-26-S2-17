@@ -37,3 +37,19 @@ models/stylegan/
 
 *.task
 models/
+
+# Behaviour-analysis test footage. These are real facial images of a living
+# person — biometric personal data under the PDPA. Committing them would
+# contradict the project's own CR-09 position that only derived events are
+# retained. Only the aggregate results under docs/evidence/ are versioned.
+clips/
+clips_*/
+
+# Working notes and generated test evidence — local only, not part of the
+# deliverable. The FTD change list and the analysis write-ups are drafts for
+# the team to act on, and the *_st_*.md files are regenerated on every run.
+docs/FTD_change_list.md
+docs/evidence/behaviour_st_analysis.md
+docs/evidence/behaviour_st_*.md
+docs/evidence/ml_st_*.md
+docs/evidence/system_test_2026080*.md

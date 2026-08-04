@@ -259,11 +259,63 @@ class AIConfig:
     mar_threshold: float = field(
         default_factory=lambda: _env_float("AI_MAR_THRESHOLD", 0.6)
     )
+    # Absolute head-down cutoff, used only when adaptive_headpose is off.
+    # Measured 2026-08-04 (docs/evidence/behaviour_st_analysis.md): a ~40 deg
+    # head-down posture is estimated by the 6-point solvePnP model as only
+    # 12-20 deg, against a 6-8 deg upright baseline. The former default of 30
+    # could therefore never fire — the head-pose signal was dead. 12 is the
+    # highest cutoff that still recalls the labelled head-down segment while
+    # keeping false alarms on the negative segments at zero.
     headpose_pitch_deg: float = field(
-        default_factory=lambda: _env_float("AI_HEADPOSE_PITCH_DEG", 30.0)
+        default_factory=lambda: _env_float("AI_HEADPOSE_PITCH_DEG", 12.0)
     )
+    # Where head pose comes from. "insightface" uses the 3D-landmark pose
+    # from the detector that already found the face; "solvepnp" uses the
+    # 6-point MediaPipe estimate. The latter is kept as a fallback for
+    # deployments that cannot afford the extra model.
+    headpose_source: str = field(
+        default_factory=lambda: os.getenv("AI_HEADPOSE_SOURCE", "insightface").lower()
+    )
+    # Upright pitch differs per person and per camera mounting, exactly as
+    # eye aperture does, so the same adaptive treatment applies: learn each
+    # student's own upright pitch and flag departures from it.
+    adaptive_headpose: bool = field(
+        default_factory=lambda: _env_bool("AI_ADAPTIVE_HEADPOSE", True)
+    )
+    headpose_baseline_samples: int = field(
+        default_factory=lambda: _env_int("AI_HEADPOSE_BASELINE_SAMPLES", 20)
+    )
+    # Degrees below the personal baseline that count as head-down. Swept
+    # against the labelled clips: 10 recalls 100% of the head-down segment
+    # with zero false alarms on all three negative segments. Lower values
+    # start catching the small nod that accompanies eye closure; 15 and above
+    # begins losing genuine head-down samples.
+    headpose_delta_deg: float = field(
+        default_factory=lambda: _env_float("AI_HEADPOSE_DELTA_DEG", 10.0)
+    )
+    # YOLO confidence for a detection to count as a phone. Measured against
+    # labelled clips at 0.50: yolov8n and yolov8m both reach recall 1.00 with
+    # zero false alarms, at either 1280 or 1920.
+    #
+    # Do NOT raise this to compensate for a noisy model. The 44% false-alarm
+    # rate originally observed came from yolov8s specifically — it scores a
+    # wall-mounted switch panel as a phone at up to 0.59, which neither
+    # yolov8n nor yolov8m does at any input size. Raising the floor to 0.80
+    # masks that for yolov8s but costs yolov8n three quarters of its recall
+    # (1.00 -> 0.25), because a genuine phone does not always score high.
+    # Pick a clean model instead; see phone_model.
     phone_conf: float = field(
-        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.45)
+        default_factory=lambda: _env_float("AI_PHONE_CONF", 0.50)
+    )
+    # A phone box that never moves is furniture, not a phone. Detections whose
+    # position is essentially unchanged across this many samples are treated
+    # as a fixed fixture and suppressed. Temporal debouncing cannot do this:
+    # a persistent false positive is exactly what it confirms into an event.
+    phone_static_samples: int = field(
+        default_factory=lambda: _env_int("AI_PHONE_STATIC_SAMPLES", 45)
+    )
+    phone_static_iou: float = field(
+        default_factory=lambda: _env_float("AI_PHONE_STATIC_IOU", 0.80)
     )
     # ── Drowsiness robustness (see behaviourAnalysis) ────────────────────
     # A fixed EAR cut-off is unreliable across people: eye aperture differs
@@ -299,8 +351,15 @@ class AIConfig:
     phone_consec_samples: int = field(
         default_factory=lambda: _env_int("AI_PHONE_CONSEC", 5)
     )
-    # YOLO weights for phone detection. yolov8n = lightest; on a GPU rig
-    # yolov8s/yolov8m markedly improve small-object (distant phone) recall.
+    # YOLO weights for phone detection. Measured on labelled clips at
+    # conf 0.50 (recall / false-alarm rate on negative segments):
+    #
+    #   yolov8n  1.00 / 0.000   yolov8m  1.00 / 0.000
+    #   yolov8s  1.00 / 0.267   yolov8l  1.00 / 0.106
+    #
+    # Bigger is NOT reliably better here: yolov8s and yolov8l both mistake a
+    # wall switch panel for a phone, and yolov8s does so confidently. yolov8n
+    # is the right default and yolov8m the right upgrade on a GPU rig.
     phone_model: str = field(
         default_factory=lambda: os.getenv("AI_PHONE_MODEL", "yolov8n.pt")
     )
@@ -543,6 +602,20 @@ class FaceGroup:
             return 0.0
         return sum(self.det_scores.values()) / len(self.det_scores)
 
+    def head_pitch(self) -> float | None:
+        """Pitch in degrees from the detector's 3D landmarks, if available.
+
+        Present only when the `landmark_3d_68` module was loaded (behaviour
+        analysis on); None otherwise, and the caller falls back to the
+        MediaPipe estimate. Negative means head tilted downward.
+        """
+        for emb in self.embeddings:
+            raw = getattr(emb.detection, "raw", None)
+            pose = getattr(raw, "pose", None) if raw is not None else None
+            if pose is not None:
+                return float(pose[0])
+        return None
+
 
 @dataclass
 class Prediction:
@@ -554,6 +627,10 @@ class Prediction:
     score: float
     per_model: dict[str, dict]
     det_score: float
+    # Head pitch in degrees from the detector's 3D landmarks (negative =
+    # head down). None when that module is not loaded; the behaviour branch
+    # then falls back to its own MediaPipe estimate.
+    head_pitch: float | None = None
 
 
 @dataclass
@@ -699,6 +776,7 @@ def vote(
                 account_id=None, student_id=None, full_name=None,
                 score=0.0, per_model=per_model,
                 det_score=group.average_det_score(),
+                head_pitch=group.head_pitch(),
             ))
             continue
 
@@ -713,6 +791,7 @@ def vote(
             full_name=info.full_name if info else None,
             score=fused, per_model=per_model,
             det_score=group.average_det_score(),
+            head_pitch=group.head_pitch(),
         ))
     return predictions
 
@@ -862,9 +941,19 @@ def _build_face_analysis(cfg: AIConfig):
     from insightface.app import FaceAnalysis  # deferred
 
     providers = _onnx_providers(cfg.ctx_id)
+    modules = ["detection", "recognition"]
+    if cfg.behaviour_enabled and cfg.headpose_source == "insightface":
+        # 3D landmarks give a head pose that survives what the behaviour
+        # branch actually needs to detect. Measured 2026-08-04: on frames of
+        # a student with their head down, MediaPipe returned no landmarks at
+        # all for 60% of them, while this model produced a pose for 100% and
+        # separated upright (+4.9 deg) from head-down (-19.9 deg) four times
+        # more widely. It costs one extra inference per face, so it is loaded
+        # only when behaviour analysis is switched on.
+        modules.append("landmark_3d_68")
     app = FaceAnalysis(
         name="buffalo_l",
-        allowed_modules=["detection", "recognition"],
+        allowed_modules=modules,
         providers=providers,
     )
     app.prepare(ctx_id=cfg.ctx_id, det_size=cfg.det_size, det_thresh=cfg.det_thresh)
