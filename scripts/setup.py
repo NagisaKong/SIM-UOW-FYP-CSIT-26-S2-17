@@ -128,10 +128,37 @@ def setup_gpu(check_only: bool, skip: bool) -> bool:
     return True
 
 
+def prefetch_models(check_only: bool, skip: bool) -> bool:
+    """Download model weights now rather than during the first request.
+
+    InsightFace (~280 MB) is fetched inside the FastAPI lifespan handler
+    otherwise, so a slow link turns into a failed startup; the YOLO and
+    FaceLandmarker assets are fetched on the first analysed frame, which
+    stalls that frame. Both are cached on disk, so this is a no-op afterwards.
+    """
+    script = _REPO / "scripts" / "prefetch_models.py"
+    if skip:
+        print("    skipped (--no-models)")
+        return True
+    if not script.is_file():
+        print("    prefetch script missing — models will download on first use.")
+        return True
+    if check_only:
+        print("    would run: prefetch_models.py --behaviour")
+        return True
+    rc = _run([sys.executable, str(script), "--behaviour"], "model weights")
+    if rc != 0:
+        print("    WARNING: prefetch incomplete. The app still works — the "
+              "missing weights download on first use instead.")
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-gpu", action="store_true",
                     help="do not switch to CUDA wheels even if a GPU is present")
+    ap.add_argument("--no-models", action="store_true",
+                    help="do not pre-download model weights")
     ap.add_argument("--check", action="store_true",
                     help="report what would happen; change nothing")
     args = ap.parse_args()
@@ -142,20 +169,25 @@ def main() -> int:
         print("  (--check: nothing will be modified)")
     print("=" * 66)
 
-    _say("1/4", "Python interpreter")
+    _say("1/5", "Python interpreter")
     if not check_python():
         return 1
 
-    _say("2/4", "Project dependencies")
+    _say("2/5", "Project dependencies")
     if not install_requirements(args.check):
         return 1
 
-    _say("3/4", "Configuration (.env)")
+    _say("3/5", "Configuration (.env)")
     if not ensure_env(args.check):
         return 1
 
-    _say("4/4", "GPU runtimes")
+    # Before the models, so the weights are fetched with the runtime that will
+    # actually load them.
+    _say("4/5", "GPU runtimes")
     setup_gpu(args.check, args.no_gpu)
+
+    _say("5/5", "Model weights")
+    prefetch_models(args.check, args.no_models)
 
     print("\n" + "=" * 66)
     print("  Setup complete.")
