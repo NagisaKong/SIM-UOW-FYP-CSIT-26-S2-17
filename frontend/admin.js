@@ -511,18 +511,51 @@ async function loadCourses() {
   loadEnrollments();
 }
 
+// Enrolment: searchable student picker (find by name or student ID).
+// Mirrors the Face DB picker above — a full class roster is too long to
+// scroll, so the list is narrowed by typing rather than by scrolling.
+let enrollUserList = [];
+
 async function loadStudentsForEnrollment() {
+  try {
+    const res = await api("/admin/users");
+    enrollUserList = (res.users || []).filter(
+      u => u.role === "student" && u.status === "active");
+  } catch {
+    enrollUserList = [];
+  }
+  renderEnrollStudentOptions(
+    document.getElementById("enroll-student-search")?.value || "");
+}
+
+function renderEnrollStudentOptions(query) {
   const sel = document.getElementById("enroll-student-select");
   if (!sel) return;
+  const q = query.trim().toLowerCase();
+  const matches = enrollUserList.filter(u =>
+    !q ||
+    (u.full_name || "").toLowerCase().includes(q) ||
+    (u.student_id || "").toLowerCase().includes(q) ||
+    (u.email || "").toLowerCase().includes(q));
+  const prev = sel.value;
   sel.innerHTML = "";
-  const res = await api("/admin/users");
-  for (const u of res.users) {
-    if (u.role !== "student" || u.status !== "active") continue;
+  if (!matches.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = q ? "No matching student" : "No students found";
+    opt.disabled = true;
+    sel.append(opt);
+    return;
+  }
+  for (const u of matches) {
     const opt = document.createElement("option");
     opt.value = u.accountid;
-    opt.textContent = `${u.full_name || u.email} (${u.student_id || "acc#" + u.accountid})`;
+    const id = u.student_id || ("acc#" + u.accountid);
+    opt.textContent = `${u.full_name || u.email} — ${id}`;
     sel.append(opt);
   }
+  // Keep the previous selection if it is still in the filtered list.
+  if (matches.some(u => String(u.accountid) === prev)) sel.value = prev;
 }
 
 async function loadEnrollments() {
@@ -643,6 +676,10 @@ document.getElementById("session-form").addEventListener("submit", async (e) => 
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
   }
+});
+
+document.getElementById("enroll-student-search").addEventListener("input", (e) => {
+  renderEnrollStudentOptions(e.target.value);
 });
 
 document.getElementById("enroll-course-select").addEventListener("change", loadEnrollments);

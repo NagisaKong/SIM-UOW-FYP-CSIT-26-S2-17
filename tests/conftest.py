@@ -531,7 +531,7 @@ def st_world(client, db_url: str, st_suffix: str, png_bytes) -> Iterator[SimpleN
 
 
 # ════════════════════════════════════════════════════════════════════════
-# System-test result reporting (Part D evidence)
+# System-test result reporting (Part E evidence)
 # ════════════════════════════════════════════════════════════════════════
 # The suite is written so every test maps 1:1 onto a case ID in the Final
 # Technical Documentation (ST-UF-07 ↔ U07, and so on). pytest's default dot

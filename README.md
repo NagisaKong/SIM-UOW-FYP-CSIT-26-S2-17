@@ -8,7 +8,7 @@
 
 This project replaces manual roll calls and QR code check-ins with automated facial recognition of the seated class. Check-in is passive (CR-05): the teacher starts a camera scan for the whole class, and the system opens periodic detection windows, recognises every enrolled student present, and classifies each as **Present**, **Late**, **Early-left** or **Absent**. Students take no individual check-in action.
 
-Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace as primary, MTCNN + FaceNet as secondary), with optional image enhancement for non-ideal lighting conditions. All biometric data is self-hosted in compliance with Singapore PDPC guidelines under the Personal Data Protection Act 2012.
+Built on an ensemble of state-of-the-art deep learning models (SCRFD + ArcFace as primary, MTCNN + FaceNet as secondary), with optional image enhancement for non-ideal lighting conditions. All biometric data stays in a single-tenant, Singapore-region managed database (Supabase) with no third-party sharing, in line with Singapore PDPC guidelines under the Personal Data Protection Act 2012.
 
 The system additionally performs classroom behaviour analysis (CR-06) — drowsiness, mobile-phone use and a spatial activity heatmap — on frames sampled at ~1 fps. Only derived events are persisted; no video is ever written to disk.
 
@@ -16,19 +16,21 @@ The system additionally performs classroom behaviour analysis (CR-06) — drowsi
 
 ## Team
 
+> Roles below mirror the Final Technical Documentation §F.7.
+
 | Name | Role |
 |------|------|
-| YU, ZHANGHAO | Project Leader / Producer |
-| WHYE LI HENG, DOMINIC | Lead AI Engineer |
-| ZHANG, CHENGWEI | Lead AI Engineer / UI/UX Designer |
-| ZHANG, JIQIAN | Computer Vision & Backend Developer |
-| ZHAO, SHIYIN | QA Engineer & Documentation Lead |
+| YU, ZHANGHAO | Project Leader / Producer · Computer Vision & Backend Developer · Lead AI Engineer |
+| WHYE LI HENG, DOMINIC | Lead AI Engineer · Computer Vision & Backend Developer |
+| ZHANG, CHENGWEI | Lead AI Engineer · Computer Vision & Backend Developer · UI/UX Designer |
+| ZHANG, JIQIAN | Lead AI Engineer · Computer Vision & Backend Developer · QA Engineer & Documentation Lead |
+| ZHAO, SHIYIN | UI/UX Designer & Frontend Developer · QA Engineer & Documentation Lead |
 
 ---
 
 ## Key Features
 
-- **Automated attendance logging** — students are identified at classroom entry via camera, no manual check-in required
+- **Automated attendance logging** — the teacher starts a whole-class camera scan and every enrolled student in frame is identified; no manual check-in required (CR-05)
 - **In-class presence verification** — periodic checks detect students who sign in and leave early
 - **Present / Late / Absent classification** — configurable time thresholds determine attendance status
 - **Basic anti-spoofing heuristic** — faces below a minimum pixel size are discarded (`AI_ANTISPOOF_MIN_FACE_PX`); a full liveness model is out of scope for this release
@@ -38,7 +40,7 @@ The system additionally performs classroom behaviour analysis (CR-06) — drowsi
 - **Classroom behaviour analysis** — drowsiness (EAR/MAR/head-pose with an adaptive per-student baseline and PERCLOS), mobile-phone use (YOLO, attributed to the nearest recognised student), and a spatial activity heatmap; per-course toggle and tuning
 - **ML model management** — admins can split train/test embeddings, calibrate the recognition similarity threshold, review accuracy/FPR/FNR, and deploy it from the web interface (the recognition networks themselves are pre-trained)
 - **Accuracy statistics dashboard** — visualises balanced accuracy, FPR and FNR for each calibration run against the currently deployed threshold
-- **PDPC compliant** — fully self-hosted, no third-party data sharing
+- **PDPC compliant** — single-tenant Singapore-region database, no third-party data sharing
 
 ---
 
