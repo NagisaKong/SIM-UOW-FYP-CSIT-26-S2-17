@@ -216,8 +216,7 @@
                 <th>Teacher</th>
                 <th>Status</th>
                 <th>Active Sessions</th>
-                <th>Status Action</th>
-                <th>Delete</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="courses-body"></tbody>
@@ -239,6 +238,30 @@
             <button type="submit">Add Course</button>
           </form>
           <p id="course-msg" class="error"></p>
+        </div>
+
+        <!-- Edit Course view -->
+        <div id="courses-edit-view" hidden>
+          <button type="button" class="secondary back-btn" id="back-courses-edit">← Back to Courses</button>
+          <h3 style="margin-top:1rem">Edit Course</h3>
+          <p class="muted small" id="course-edit-subject" style="margin:0 0 1rem"></p>
+          <form id="course-edit-form" class="row form-stacked">
+            <label>Course code<input name="course_code" required></label>
+            <label>Course name<input name="course_name" required></label>
+            <label>Assigned teacher
+              <select name="teacher_id" id="course-edit-teacher-select">
+                <option value="">— No teacher —</option>
+              </select>
+            </label>
+            <label>Status
+              <select name="status" id="course-edit-status">
+                <option value="active">active</option>
+                <option value="inactive">inactive</option>
+              </select>
+            </label>
+            <button type="submit">Save Changes</button>
+          </form>
+          <p id="course-edit-msg" class="error"></p>
         </div>
       </div>
 
@@ -613,7 +636,7 @@
 
   <script src="config.js?v=1"></script>
   <script src="app.js?v=10"></script>
-  <script src="admin.js?v=12"></script>
+  <script src="admin.js?v=13"></script>
 </body>
 
 </html>

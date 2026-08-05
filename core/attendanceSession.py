@@ -516,6 +516,21 @@ class CourseBody(BaseModel):
     teacher_id: int | None = None
 
 
+class CoursePatchBody(BaseModel):
+    """Partial update — only the fields actually sent are written.
+
+    `teacher_id` needs three states, not two: absent = leave the assignment
+    alone, null = unassign, an id = reassign. A plain `int | None` default of
+    None could not tell "not sent" from "clear it", so the sentinel below is
+    what distinguishes them.
+    """
+
+    course_code: str | None = None
+    course_name: str | None = None
+    teacher_id: int | None = None
+    status: str | None = None
+
+
 class CourseStatusBody(BaseModel):
     status: str
 
@@ -584,6 +599,63 @@ def admin_create_course(
         )
         course_id = cur.fetchone()[0]
     return {"success": True, "course_id": course_id}
+
+
+@router.patch("/admin/courses/{course_id}")
+def admin_update_course(
+    course_id: int, body: CoursePatchBody, request: Request,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    """U26: edit a course's details (code, name, assigned teacher, status)."""
+    supplied = body.model_dump(exclude_unset=True)
+    if not supplied:
+        raise HTTPException(400, "No fields to update")
+    if "status" in supplied and supplied["status"] not in ("active", "inactive"):
+        raise HTTPException(400, "Invalid status")
+    for field in ("course_code", "course_name"):
+        if field in supplied and not (supplied[field] or "").strip():
+            raise HTTPException(400, f"{field} cannot be empty")
+
+    with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
+        cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Course not found")
+
+        # course_code carries a UNIQUE constraint; catching the clash here
+        # gives the admin the offending code instead of a 500 from the driver.
+        if "course_code" in supplied:
+            cur.execute(
+                "SELECT 1 FROM course WHERE course_code = %s AND courseid <> %s",
+                (supplied["course_code"], course_id),
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    409, f"Course code {supplied['course_code']} already exists",
+                )
+
+        # Same rule as course creation: an assignment must point at a teacher.
+        if supplied.get("teacher_id") is not None:
+            cur.execute(
+                """SELECT up.role FROM user_account ua
+                   JOIN user_profiles up ON up.profileid = ua.profileid
+                   WHERE ua.accountid = %s""",
+                (supplied["teacher_id"],),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Assigned teacher account not found")
+            if row[0] != "teacher":
+                raise HTTPException(400, "Assigned account must be a teacher")
+
+        columns = [f for f in
+                   ("course_code", "course_name", "teacher_id", "status")
+                   if f in supplied]
+        cur.execute(
+            f"UPDATE course SET {', '.join(f'{c_} = %s' for c_ in columns)} "
+            "WHERE courseid = %s",
+            [supplied[c_] for c_ in columns] + [course_id],
+        )
+    return {"success": True, "course_id": course_id, "updated": columns}
 
 
 @router.patch("/admin/courses/{course_id}/status")

@@ -453,8 +453,14 @@ async function loadCourses() {
       el("td", {}, c.teacher_name || "—"),
       el("td", {}, c.status || "active"),
       el("td", {}, c.active_sessions ?? 0),
-      el("td", {}, el("button", {
+      el("td", {style: "white-space:nowrap"},
+        el("button", {
+          style: "margin-right:6px",
+          onclick: () => openCourseEdit(c),
+        }, "Edit"),
+        el("button", {
         class: (c.status === "inactive") ? "secondary" : "danger",
+        style: "margin-right:6px",
         onclick: async () => {
           const target = c.status === "inactive" ? "active" : "inactive";
           if (target === "inactive" && (c.active_sessions ?? 0) > 0) {
@@ -471,8 +477,8 @@ async function loadCourses() {
             alert(ex.message);
           }
         }
-      }, c.status === "inactive" ? "Activate" : "Deactivate")),
-      el("td", {}, el("button", {
+      }, c.status === "inactive" ? "Activate" : "Deactivate"),
+        el("button", {
         class: "danger",
         onclick: async () => {
           if (!confirm(`Permanently delete course ${c.course_code} — ${c.course_name}?`)) return;
@@ -718,10 +724,13 @@ document.getElementById("enrollment-form").addEventListener("submit", async (e) 
 function showManageView(view) {
   document.getElementById("courses-list").hidden = view !== "list";
   document.getElementById("courses-form-view").hidden = view !== "form";
+  document.getElementById("courses-edit-view").hidden = view !== "edit";
 }
 
-async function loadTeacherOptions() {
-  const sel = document.getElementById("course-teacher-select");
+// `selectId` so the Add and Edit forms each fill their own dropdown; both
+// need the same teacher list, and duplicating the fetch would let them drift.
+async function loadTeacherOptions(selectId = "course-teacher-select") {
+  const sel = document.getElementById(selectId);
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '<option value="">— No teacher —</option>';
@@ -737,6 +746,64 @@ async function loadTeacherOptions() {
   } catch { /* leave just the "no teacher" option */ }
   sel.value = prev;
 }
+
+// ── Edit Course ───────────────────────────────────────────────
+let editingCourse = null;
+
+async function openCourseEdit(c) {
+  editingCourse = c;
+  const form = document.getElementById("course-edit-form");
+  document.getElementById("course-edit-msg").textContent = "";
+  document.getElementById("course-edit-subject").textContent =
+    `#${c.courseid} · currently ${c.course_code} — ${c.course_name}`;
+  form.course_code.value = c.course_code || "";
+  form.course_name.value = c.course_name || "";
+  document.getElementById("course-edit-status").value = c.status || "active";
+  showManageView("edit");
+  // Populate after the view is shown, then select the current teacher — the
+  // option has to exist before it can be selected.
+  await loadTeacherOptions("course-edit-teacher-select");
+  document.getElementById("course-edit-teacher-select").value =
+    c.teacher_id != null ? String(c.teacher_id) : "";
+}
+
+document.getElementById("back-courses-edit").addEventListener("click",
+  () => showManageView("list"));
+
+document.getElementById("course-edit-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!editingCourse) return;
+  const msg = document.getElementById("course-edit-msg");
+  msg.textContent = "";
+  const fd = Object.fromEntries(new FormData(e.target));
+  // Send only what actually changed: the endpoint treats an absent
+  // teacher_id as "leave it alone" and an explicit null as "unassign".
+  const payload = {};
+  if (fd.course_code !== editingCourse.course_code) payload.course_code = fd.course_code.trim();
+  if (fd.course_name !== editingCourse.course_name) payload.course_name = fd.course_name.trim();
+  if (fd.status !== (editingCourse.status || "active")) payload.status = fd.status;
+  const teacher = fd.teacher_id ? parseInt(fd.teacher_id) : null;
+  if (teacher !== (editingCourse.teacher_id ?? null)) payload.teacher_id = teacher;
+
+  if (!Object.keys(payload).length) {
+    msg.style.color = "#555";
+    msg.textContent = "Nothing changed.";
+    return;
+  }
+  try {
+    await api(`/admin/courses/${editingCourse.courseid}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    editingCourse = null;
+    loadCourses();
+    showManageView("list");
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = ex.message;
+  }
+});
 
 document.getElementById("show-course-form").addEventListener("click", () => {
   document.getElementById("course-msg").textContent = "";
