@@ -388,8 +388,11 @@ document.getElementById("appeal-form").addEventListener("submit", async (e) => {
   const msg = document.getElementById("appeal-msg");
   msg.textContent = "";
   const fd = new FormData(e.target);
+  const doc = fd.get("supporting_doc");
   try {
-    await api("/student/appeals", {
+    // Same two-step shape as the leave form: the appeal is created first, so
+    // a rejected or oversized attachment never costs the student the appeal.
+    const created = await api("/student/appeals", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
@@ -397,8 +400,26 @@ document.getElementById("appeal-form").addEventListener("submit", async (e) => {
         reason: fd.get("reason"),
       }),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = "Appeal submitted.";
+    let uploadError = null;
+    if (doc && doc.size) {
+      const upload = new FormData();
+      upload.append("file", doc);
+      try {
+        await api(`/student/appeals/${created.appeal_id}/document`, {
+          method: "POST",
+          body: upload,
+        });
+      } catch (ex) {
+        uploadError = ex.message;
+      }
+    }
+    if (uploadError) {
+      msg.style.color = "#b45309";
+      msg.textContent = `Appeal submitted, but the document was not attached: ${uploadError}`;
+    } else {
+      msg.style.color = "#16a34a";
+      msg.textContent = "Appeal submitted.";
+    }
     e.target.reset();
     loadAppeals();
     showAppealsView("list");
@@ -414,7 +435,7 @@ async function loadAppeals() {
   try {
     const res = await api("/student/appeals");
     if (!res.appeals.length) {
-      body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No appeals.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No appeals.")));
       return;
     }
     for (const a of res.appeals) {
@@ -422,12 +443,13 @@ async function loadAppeals() {
         el("td", {}, a.appealid),
         el("td", {}, a.attendancerecordid),
         el("td", {}, a.reason),
+        el("td", {}, a.has_document ? (a.supporting_doc_name || "Attached") : "—"),
         el("td", {}, el("span", {class: "badge"}, a.status)),
         el("td", {}, fmt(a.created_at)),
       ));
     }
   } catch (e) {
-    body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "error"}, e.message)));
   }
 }
 

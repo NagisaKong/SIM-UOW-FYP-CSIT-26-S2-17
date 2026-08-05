@@ -1002,7 +1002,13 @@ async function loadAppeals() {
   }
 }
 
-function openAppealDetail(appeal) {
+let adminAppealDocUrl = null;
+
+async function openAppealDetail(appeal) {
+  if (adminAppealDocUrl) {
+    URL.revokeObjectURL(adminAppealDocUrl);
+    adminAppealDocUrl = null;
+  }
   document.getElementById("detail-appeal-id").textContent = appeal.appealid || "-";
   document.getElementById("detail-student-id").textContent = appeal.student_id || "-";
   document.getElementById("detail-full-name").textContent = appeal.full_name || "-";
@@ -1050,6 +1056,18 @@ function openAppealDetail(appeal) {
   }
 
   showAppealsView("detail");
+  adminAppealDocUrl = await renderSupportingDocument({
+    url: `/appeals/${appeal.appealid}/document`,
+    hasDocument: appeal.has_document,
+    name: appeal.supporting_doc_name,
+    type: appeal.supporting_doc_type,
+    ids: {
+      section: "adm-appeal-doc-section",
+      image: "adm-appeal-doc-image",
+      link: "adm-appeal-doc-link",
+      msg: "adm-appeal-doc-msg",
+    },
+  });
 }
 
 function showAppealsView(view) {
@@ -1058,6 +1076,10 @@ function showAppealsView(view) {
   if (view === "list") {
     listView.style.display = "";
     detailView.style.display = "none";
+    if (adminAppealDocUrl) {
+      URL.revokeObjectURL(adminAppealDocUrl);
+      adminAppealDocUrl = null;
+    }
   } else if (view === "detail") {
     listView.style.display = "none";
     detailView.style.display = "";

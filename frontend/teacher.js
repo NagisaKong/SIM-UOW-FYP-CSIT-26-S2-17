@@ -1190,6 +1190,7 @@ function releaseLeaveDoc() {
   }
 }
 
+
 async function loadTeacherLeave() {
   const body = document.getElementById("tleave-body");
   const msg = document.getElementById("tleave-msg");
@@ -1258,45 +1259,18 @@ async function openTeacherLeave(a) {
 
 async function showLeaveDocument(a) {
   releaseLeaveDoc();
-  const section = document.getElementById("tleave-doc-section");
-  const img = document.getElementById("tleave-doc-image");
-  const link = document.getElementById("tleave-doc-link");
-  const msg = document.getElementById("tleave-doc-msg");
-  img.style.display = "none";
-  link.style.display = "none";
-  img.removeAttribute("src");
-  if (!a.has_document) {
-    section.style.display = "none";
-    return;
-  }
-  section.style.display = "";
-  msg.style.color = "";
-  msg.textContent = "Loading document…";
-  try {
-    // The endpoint needs the bearer token, so the bytes cannot simply be
-    // pointed at from an <img src>; fetch them and hand over an object URL
-    // (same approach as the CSV report export above).
-    const res = await fetch(API_BASE + `/leave-applications/${a.leaveapplicationid}/document`, {
-      headers: authHeader(),
-    });
-    if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`);
-    const blob = await res.blob();
-    leaveDocUrl = URL.createObjectURL(blob);
-    const name = a.supporting_doc_name || "document";
-    if ((a.supporting_doc_type || blob.type || "").startsWith("image/")) {
-      img.src = leaveDocUrl;
-      img.style.display = "";
-      msg.textContent = name;
-    } else {
-      link.href = leaveDocUrl;
-      link.textContent = `Open ${name} in a new tab`;
-      link.style.display = "";
-      msg.textContent = "";
-    }
-  } catch (ex) {
-    msg.style.color = "#c0392b";
-    msg.textContent = "Could not load the document: " + ex.message;
-  }
+  leaveDocUrl = await renderSupportingDocument({
+    url: `/leave-applications/${a.leaveapplicationid}/document`,
+    hasDocument: a.has_document,
+    name: a.supporting_doc_name,
+    type: a.supporting_doc_type,
+    ids: {
+      section: "tleave-doc-section",
+      image: "tleave-doc-image",
+      link: "tleave-doc-link",
+      msg: "tleave-doc-msg",
+    },
+  });
 }
 
 async function reviewLeave(decision) {
@@ -1331,10 +1305,15 @@ document.getElementById("tleave-reject").addEventListener("click", () => reviewL
 // read the reason and decide there (mirrors the Admin appeals UX).
 // ──────────────────────────────────────────────────────────────
 let currentAppeal = null;
+let appealDocUrl = null;
 
 function showAppealsView(view) {
   document.getElementById("tappeals-list-view").style.display = view === "list" ? "" : "none";
   document.getElementById("tappeals-detail-view").style.display = view === "detail" ? "" : "none";
+  if (view === "list" && appealDocUrl) {
+    URL.revokeObjectURL(appealDocUrl);
+    appealDocUrl = null;
+  }
 }
 
 async function loadTeacherAppeals() {
@@ -1366,8 +1345,12 @@ async function loadTeacherAppeals() {
   }
 }
 
-function openTeacherAppeal(a) {
+async function openTeacherAppeal(a) {
   currentAppeal = a;
+  if (appealDocUrl) {
+    URL.revokeObjectURL(appealDocUrl);
+    appealDocUrl = null;
+  }
   document.getElementById("tappeal-student").textContent =
     `${a.full_name || "-"} (${a.student_id || a.accountid})`;
   document.getElementById("tappeal-session").textContent =
@@ -1382,6 +1365,18 @@ function openTeacherAppeal(a) {
     a.status === "pending" ? "" : "none";
   document.getElementById("tappeal-detail-msg").textContent = "";
   showAppealsView("detail");
+  appealDocUrl = await renderSupportingDocument({
+    url: `/appeals/${a.appealid}/document`,
+    hasDocument: a.has_document,
+    name: a.supporting_doc_name,
+    type: a.supporting_doc_type,
+    ids: {
+      section: "tappeal-doc-section",
+      image: "tappeal-doc-image",
+      link: "tappeal-doc-link",
+      msg: "tappeal-doc-msg",
+    },
+  });
 }
 
 async function reviewAppeal(status) {

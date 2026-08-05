@@ -127,6 +127,55 @@ function syncSelectTitle(sel) {
   }
 }
 
+// Render a student-submitted supporting document (U08 appeals, U28 leave)
+// into a detail panel. Used by both the teacher and admin consoles, which
+// show the same evidence in the same shape.
+//
+// The document endpoints require the bearer token, so the bytes cannot be
+// pointed at from an <img src> — they are fetched and handed over as an
+// object URL (the same approach as the CSV report export). That URL is
+// returned so the caller can revoke it when the panel closes; object URLs
+// live until revoked, and leaking one per opened record adds up.
+async function renderSupportingDocument({url, hasDocument, name, type, ids}) {
+  const section = document.getElementById(ids.section);
+  const img = document.getElementById(ids.image);
+  const link = document.getElementById(ids.link);
+  const msg = document.getElementById(ids.msg);
+  if (!section) return null;
+  img.style.display = "none";
+  link.style.display = "none";
+  img.removeAttribute("src");
+  if (!hasDocument) {
+    section.style.display = "none";
+    return null;
+  }
+  section.style.display = "";
+  msg.style.color = "";
+  msg.textContent = "Loading document…";
+  try {
+    const res = await fetch(API_BASE + url, {headers: authHeader()});
+    if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const label = name || "document";
+    if ((type || blob.type || "").startsWith("image/")) {
+      img.src = objectUrl;
+      img.style.display = "";
+      msg.textContent = label;
+    } else {
+      link.href = objectUrl;
+      link.textContent = `Open ${label} in a new tab`;
+      link.style.display = "";
+      msg.textContent = "";
+    }
+    return objectUrl;
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = "Could not load the document: " + ex.message;
+    return null;
+  }
+}
+
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

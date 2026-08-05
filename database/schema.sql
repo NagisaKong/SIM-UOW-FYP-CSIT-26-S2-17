@@ -165,6 +165,14 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_APPEAL (
     CHECK ((status = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL) OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 
+-- Optional evidence for the appeal (same treatment as LEAVE_APPLICATION:
+-- stored here rather than on disk, so it stays in the one Singapore-region
+-- instance and survives the cloud host's ephemeral filesystem).
+ALTER TABLE ATTENDANCE_APPEAL
+    ADD COLUMN IF NOT EXISTS supporting_doc      BYTEA,
+    ADD COLUMN IF NOT EXISTS supporting_doc_name TEXT,
+    ADD COLUMN IF NOT EXISTS supporting_doc_type TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_appeal_record  ON ATTENDANCE_APPEAL(AttendanceRecordID);
 CREATE INDEX IF NOT EXISTS idx_appeal_account ON ATTENDANCE_APPEAL(AccountID);
 CREATE INDEX IF NOT EXISTS idx_appeal_status  ON ATTENDANCE_APPEAL(status);

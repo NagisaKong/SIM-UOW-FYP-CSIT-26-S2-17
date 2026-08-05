@@ -353,6 +353,7 @@
               <th>ID</th>
               <th>Record</th>
               <th>Reason</th>
+              <th>Document</th>
               <th>Status</th>
               <th>Created</th>
             </tr>
@@ -370,6 +371,12 @@
             <select name="record_id" id="appeal-record" required></select>
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+          <label>Supporting document (optional)
+            <input type="file" name="supporting_doc"
+              accept="image/png,image/jpeg,image/webp,application/pdf">
+            <span class="muted small">A photo or PDF of any evidence supporting your
+              appeal — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
+          </label>
           <button type="submit">Submit</button>
         </form>
         <p id="appeal-msg" class="error"></p>
@@ -462,8 +469,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=8"></script>
-  <script src="student.js?v=5"></script>
+  <script src="app.js?v=9"></script>
+  <script src="student.js?v=6"></script>
 </body>
 
 </html>
