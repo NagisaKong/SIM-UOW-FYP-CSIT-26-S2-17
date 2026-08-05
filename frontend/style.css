@@ -1258,3 +1258,37 @@ img.preview {
   align-self: flex-start;
   min-width: 160px;
 }
+
+/* ── Browser support notice (dashboard footer) ─────────────────────── */
+.browser-notice {
+  margin: 24px auto 32px;
+  padding: 12px 16px;
+  max-width: 1200px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-bg);
+  color: var(--c-text-2);
+}
+
+.browser-notice p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.browser-notice p + p {
+  margin-top: 6px;
+}
+
+.browser-notice strong {
+  color: var(--c-text);
+}
+
+/* Raised to a warning only when the page is on an insecure origin, where the
+   camera genuinely will not work — otherwise the notice stays informational. */
+.browser-notice-warn {
+  color: var(--c-danger);
+}
+
+.browser-notice-warn strong {
+  color: var(--c-danger);
+}

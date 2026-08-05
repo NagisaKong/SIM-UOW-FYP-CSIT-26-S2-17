@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teacher — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <style>
     /* ── Left/right scan layout (video | controls + results) ──── */
     /* Wider than the shared .camera-stage--wide cap (960px) so the video
@@ -1028,9 +1028,12 @@
     </section>
   </main>
 
+  <!-- Filled in by renderBrowserNotice() in app.js; the role selects the text. -->
+  <div class="browser-notice" data-role="teacher"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
   <script src="teacher.js?v=22"></script>
 </body>
 

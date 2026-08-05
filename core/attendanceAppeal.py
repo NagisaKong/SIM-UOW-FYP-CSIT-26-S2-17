@@ -406,14 +406,6 @@ class AttendanceAppeal:
         Mirrors the appeals list: the teacher opens one to read it in full and
         decide, and can still go back to an already-reviewed application to
         see what was decided and why (reviewer_comment only exists on those).
-
-        `attended` / `sessions_completed` give the student's track record in
-        that same course, so the decision has some context. The ratio counts
-        only ENDED sessions, matching teacher_course_roster — an in-progress
-        session's provisional 'present' must not inflate the numerator.
-        The supporting document is deliberately NOT selected here: it is a
-        BYTEA and would bloat every row of the list. Only its presence and
-        metadata travel with the list; the bytes have their own endpoint.
         """
         sql = """
             SELECT la.leaveapplicationid, la.accountid,
@@ -528,9 +520,6 @@ def teacher_review_appeal(
 
 
 # Supporting evidence for U08 appeals and U28 leave applications.
-# Deliberately a second step rather than part of the create call: the
-# attachment is optional, and keeping the create endpoints plain JSON means a
-# submission is never lost because its attachment failed to upload.
 def _document_response(data: bytes, content_type: str, filename: str) -> Response:
     return Response(
         content=data,

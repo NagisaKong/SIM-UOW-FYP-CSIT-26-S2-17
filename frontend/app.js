@@ -223,8 +223,74 @@ function setupMobileTabs() {
   tabs.insertAdjacentElement("afterend", select);
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", setupMobileTabs);
-} else {
+// Browser support notice, rendered into `<div class="browser-notice"
+// data-role="…">` at the foot of each dashboard.
+//
+// The requirement differs by role, so the text does too rather than repeating
+// one generic warning everywhere: the admin console touches no camera at all,
+// student face registration opens one, and the teacher's classroom scan opens
+// several concurrently — which is the case browsers differ most on.
+const _BROWSER_NOTE_BY_ROLE = {
+  teacher:
+    "Starting a classroom scan opens every selected camera at the same time. " +
+    "Chrome, Edge and Firefox handle concurrent camera streams reliably; " +
+    "Safari has not been verified with this system and is known to be " +
+    "restrictive here, so avoid it for scanning.",
+  student:
+    "Registering or updating your face photo uses your device camera, which " +
+    "these browsers support without extra setup.",
+  admin:
+    "The admin console needs no camera, so any of these browsers is fine. " +
+    "Use one of them when demonstrating the teacher scan page as well.",
+};
+
+function renderBrowserNotice() {
+  const host = document.querySelector(".browser-notice");
+  if (!host || host.dataset.rendered) return;
+  host.dataset.rendered = "1";
+
+  const role = host.dataset.role || "";
+  const bits = [
+    el("strong", {}, "Recommended browsers: "),
+    document.createTextNode(
+      "Google Chrome, Microsoft Edge and Mozilla Firefox (desktop) are the " +
+      "recommended browsers for this system. "),
+  ];
+  if (_BROWSER_NOTE_BY_ROLE[role]) {
+    bits.push(document.createTextNode(_BROWSER_NOTE_BY_ROLE[role] + " "));
+  }
+  host.append(el("p", {class: "small"}, ...bits));
+
+  // Worth stating explicitly: this is the one failure that looks like a
+  // broken feature rather than a configuration mistake. Browsers block
+  // getUserMedia outside a secure context, so opening the site by LAN IP over
+  // plain http gives a camera that simply never starts, with no obvious cause.
+  if (role === "teacher" || role === "student") {
+    const secure = window.isSecureContext;
+    const note = el("p", {class: "small"},
+      el("strong", {}, secure ? "Camera access: " : "Camera unavailable here: "),
+      document.createTextNode(
+        secure
+          ? "this page is on a secure origin, so cameras can be used. Allow " +
+            "access when the browser asks — the permission is per site."
+          : `this page was opened over an insecure origin (${location.protocol}//` +
+            `${location.host}). Browsers only grant camera access over HTTPS ` +
+            "or on localhost, so scanning and face registration will not " +
+            "start here. Use the deployed HTTPS address, or run the frontend " +
+            "from localhost."),
+    );
+    if (!secure) note.classList.add("browser-notice-warn");
+    host.append(note);
+  }
+}
+
+function _initSharedUi() {
   setupMobileTabs();
+  renderBrowserNotice();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", _initSharedUi);
+} else {
+  _initSharedUi();
 }
