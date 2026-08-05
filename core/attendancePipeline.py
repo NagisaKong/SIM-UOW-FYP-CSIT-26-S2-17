@@ -488,6 +488,28 @@ class EmbeddingRepo:
             ))
         return out
 
+    def load_student_info(self, account_id: int) -> "StudentInfo | None":
+        """Name and student number for one account, or None if unknown.
+
+        Used when a face is enrolled while the server is running, so the new
+        gallery entry is labelled straight away instead of staying anonymous
+        until the next restart re-hydrates the store.
+        """
+        sql = """
+            SELECT accountid, student_id, full_name
+            FROM personal_info WHERE accountid = %s LIMIT 1
+        """
+        try:
+            with self._conn() as c, c.cursor() as cur:
+                cur.execute(sql, (account_id,))
+                row = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001 — enrolment must not fail here
+            print(f"  [db] could not load personal_info for {account_id}: {exc}")
+            return None
+        if not row:
+            return None
+        return StudentInfo(account_id=row[0], student_id=row[1], full_name=row[2])
+
     def find_account_by_student_id(self, student_id: str) -> int | None:
         sql = "SELECT accountid FROM personal_info WHERE student_id = %s LIMIT 1"
         with self._conn() as c, c.cursor() as cur:
@@ -1303,6 +1325,9 @@ class SupabaseEmbeddingStore:
         deactivate_previous: bool = True,
     ) -> dict[str, int]:
         written: dict[str, int] = {}
+        # Looked up once per enrolment (a rare, interactive operation) so the
+        # in-memory gallery carries the same name the database holds.
+        info = self.repo.load_student_info(account_id)
         for model_name, vectors in vectors_by_model.items():
             if not vectors:
                 continue
@@ -1321,7 +1346,14 @@ class SupabaseEmbeddingStore:
                 # Appending adds a gallery entry rather than replacing the
                 # account's existing one, so the in-memory matrix must gain a
                 # row too — upsert() would overwrite the previous angle.
-                store.upsert(account_id, avg, replace=deactivate_previous)
+                #
+                # The name has to come along. Without it the account is
+                # matchable but anonymous, and every label falls back to
+                # "acc#<id>" until the process restarts and re-hydrates from
+                # the database — which looks like the recogniser failing when
+                # it is actually working perfectly.
+                store.upsert(account_id, avg, info=info,
+                             replace=deactivate_previous)
         return written
 
 

@@ -70,11 +70,29 @@ document.getElementById("show-face-form").addEventListener("click", () => {
 document.getElementById("back-faces").addEventListener("click", () => showFacesView("list"));
 
 // ── Users ─────────────────────────────────────────────────────
+// Cache of the last /admin/users response, so the search box filters
+// in-memory instead of round-tripping the API on every keystroke.
+let allUsers = [];
+
 async function loadUsers() {
+  const res = await api("/admin/users");
+  allUsers = res.users;
+  renderUsersList(allUsers);
+}
+
+// One search box across every identifying field. Admins do not necessarily
+// know whether they have someone's name, student number, staff number, or
+// email at hand, so it should not matter which one they type — that is the
+// difference between this and a plain name filter.
+function matchesUserQuery(u, q) {
+  return [u.full_name, u.email, u.student_id, u.staff_id, u.role, u.accountid]
+    .some(v => v != null && String(v).toLowerCase().includes(q));
+}
+
+function renderUsersList(users) {
   const body = document.getElementById("users-body");
   body.innerHTML = "";
-  const res = await api("/admin/users");
-  for (const u of res.users) {
+  for (const u of users) {
     body.append(el("tr", {},
       el("td", {}, u.accountid),
       el("td", {}, u.email),
@@ -95,6 +113,24 @@ async function loadUsers() {
     ));
   }
 }
+
+function applyUsersSearch() {
+  const raw = document.getElementById("users-search").value.trim();
+  const status = document.getElementById("users-search-status");
+  if (!raw) {
+    renderUsersList(allUsers);
+    status.textContent = "";
+    return;
+  }
+  const q = raw.toLowerCase();
+  const matches = allUsers.filter(u => matchesUserQuery(u, q));
+  renderUsersList(matches);
+  status.textContent = matches.length
+    ? `${matches.length} of ${allUsers.length} user${allUsers.length === 1 ? "" : "s"}`
+    : `No users match "${raw}".`;
+}
+
+document.getElementById("users-search").addEventListener("input", applyUsersSearch);
 
 // ── User View (detail) / Edit sub-pages ───────────────────────
 let currentUser = null;  // the user being viewed/edited

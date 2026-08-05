@@ -99,20 +99,6 @@
       height: auto;
     }
 
-    /* Two traces of the same path, not one: a lighter tint leads off first;
-       the main dark line starts slower but accelerates and genuinely
-       overtakes it (crosses ahead) before both close the loop together at
-       40%. The erase (40-70%) mirrors this with the roles swapped — dark
-       leads the vanishing, light catches up and overtakes it — so the two
-       halves of the cycle read as a matched pair, not a repeat. Every
-       checkpoint below was picked by computing draw-progress at each stop
-       and confirming light/dark actually cross where intended (verified by
-       scrubbing the real animation's currentTime in a browser, the same
-       way the earlier layout fixes were verified), not by eye. Only two
-       colours: --c-primary and a lighter tint of that same hex — nothing
-       else, per instruction. animation-timing-function is linear on
-       purpose: easing between these explicit stops would blur out the
-       exact crossing points they're built around. */
     .scan-idle-infinity path {
       fill: none;
       stroke-linecap: round;
@@ -125,7 +111,8 @@
     }
 
     .scan-idle-path--light {
-      stroke: #8a9cb9; /* --c-primary lightened ~45% toward white */
+      stroke: #8a9cb9;
+      /* --c-primary lightened ~45% toward white */
       stroke-width: 8;
       animation-name: scan-idle-light;
     }
@@ -152,29 +139,125 @@
          of line is affected, not the whole shape.
        Hold fully hidden ~87.5% → 100%, then the loop restarts. */
     @keyframes scan-idle-light {
-      0%     { stroke-dashoffset: 440; opacity: 0; filter: blur(1px); } /* hidden, fade-in starts */
-      10%    { opacity: 1; filter: blur(0); }        /* fully condensed in */
-      18.75% { stroke-dashoffset: 198; }   /* well ahead — fast start */
-      37.5%  { stroke-dashoffset: 110; }   /* dark has just passed it here */
-      50%    { stroke-dashoffset: 0; }     /* fully drawn, together with dark */
-      63.75% { stroke-dashoffset: -66; }   /* erase: trailing dark on purpose */
-      75%    { opacity: 1; filter: blur(0); }         /* still crisp — fade-out starts here, tail only */
-      77.5%  { stroke-dashoffset: -352; }  /* overtakes dark's erase here */
-      87.5%  { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* melted away, together with dark */
-      100%   { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* held hidden until the loop restarts */
+      0% {
+        stroke-dashoffset: 440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* hidden, fade-in starts */
+      10% {
+        opacity: 1;
+        filter: blur(0);
+      }
+
+      /* fully condensed in */
+      18.75% {
+        stroke-dashoffset: 198;
+      }
+
+      /* well ahead — fast start */
+      37.5% {
+        stroke-dashoffset: 110;
+      }
+
+      /* dark has just passed it here */
+      50% {
+        stroke-dashoffset: 0;
+      }
+
+      /* fully drawn, together with dark */
+      63.75% {
+        stroke-dashoffset: -66;
+      }
+
+      /* erase: trailing dark on purpose */
+      75% {
+        opacity: 1;
+        filter: blur(0);
+      }
+
+      /* still crisp — fade-out starts here, tail only */
+      77.5% {
+        stroke-dashoffset: -352;
+      }
+
+      /* overtakes dark's erase here */
+      87.5% {
+        stroke-dashoffset: -440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* melted away, together with dark */
+      100% {
+        stroke-dashoffset: -440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* held hidden until the loop restarts */
     }
 
     @keyframes scan-idle-dark {
-      0%     { stroke-dashoffset: 440; opacity: 0; filter: blur(1px); } /* hidden, fade-in starts */
-      10%    { opacity: 1; filter: blur(0); }        /* fully condensed in */
-      18.75% { stroke-dashoffset: 374; }   /* deliberately behind light */
-      37.5%  { stroke-dashoffset: 88; }    /* overtakes light here */
-      50%    { stroke-dashoffset: 0; }     /* fully drawn, together with light */
-      63.75% { stroke-dashoffset: -242; }  /* erase: leads off first */
-      75%    { opacity: 1; filter: blur(0); }         /* still crisp — fade-out starts here, tail only */
-      77.5%  { stroke-dashoffset: -330; }  /* light passes it here */
-      87.5%  { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* melted away, together with light */
-      100% { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* held hidden until the loop restarts */
+      0% {
+        stroke-dashoffset: 440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* hidden, fade-in starts */
+      10% {
+        opacity: 1;
+        filter: blur(0);
+      }
+
+      /* fully condensed in */
+      18.75% {
+        stroke-dashoffset: 374;
+      }
+
+      /* deliberately behind light */
+      37.5% {
+        stroke-dashoffset: 88;
+      }
+
+      /* overtakes light here */
+      50% {
+        stroke-dashoffset: 0;
+      }
+
+      /* fully drawn, together with light */
+      63.75% {
+        stroke-dashoffset: -242;
+      }
+
+      /* erase: leads off first */
+      75% {
+        opacity: 1;
+        filter: blur(0);
+      }
+
+      /* still crisp — fade-out starts here, tail only */
+      77.5% {
+        stroke-dashoffset: -330;
+      }
+
+      /* light passes it here */
+      87.5% {
+        stroke-dashoffset: -440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* melted away, together with light */
+      100% {
+        stroke-dashoffset: -440;
+        opacity: 0;
+        filter: blur(1px);
+      }
+
+      /* held hidden until the loop restarts */
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -182,7 +265,10 @@
         animation: none;
         stroke-dashoffset: 0;
       }
-      .scan-idle-path--light { opacity: .6; }
+
+      .scan-idle-path--light {
+        opacity: .6;
+      }
     }
 
     /* ── Multi-camera classroom scan grid ─────────────────────── */
@@ -443,8 +529,17 @@
     }
 
     @keyframes scan-live-pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: .35; transform: scale(.7); }
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: .35;
+        transform: scale(.7);
+      }
     }
 
     /* ── Capture-in-progress bar ──────────────────────────────── */
@@ -490,8 +585,13 @@
     }
 
     @keyframes scan-progress-sweep {
-      0%   { transform: translateX(-100%); }
-      100% { transform: translateX(250%); }
+      0% {
+        transform: translateX(-100%);
+      }
+
+      100% {
+        transform: translateX(250%);
+      }
     }
   </style>
 </head>
@@ -626,8 +726,8 @@
               <div class="scan-actions__col scan-actions__col--checks"
                 style="display:flex;flex-direction:column;justify-content:center;gap:.5rem">
                 <label class="small" style="display:flex;align-items:center;gap:.35rem"
-                  title="The on-screen boxes and the detected-students summary now update on this exact cadence, using the same full recognition pass as attendance recording — nothing faster runs in between. A very short interval (especially with several cameras selected, since they are scanned one after another) may not leave enough time for a round to finish before the next one is due, so the display can fall behind. If that happens, try a longer interval."><input type="checkbox"
-                    id="scan-auto"> Auto every
+                  title="The on-screen boxes and the detected-students summary now update on this exact cadence, using the same full recognition pass as attendance recording — nothing faster runs in between. A very short interval (especially with several cameras selected, since they are scanned one after another) may not leave enough time for a round to finish before the next one is due, so the display can fall behind. If that happens, try a longer interval."><input
+                    type="checkbox" id="scan-auto"> Auto every
                   <input type="number" id="scan-interval" value="15" min="3" max="86400" style="width:5rem"> s</label>
                 <label class="small" style="display:flex;align-items:center;gap:.35rem"><input type="checkbox"
                     id="scan-countdown-toggle" checked> Show countdown</label>
@@ -636,7 +736,10 @@
                   <input type="checkbox" id="scan-diagnostics"> Match diagnostics</label>
               </div>
             </div>
-            <p class="small muted" style="margin:.25rem 0 0">Tip: the boxes and the detected-students summary below refresh on this same "Auto every" cadence (there is no faster background loop). Too short an interval — especially with multiple cameras — may not leave enough time for one round to finish before the next is due.</p>
+            <p class="small muted" style="margin:.25rem 0 0">Tip: the boxes and the detected-students summary below
+              refresh on this same "Auto every" cadence (there is no faster background loop). Too short an interval —
+              especially with multiple cameras — may not leave enough time for one round to finish before the next is
+              due.</p>
             <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
             <div id="scan-progress" class="scan-progress">
               <div class="scan-progress__track">
@@ -650,7 +753,8 @@
               <!-- CR-06: live behaviour-analysis status (fed by the ~1 fps sampler,
                    independent of the round above) -->
               <div id="scan-behaviour" class="scan-live-badge"
-                title="Continuously updated about once a second — independent of the Auto-every-N-seconds round above."></div>
+                title="Continuously updated about once a second — independent of the Auto-every-N-seconds round above.">
+              </div>
             </div>
           </div>
         </div>

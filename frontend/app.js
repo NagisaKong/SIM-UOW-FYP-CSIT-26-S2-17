@@ -230,6 +230,37 @@ function setupMobileTabs() {
 // one generic warning everywhere: the admin console touches no camera at all,
 // student face registration opens one, and the teacher's classroom scan opens
 // several concurrently — which is the case browsers differ most on.
+// Simplified marks, drawn from primitives rather than shipping the vendors'
+// official artwork: recognisable next to the name at 15px, and no third-party
+// brand assets are copied into the repository.
+const _BROWSER_MARKS = {
+  chrome:
+    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="11" fill="#fff"/>' +
+    '<path d="M12 1a11 11 0 0 1 9.53 5.5H12a5.5 5.5 0 0 0-5.29 4L3 6.9A11 11 0 0 1 12 1z" fill="#EA4335"/>' +
+    '<path d="M3 6.9l3.71 3.6A5.5 5.5 0 0 0 12 17.5c.3 0 .6-.02.88-.07L9.2 22.5A11 11 0 0 1 3 6.9z" fill="#34A853"/>' +
+    '<path d="M21.53 6.5A11 11 0 0 1 9.2 22.5l3.68-5.07a5.5 5.5 0 0 0 3.6-8.43z" fill="#FBBC05"/>' +
+    '<circle cx="12" cy="12" r="4.6" fill="#4285F4"/></svg>',
+  edge:
+    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="11" fill="#0F7EBD"/>' +
+    '<path d="M5.5 13.6c0-4 3.2-7 7.1-7 3.3 0 5.7 2 5.7 4.6 0 1-.5 1.8-1.5 1.8H9.6c.2 2.3 2 3.8 4.6 3.8 1.4 0 2.7-.4 3.7-1v2.6a10 10 0 0 1-4.6 1c-4.6 0-7.8-2.6-7.8-5.8z" fill="#fff"/>' +
+    '<path d="M9.7 10.9h5.7c0-1.4-1.1-2.4-2.7-2.4-1.5 0-2.7.9-3 2.4z" fill="#0F7EBD"/></svg>',
+  firefox:
+    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="11" fill="#FF7139"/>' +
+    '<path d="M12 2.6c1.6 1.3 2 3 1.6 4.6 1.5-.5 3-.1 4 1 .9 1 1.3 2.4 1.1 3.8 1 .7 1.6 1.9 1.6 3.2 0 2.9-3.9 5.4-8.3 5.4S3.7 18.1 3.7 15.2c0-2 1.2-3.6 3-4.6-.3-1.6.3-3.2 1.5-4.1.2 1 .8 1.8 1.7 2.2-.4-2.3.3-4.5 2.1-6.1z" fill="#FFD44F"/>' +
+    '<path d="M12 20.6c-4.4 0-8.3-2.5-8.3-5.4 0-1.3.6-2.5 1.6-3.2.5 3.6 4 6 8.2 6 2.4 0 4.5-.8 5.9-2.1-1 2.7-4.2 4.7-7.4 4.7z" fill="#FF4F05"/></svg>',
+};
+
+function _browserChip(name, key) {
+  const span = el("span", {class: "browser-chip"});
+  const mark = el("span", {class: "browser-mark"});
+  mark.innerHTML = _BROWSER_MARKS[key];   // static markup defined above
+  span.append(mark, document.createTextNode(name));
+  return span;
+}
+
 const _BROWSER_NOTE_BY_ROLE = {
   teacher:
     "Starting a classroom scan opens every selected camera at the same time. " +
@@ -252,9 +283,13 @@ function renderBrowserNotice() {
   const role = host.dataset.role || "";
   const bits = [
     el("strong", {}, "Recommended browsers: "),
+    _browserChip("Google Chrome", "chrome"),
+    document.createTextNode(", "),
+    _browserChip("Microsoft Edge", "edge"),
+    document.createTextNode(" and "),
+    _browserChip("Mozilla Firefox", "firefox"),
     document.createTextNode(
-      "Google Chrome, Microsoft Edge and Mozilla Firefox (desktop) are the " +
-      "recommended browsers for this system. "),
+      " (desktop) are the recommended browsers for this system. "),
   ];
   if (_BROWSER_NOTE_BY_ROLE[role]) {
     bits.push(document.createTextNode(_BROWSER_NOTE_BY_ROLE[role] + " "));
@@ -284,9 +319,42 @@ function renderBrowserNotice() {
   }
 }
 
+// Floating "back to top" control. Injected rather than added to each page so
+// there is one implementation, and hidden until there is actually something
+// to scroll back from — a button that does nothing on a short page is noise.
+function setupBackToTop() {
+  if (document.querySelector(".to-top")) return;
+
+  const btn = el("button", {
+    type: "button", class: "to-top", "aria-label": "Back to top", title: "Back to top",
+  });
+  btn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>';
+  btn.addEventListener("click", () => {
+    // `smooth` is ignored when the user has asked for reduced motion, which
+    // is the correct behaviour rather than something to work around.
+    window.scrollTo({top: 0, behavior: "smooth"});
+  });
+  document.body.append(btn);
+
+  const SHOW_AFTER = 320;   // px — roughly one screenful on a laptop
+  let shown = false;
+  const sync = () => {
+    const should = window.scrollY > SHOW_AFTER;
+    if (should === shown) return;      // avoid touching the DOM every scroll tick
+    shown = should;
+    btn.classList.toggle("is-visible", should);
+  };
+  window.addEventListener("scroll", sync, {passive: true});
+  sync();
+}
+
 function _initSharedUi() {
   setupMobileTabs();
   renderBrowserNotice();
+  setupBackToTop();
 }
 
 if (document.readyState === "loading") {
