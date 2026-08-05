@@ -97,34 +97,90 @@
       height: auto;
     }
 
+    /* Two traces of the same path, not one: a lighter tint leads off first;
+       the main dark line starts slower but accelerates and genuinely
+       overtakes it (crosses ahead) before both close the loop together at
+       40%. The erase (40-70%) mirrors this with the roles swapped — dark
+       leads the vanishing, light catches up and overtakes it — so the two
+       halves of the cycle read as a matched pair, not a repeat. Every
+       checkpoint below was picked by computing draw-progress at each stop
+       and confirming light/dark actually cross where intended (verified by
+       scrubbing the real animation's currentTime in a browser, the same
+       way the earlier layout fixes were verified), not by eye. Only two
+       colours: --c-primary and a lighter tint of that same hex — nothing
+       else, per instruction. animation-timing-function is linear on
+       purpose: easing between these explicit stops would blur out the
+       exact crossing points they're built around. */
     .scan-idle-infinity path {
       fill: none;
-      stroke: var(--c-primary, #2a4b7f);
-      stroke-width: 10;
       stroke-linecap: round;
       stroke-linejoin: round;
       stroke-dasharray: 440;
       stroke-dashoffset: 440;
-      animation: scan-idle-trace 5.6s ease-in-out infinite;
+      animation-duration: 5.2s;
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
     }
 
-    /* Pause sits AFTER the erase finishes, before the next draw starts —
-       not between draw and erase. Draw (0-40%) runs straight into erase
-       (40-70%) with no gap, then it stays fully hidden (70-100%) until the
-       cycle loops back to drawing again. */
-    @keyframes scan-idle-trace {
-      0%   { stroke-dashoffset: 440; }   /* fully hidden — drawing starts */
-      40%  { stroke-dashoffset: 0; }     /* fully drawn, erase starts immediately */
-      70%  { stroke-dashoffset: -440; }  /* fully erased */
-      100% { stroke-dashoffset: -440; }  /* hold hidden until the loop restarts */
+    .scan-idle-path--light {
+      stroke: #8a9cb9; /* --c-primary lightened ~45% toward white */
+      stroke-width: 8;
+      animation-name: scan-idle-light;
+    }
+
+    .scan-idle-path--dark {
+      stroke: var(--c-primary, #2a4b7f);
+      stroke-width: 10;
+      animation-name: scan-idle-dark;
+    }
+
+    /* Same choreography as before, just re-timed onto a 5.2s total instead
+       of 6.5s: the draw+erase motion keeps the exact same real-world speed
+       (every dashoffset checkpoint sits at the same absolute second it did
+       before — only the trailing hold got shorter, from ~2s down to
+       ~0.65s), so this is not "faster", it's "less dead air at the end".
+
+       Two symmetric fades now bookend the cycle instead of one:
+       - Fade IN, 0% → ~10%: opacity 0→1, blur 1px→0. The very first sliver
+         of line no longer just snaps into existence at full crispness; it
+         condenses in, mirroring how it dissolves out at the other end.
+       - Fade OUT, ~75% → ~87.5%: unchanged from before, just relabelled
+         onto the new shorter total — still opacity-led (blur only 1px,
+         not 6px) and still starts late enough that only the last stretch
+         of line is affected, not the whole shape.
+       Hold fully hidden ~87.5% → 100%, then the loop restarts. */
+    @keyframes scan-idle-light {
+      0%     { stroke-dashoffset: 440; opacity: 0; filter: blur(1px); } /* hidden, fade-in starts */
+      10%    { opacity: 1; filter: blur(0); }        /* fully condensed in */
+      18.75% { stroke-dashoffset: 198; }   /* well ahead — fast start */
+      37.5%  { stroke-dashoffset: 110; }   /* dark has just passed it here */
+      50%    { stroke-dashoffset: 0; }     /* fully drawn, together with dark */
+      63.75% { stroke-dashoffset: -66; }   /* erase: trailing dark on purpose */
+      75%    { opacity: 1; filter: blur(0); }         /* still crisp — fade-out starts here, tail only */
+      77.5%  { stroke-dashoffset: -352; }  /* overtakes dark's erase here */
+      87.5%  { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* melted away, together with dark */
+      100%   { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* held hidden until the loop restarts */
+    }
+
+    @keyframes scan-idle-dark {
+      0%     { stroke-dashoffset: 440; opacity: 0; filter: blur(1px); } /* hidden, fade-in starts */
+      10%    { opacity: 1; filter: blur(0); }        /* fully condensed in */
+      18.75% { stroke-dashoffset: 374; }   /* deliberately behind light */
+      37.5%  { stroke-dashoffset: 88; }    /* overtakes light here */
+      50%    { stroke-dashoffset: 0; }     /* fully drawn, together with light */
+      63.75% { stroke-dashoffset: -242; }  /* erase: leads off first */
+      75%    { opacity: 1; filter: blur(0); }         /* still crisp — fade-out starts here, tail only */
+      77.5%  { stroke-dashoffset: -330; }  /* light passes it here */
+      87.5%  { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* melted away, together with light */
+      100% { stroke-dashoffset: -440; opacity: 0; filter: blur(1px); } /* held hidden until the loop restarts */
     }
 
     @media (prefers-reduced-motion: reduce) {
       .scan-idle-infinity path {
         animation: none;
         stroke-dashoffset: 0;
-        opacity: .5;
       }
+      .scan-idle-path--light { opacity: .6; }
     }
 
     /* ── Multi-camera classroom scan grid ─────────────────────── */
@@ -507,7 +563,9 @@
                 style="display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;width:100%">
                 <div id="scan-cams-empty" class="scan-idle-placeholder">
                   <svg class="scan-idle-infinity" viewBox="0 0 240 120" aria-hidden="true" focusable="false">
-                    <path
+                    <path class="scan-idle-path--light"
+                      d="M 120.0,60.0 L 116.27,61.65 L 112.55,63.29 L 108.83,64.9 L 105.14,66.49 L 101.47,68.04 L 97.82,69.53 L 94.21,70.97 L 90.64,72.34 L 87.12,73.64 L 83.65,74.85 L 80.23,75.97 L 76.87,76.99 L 73.58,77.91 L 70.36,78.71 L 67.22,79.4 L 64.16,79.97 L 61.19,80.42 L 58.3,80.74 L 55.51,80.94 L 52.82,81.0 L 50.24,80.94 L 47.76,80.74 L 45.39,80.42 L 43.14,79.97 L 41.01,79.4 L 39.0,78.71 L 37.11,77.91 L 35.35,76.99 L 33.73,75.97 L 32.23,74.85 L 30.87,73.64 L 29.65,72.34 L 28.57,70.97 L 27.62,69.53 L 26.83,68.04 L 26.17,66.49 L 25.66,64.9 L 25.29,63.29 L 25.07,61.65 L 25.0,60.0 L 25.07,58.35 L 25.29,56.71 L 25.66,55.1 L 26.17,53.51 L 26.83,51.96 L 27.62,50.47 L 28.57,49.03 L 29.65,47.66 L 30.87,46.36 L 32.23,45.15 L 33.73,44.03 L 35.35,43.01 L 37.11,42.09 L 39.0,41.29 L 41.01,40.6 L 43.14,40.03 L 45.39,39.58 L 47.76,39.26 L 50.24,39.06 L 52.82,39.0 L 55.51,39.06 L 58.3,39.26 L 61.19,39.58 L 64.16,40.03 L 67.22,40.6 L 70.36,41.29 L 73.58,42.09 L 76.87,43.01 L 80.23,44.03 L 83.65,45.15 L 87.12,46.36 L 90.64,47.66 L 94.21,49.03 L 97.82,50.47 L 101.47,51.96 L 105.14,53.51 L 108.83,55.1 L 112.55,56.71 L 116.27,58.35 L 120.0,60.0 L 123.73,61.65 L 127.45,63.29 L 131.17,64.9 L 134.86,66.49 L 138.53,68.04 L 142.18,69.53 L 145.79,70.97 L 149.36,72.34 L 152.88,73.64 L 156.35,74.85 L 159.77,75.97 L 163.13,76.99 L 166.42,77.91 L 169.64,78.71 L 172.78,79.4 L 175.84,79.97 L 178.81,80.42 L 181.7,80.74 L 184.49,80.94 L 187.18,81.0 L 189.76,80.94 L 192.24,80.74 L 194.61,80.42 L 196.86,79.97 L 198.99,79.4 L 201.0,78.71 L 202.89,77.91 L 204.65,76.99 L 206.27,75.97 L 207.77,74.85 L 209.13,73.64 L 210.35,72.34 L 211.43,70.97 L 212.38,69.53 L 213.17,68.04 L 213.83,66.49 L 214.34,64.9 L 214.71,63.29 L 214.93,61.65 L 215.0,60.0 L 214.93,58.35 L 214.71,56.71 L 214.34,55.1 L 213.83,53.51 L 213.17,51.96 L 212.38,50.47 L 211.43,49.03 L 210.35,47.66 L 209.13,46.36 L 207.77,45.15 L 206.27,44.03 L 204.65,43.01 L 202.89,42.09 L 201.0,41.29 L 198.99,40.6 L 196.86,40.03 L 194.61,39.58 L 192.24,39.26 L 189.76,39.06 L 187.18,39.0 L 184.49,39.06 L 181.7,39.26 L 178.81,39.58 L 175.84,40.03 L 172.78,40.6 L 169.64,41.29 L 166.42,42.09 L 163.13,43.01 L 159.77,44.03 L 156.35,45.15 L 152.88,46.36 L 149.36,47.66 L 145.79,49.03 L 142.18,50.47 L 138.53,51.96 L 134.86,53.51 L 131.17,55.1 L 127.45,56.71 L 123.73,58.35 L 120.0,60.0 Z" />
+                    <path class="scan-idle-path--dark"
                       d="M 120.0,60.0 L 116.27,61.65 L 112.55,63.29 L 108.83,64.9 L 105.14,66.49 L 101.47,68.04 L 97.82,69.53 L 94.21,70.97 L 90.64,72.34 L 87.12,73.64 L 83.65,74.85 L 80.23,75.97 L 76.87,76.99 L 73.58,77.91 L 70.36,78.71 L 67.22,79.4 L 64.16,79.97 L 61.19,80.42 L 58.3,80.74 L 55.51,80.94 L 52.82,81.0 L 50.24,80.94 L 47.76,80.74 L 45.39,80.42 L 43.14,79.97 L 41.01,79.4 L 39.0,78.71 L 37.11,77.91 L 35.35,76.99 L 33.73,75.97 L 32.23,74.85 L 30.87,73.64 L 29.65,72.34 L 28.57,70.97 L 27.62,69.53 L 26.83,68.04 L 26.17,66.49 L 25.66,64.9 L 25.29,63.29 L 25.07,61.65 L 25.0,60.0 L 25.07,58.35 L 25.29,56.71 L 25.66,55.1 L 26.17,53.51 L 26.83,51.96 L 27.62,50.47 L 28.57,49.03 L 29.65,47.66 L 30.87,46.36 L 32.23,45.15 L 33.73,44.03 L 35.35,43.01 L 37.11,42.09 L 39.0,41.29 L 41.01,40.6 L 43.14,40.03 L 45.39,39.58 L 47.76,39.26 L 50.24,39.06 L 52.82,39.0 L 55.51,39.06 L 58.3,39.26 L 61.19,39.58 L 64.16,40.03 L 67.22,40.6 L 70.36,41.29 L 73.58,42.09 L 76.87,43.01 L 80.23,44.03 L 83.65,45.15 L 87.12,46.36 L 90.64,47.66 L 94.21,49.03 L 97.82,50.47 L 101.47,51.96 L 105.14,53.51 L 108.83,55.1 L 112.55,56.71 L 116.27,58.35 L 120.0,60.0 L 123.73,61.65 L 127.45,63.29 L 131.17,64.9 L 134.86,66.49 L 138.53,68.04 L 142.18,69.53 L 145.79,70.97 L 149.36,72.34 L 152.88,73.64 L 156.35,74.85 L 159.77,75.97 L 163.13,76.99 L 166.42,77.91 L 169.64,78.71 L 172.78,79.4 L 175.84,79.97 L 178.81,80.42 L 181.7,80.74 L 184.49,80.94 L 187.18,81.0 L 189.76,80.94 L 192.24,80.74 L 194.61,80.42 L 196.86,79.97 L 198.99,79.4 L 201.0,78.71 L 202.89,77.91 L 204.65,76.99 L 206.27,75.97 L 207.77,74.85 L 209.13,73.64 L 210.35,72.34 L 211.43,70.97 L 212.38,69.53 L 213.17,68.04 L 213.83,66.49 L 214.34,64.9 L 214.71,63.29 L 214.93,61.65 L 215.0,60.0 L 214.93,58.35 L 214.71,56.71 L 214.34,55.1 L 213.83,53.51 L 213.17,51.96 L 212.38,50.47 L 211.43,49.03 L 210.35,47.66 L 209.13,46.36 L 207.77,45.15 L 206.27,44.03 L 204.65,43.01 L 202.89,42.09 L 201.0,41.29 L 198.99,40.6 L 196.86,40.03 L 194.61,39.58 L 192.24,39.26 L 189.76,39.06 L 187.18,39.0 L 184.49,39.06 L 181.7,39.26 L 178.81,39.58 L 175.84,40.03 L 172.78,40.6 L 169.64,41.29 L 166.42,42.09 L 163.13,43.01 L 159.77,44.03 L 156.35,45.15 L 152.88,46.36 L 149.36,47.66 L 145.79,49.03 L 142.18,50.47 L 138.53,51.96 L 134.86,53.51 L 131.17,55.1 L 127.45,56.71 L 123.73,58.35 L 120.0,60.0 Z" />
                   </svg>
                   <p class="muted small" style="margin:.6rem 0 0">Camera preview will appear here after you
