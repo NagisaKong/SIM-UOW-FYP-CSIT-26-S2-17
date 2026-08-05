@@ -23,7 +23,15 @@ from typing import Any
 import cv2
 import numpy as np
 import psycopg2
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel
 
 from core.userInformation import CurrentUser, require_role
@@ -715,8 +723,17 @@ async def teacher_preview_detect(
 def teacher_live_roster(
     session_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    # Imported here rather than at module scope: attendanceSession already
+    # imports this module for load_threshold_config, so a top-level import
+    # would close the cycle.
+    from core.attendanceSession import expire_overdue_sessions
+
+    # The dashboard the teacher is watching should settle by itself the
+    # moment the class runs past its scheduled end.
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     return _svc(request).viewRealTimeAttendanceStatus(session_id)
 
 

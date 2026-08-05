@@ -50,7 +50,9 @@
 
     .scan-layout__side .scan-cam-picker {
       max-width: none;
-      margin: 0;
+      /* Only the horizontal cap is dropped here — keep a bottom margin, or
+         the picker sits flush against the button grid below it. */
+      margin: 0 0 .85rem;
     }
 
     /* ── Idle placeholder (before the camera starts) ───────────── */
@@ -449,7 +451,11 @@
     /* We don't know the real % done for a single camera's inference (the
        backend doesn't report intra-request progress), so this animates as
        an indeterminate "still working" sweep. With several cameras, the
-       label above it additionally shows a real "camera X of N" count. */
+       label above it additionally shows a real "camera X of N" count.
+
+       The track stays in the layout at all times and only the fill is
+       toggled (via .is-scanning). Showing/hiding the whole block used to
+       push everything below it up and down on every capture cycle. */
     .scan-progress__track {
       width: 100%;
       height: 6px;
@@ -464,7 +470,23 @@
       height: 100%;
       border-radius: 999px;
       background: var(--c-primary, #2c5282);
+      opacity: 0;
+      animation: none;
+    }
+
+    .scan-progress.is-scanning .scan-progress__bar {
+      opacity: 1;
       animation: scan-progress-sweep 1.1s ease-in-out infinite;
+    }
+
+    /* Reserve the label's line box so the empty idle state doesn't collapse
+       and re-expand the block on every capture. line-height and min-height
+       are pinned to the same value on purpose: leaving line-height to the
+       cascade made the filled box 19px against a 12px reserve, which put
+       back a ~7px jump — smaller than the original one, but still there. */
+    #scan-progress-label {
+      line-height: 1.5;
+      min-height: 1.5em;
     }
 
     @keyframes scan-progress-sweep {
@@ -533,7 +555,7 @@
     <!-- U12 Live Attendance -->
     <section id="tab-live" class="panel" style="display:none">
       <h2>Real-Time Attendance</h2>
-      <div class="row row--compact">
+      <div class="row row--compact row--wide-select">
         <label>Active session
           <select id="live-session"></select>
         </label>
@@ -616,7 +638,7 @@
             </div>
             <p class="small muted" style="margin:.25rem 0 0">Tip: the boxes and the detected-students summary below refresh on this same "Auto every" cadence (there is no faster background loop). Too short an interval — especially with multiple cameras — may not leave enough time for one round to finish before the next is due.</p>
             <p id="scan-countdown" class="small muted" style="margin:.25rem 0 0"></p>
-            <div id="scan-progress" class="scan-progress" style="display:none">
+            <div id="scan-progress" class="scan-progress">
               <div class="scan-progress__track">
                 <div class="scan-progress__bar"></div>
               </div>
@@ -671,7 +693,7 @@
       <!-- list sub-page -->
       <div id="roster-list-view" class="subpage">
         <h2>Class Roster</h2>
-        <div class="row row--compact">
+        <div class="row row--compact row--wide-select">
           <label>Course
             <select id="roster-course"></select>
           </label>
@@ -746,7 +768,7 @@
         events are stored — never video frames. Figures are assistive
         indicators, not disciplinary evidence.
       </p>
-      <div class="row row--compact">
+      <div class="row row--compact row--wide-select">
         <label>Session
           <select id="beh-session"></select>
         </label>
@@ -836,24 +858,91 @@
 
     <!-- U31 Review Leave Applications -->
     <section id="tab-leave" class="panel" style="display:none">
-      <h2>Review Leave Applications</h2>
-      <div class="row row--compact">
-        <button id="leave-refresh">Refresh</button>
+      <div id="tleave-list-view">
+        <h2>Review Leave Applications</h2>
+        <p class="muted small">
+          Open an application to read the student's reason, see their attendance
+          record for that course, and view any supporting document before deciding.
+        </p>
+        <div class="row row--compact">
+          <button id="leave-refresh">Refresh</button>
+        </div>
+        <p id="tleave-msg" class="small"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Course</th>
+              <th>Session Start</th>
+              <th>Submitted</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tleave-body"></tbody>
+        </table>
       </div>
-      <p id="tleave-msg" class="small"></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Student</th>
-            <th>Course</th>
-            <th>Session Start</th>
-            <th>Reason</th>
-            <th>Document</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tleave-body"></tbody>
-      </table>
+
+      <div id="tleave-detail-view" style="display:none;max-width:720px">
+        <div class="row row--compact">
+          <button id="tleave-back" class="secondary">← Back to list</button>
+        </div>
+        <h2>Leave Application Details</h2>
+        <table>
+          <tbody>
+            <tr>
+              <th style="width:200px">Student</th>
+              <td id="tleave-student">-</td>
+            </tr>
+            <tr>
+              <th>Course / Session</th>
+              <td id="tleave-session">-</td>
+            </tr>
+            <tr>
+              <th>Submitted</th>
+              <td id="tleave-created">-</td>
+            </tr>
+            <tr>
+              <th>Status</th>
+              <td id="tleave-status">-</td>
+            </tr>
+            <tr>
+              <th>Reviewed At</th>
+              <td id="tleave-reviewed">-</td>
+            </tr>
+            <tr>
+              <th>Attendance in this course</th>
+              <td id="tleave-attendance">-</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3 style="margin-top:1rem">Reason for Leave</h3>
+        <p id="tleave-reason" class="small"
+          style="background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap;min-height:3em">
+          -</p>
+
+        <div id="tleave-doc-section" style="display:none">
+          <h3 style="margin-top:1rem">Supporting Document</h3>
+          <p id="tleave-doc-msg" class="small muted" style="margin:0 0 .5rem"></p>
+          <img id="tleave-doc-image" alt="Supporting document submitted by the student"
+            style="display:none;max-width:100%;max-height:420px;border:1px solid var(--c-border-2);border-radius:8px">
+          <a id="tleave-doc-link" target="_blank" rel="noopener" style="display:none">Open document
+            in a new tab</a>
+        </div>
+
+        <h3 style="margin-top:1rem">Reviewer Comment</h3>
+        <textarea id="tleave-comment" rows="3"
+          placeholder="Optional — shown to the student with your decision."></textarea>
+        <p id="tleave-comment-readonly" class="small"
+          style="display:none;background:var(--c-surface-2);border:1px solid var(--c-border-2);border-radius:8px;padding:.9rem;white-space:pre-wrap">
+          -</p>
+
+        <div id="tleave-actions" class="row row--compact" style="margin-top:.5rem">
+          <button id="tleave-approve">Approve</button>
+          <button id="tleave-reject" class="danger">Reject</button>
+        </div>
+        <p id="tleave-detail-msg" class="small"></p>
+      </div>
     </section>
 
     <!-- U08 Review Attendance Appeals -->
@@ -931,8 +1020,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=6"></script>
-  <script src="teacher.js?v=19"></script>
+  <script src="app.js?v=8"></script>
+  <script src="teacher.js?v=21"></script>
 </body>
 
 </html>

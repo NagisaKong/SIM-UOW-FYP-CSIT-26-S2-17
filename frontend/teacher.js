@@ -40,6 +40,7 @@ async function loadCourses() {
       sel.appendChild(o);
     }
     if (prev) sel.value = prev;
+    syncSelectTitle(sel);
   }
 }
 
@@ -138,10 +139,13 @@ async function loadLiveSessions() {
   for (const s of res.sessions || []) {
     const o = document.createElement("option");
     o.value = s.attendancesessionid;
-    o.textContent = `#${s.attendancesessionid} ${s.course_code} (${fmt(s.start_time)})`;
+    // "·" rather than parentheses: two characters saved matters here, see
+    // the note on fmtShort — this label lives inside a narrow <select>.
+    o.textContent = `#${s.attendancesessionid} ${s.course_code} · ${fmtShort(s.start_time)}`;
     sel.appendChild(o);
   }
   if (prev) sel.value = prev;
+  syncSelectTitle(sel);
   if (sel.value) refreshLive();
 }
 
@@ -156,9 +160,14 @@ async function refreshLive() {
   loadEarlyLeft(id);
   try {
     const res = await api(`/teacher/sessions/${id}/live`);
+    // A student with no attendance row yet is undecided, not absent: the
+    // final status is only assigned when the session is finalized. Showing
+    // "Absent" mid-lesson told the teacher the opposite of the truth for
+    // everyone the scan had not reached yet.
+    const finalized = (res.session || {}).status === "ended";
     tbody.innerHTML = "";
     for (const r of res.roster || []) {
-      const status = r.attendance_status || "absent";
+      const status = r.attendance_status || (finalized ? "absent" : "pending");
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${r.student_id || "-"}</td>
@@ -171,7 +180,8 @@ async function refreshLive() {
     const sm = res.summary || {};
     document.getElementById("live-summary").textContent =
       `Present ${sm.present || 0} · Late ${sm.late || 0} · Left early ${sm.early_left || 0} · ` +
-      `Absent ${sm.absent || 0} · No record ${sm.no_record || 0}`;
+      `Absent ${sm.absent || 0} · ` +
+      `${finalized ? "No record" : "Pending"} ${sm.no_record || 0}`;
   } catch (e) {
     document.getElementById("live-summary").textContent = "Error: " + e.message;
   }
@@ -576,7 +586,7 @@ async function captureSnapshot() {
   const id = currentSessionId();
   if (!scanCams.length || !id || scanBusy) return;
   scanBusy = true;
-  scanProgressEl.style.display = "";
+  scanProgressEl.classList.add("is-scanning");
   let ok = 0, fail = 0;
   const detected = new Map(); // account_id -> display name (union across cameras)
   // Sequential: the capture canvas is shared, and it avoids hammering the
@@ -604,7 +614,8 @@ async function captureSnapshot() {
       console.warn(`Scan failed for ${cam.label}:`, ex);
     }
   }
-  scanProgressEl.style.display = "none";
+  scanProgressEl.classList.remove("is-scanning");
+  scanProgressLabel.textContent = "";
   renderScanDetected(detected);
   scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
   scanMsg.textContent =
@@ -935,10 +946,11 @@ async function loadBehaviourSessions() {
   for (const s of (res.sessions || []).filter(x => x.status === "active" || x.status === "ended")) {
     const o = document.createElement("option");
     o.value = s.attendancesessionid;
-    o.textContent = `#${s.attendancesessionid} ${s.course_code} (${fmt(s.start_time)}) [${s.status}]`;
+    o.textContent = `#${s.attendancesessionid} ${s.course_code} · ${fmtShort(s.start_time)} [${s.status}]`;
     sel.appendChild(o);
   }
   if (prev) sel.value = prev;
+  syncSelectTitle(sel);
 }
 
 async function loadBehaviourData() {
@@ -1157,31 +1169,48 @@ document.getElementById("report-form").addEventListener("submit", async e => {
 // ──────────────────────────────────────────────────────────────
 // U31 Leave Applications tab
 // ──────────────────────────────────────────────────────────────
+// List shows no reason column; the teacher opens a detail view to read the
+// reason, the student's record for the course and any supporting document,
+// and decides there (mirrors the appeals UX below).
+let currentLeave = null;
+let leaveDocUrl = null;   // object URL of the document currently on screen
+
+function showLeaveView(view) {
+  document.getElementById("tleave-list-view").style.display = view === "list" ? "" : "none";
+  document.getElementById("tleave-detail-view").style.display = view === "detail" ? "" : "none";
+  if (view === "list") releaseLeaveDoc();
+}
+
+// Object URLs stay alive until explicitly revoked; without this every opened
+// application would leak its document for the life of the page.
+function releaseLeaveDoc() {
+  if (leaveDocUrl) {
+    URL.revokeObjectURL(leaveDocUrl);
+    leaveDocUrl = null;
+  }
+}
+
 async function loadTeacherLeave() {
   const body = document.getElementById("tleave-body");
   const msg = document.getElementById("tleave-msg");
   body.innerHTML = "";
   msg.textContent = "";
+  showLeaveView("list");
   try {
     const res = await api("/teacher/leave-applications");
     const apps = res.applications || [];
     if (!apps.length) {
-      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No pending leave applications.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No leave applications.")));
       return;
     }
     for (const a of apps) {
-      const doc = a.supporting_doc_url
-        ? el("a", {href: a.supporting_doc_url, target: "_blank"}, "View")
-        : "—";
-      const approveBtn = el("button", {onclick: () => reviewLeave(a.leaveapplicationid, "approved")}, "Approve");
-      const rejectBtn = el("button", {class: "danger", onclick: () => reviewLeave(a.leaveapplicationid, "rejected")}, "Reject");
       body.append(el("tr", {},
         el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
         el("td", {}, `${a.course_code} — ${a.course_name}`),
         el("td", {}, fmt(a.start_time)),
-        el("td", {}, a.reason),
-        el("td", {}, doc),
-        el("td", {}, approveBtn, rejectBtn),
+        el("td", {}, fmt(a.created_at)),
+        el("td", {}, el("span", {class: "badge"}, a.status)),
+        el("td", {}, el("button", {onclick: () => openTeacherLeave(a)}, "View")),
       ));
     }
   } catch (e) {
@@ -1190,18 +1219,101 @@ async function loadTeacherLeave() {
   }
 }
 
-async function reviewLeave(leaveId, decision) {
-  const comment = prompt(`Optional comment for this ${decision} decision:`, "") || null;
-  const msg = document.getElementById("tleave-msg");
+// "3 of 5 sessions (60%)" — the denominator counts only sessions that have
+// actually ended, so an in-progress class never drags the rate down.
+function formatAttendance(a) {
+  const done = a.sessions_completed || 0;
+  if (!done) return "No completed sessions yet";
+  const attended = a.attended || 0;
+  return `${attended} of ${done} sessions (${Math.round(attended / done * 100)}%)`;
+}
+
+async function openTeacherLeave(a) {
+  currentLeave = a;
+  const pending = a.status === "pending";
+  document.getElementById("tleave-student").textContent =
+    `${a.full_name || "-"} (${a.student_id || a.accountid})`;
+  document.getElementById("tleave-session").textContent =
+    `${a.course_code} — ${a.course_name} · ${fmt(a.start_time)}`;
+  document.getElementById("tleave-created").textContent = fmt(a.created_at);
+  document.getElementById("tleave-status").textContent = a.status;
+  document.getElementById("tleave-reviewed").textContent =
+    a.reviewed_at ? fmt(a.reviewed_at) : "Not reviewed yet";
+  document.getElementById("tleave-attendance").textContent = formatAttendance(a);
+  document.getElementById("tleave-reason").textContent = a.reason || "-";
+
+  // Pending: write a comment. Already decided: show what was written.
+  const box = document.getElementById("tleave-comment");
+  const readonly = document.getElementById("tleave-comment-readonly");
+  box.style.display = pending ? "" : "none";
+  box.value = "";
+  readonly.style.display = pending ? "none" : "";
+  readonly.textContent = a.reviewer_comment || "No comment was left.";
+  document.getElementById("tleave-actions").style.display = pending ? "" : "none";
+  document.getElementById("tleave-detail-msg").textContent = "";
+
+  showLeaveView("detail");
+  await showLeaveDocument(a);
+}
+
+async function showLeaveDocument(a) {
+  releaseLeaveDoc();
+  const section = document.getElementById("tleave-doc-section");
+  const img = document.getElementById("tleave-doc-image");
+  const link = document.getElementById("tleave-doc-link");
+  const msg = document.getElementById("tleave-doc-msg");
+  img.style.display = "none";
+  link.style.display = "none";
+  img.removeAttribute("src");
+  if (!a.has_document) {
+    section.style.display = "none";
+    return;
+  }
+  section.style.display = "";
+  msg.style.color = "";
+  msg.textContent = "Loading document…";
   try {
-    await api(`/teacher/leave-applications/${leaveId}`, {
+    // The endpoint needs the bearer token, so the bytes cannot simply be
+    // pointed at from an <img src>; fetch them and hand over an object URL
+    // (same approach as the CSV report export above).
+    const res = await fetch(API_BASE + `/leave-applications/${a.leaveapplicationid}/document`, {
+      headers: authHeader(),
+    });
+    if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`);
+    const blob = await res.blob();
+    leaveDocUrl = URL.createObjectURL(blob);
+    const name = a.supporting_doc_name || "document";
+    if ((a.supporting_doc_type || blob.type || "").startsWith("image/")) {
+      img.src = leaveDocUrl;
+      img.style.display = "";
+      msg.textContent = name;
+    } else {
+      link.href = leaveDocUrl;
+      link.textContent = `Open ${name} in a new tab`;
+      link.style.display = "";
+      msg.textContent = "";
+    }
+  } catch (ex) {
+    msg.style.color = "#c0392b";
+    msg.textContent = "Could not load the document: " + ex.message;
+  }
+}
+
+async function reviewLeave(decision) {
+  if (!currentLeave) return;
+  const msg = document.getElementById("tleave-detail-msg");
+  const comment = document.getElementById("tleave-comment").value.trim() || null;
+  try {
+    await api(`/teacher/leave-applications/${currentLeave.leaveapplicationid}`, {
       method: "PATCH",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({decision, comment}),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = `Application ${decision}.`;
-    loadTeacherLeave();
+    showLeaveView("list");
+    await loadTeacherLeave();
+    const listMsg = document.getElementById("tleave-msg");
+    listMsg.style.color = "#16a34a";
+    listMsg.textContent = `Application ${decision}.`;
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -1209,6 +1321,9 @@ async function reviewLeave(leaveId, decision) {
 }
 
 document.getElementById("leave-refresh").addEventListener("click", loadTeacherLeave);
+document.getElementById("tleave-back").addEventListener("click", () => showLeaveView("list"));
+document.getElementById("tleave-approve").addEventListener("click", () => reviewLeave("approved"));
+document.getElementById("tleave-reject").addEventListener("click", () => reviewLeave("rejected"));
 
 // ──────────────────────────────────────────────────────────────
 // U08 Attendance Appeals tab (teacher review)

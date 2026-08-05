@@ -576,6 +576,29 @@ main {
   max-width: 480px;
 }
 
+/* Session / course pickers. Their <option> labels carry an id, a course code
+   and a timestamp, which the 220px compact column clipped mid-time — the
+   teacher could not tell two sittings of the same course apart. Applied on
+   top of .row--compact, so the rest of that row's styling still holds.
+
+   340px is measured, not guessed: the longest label in use is the behaviour
+   tab's "#142 CSIT226 (8/3/2026, 1:30 PM) [active]" at ~312px, and a select
+   spends roughly another 28px on its dropdown arrow and padding.
+
+   Plain px on purpose — minmax(min(100%, 340px), …) inside repeat(auto-fit)
+   collapses the track to ~24px, because the percentage has no resolvable
+   basis at track-sizing time. Narrow viewports are handled below instead. */
+.row--wide-select {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 420px));
+  max-width: none;
+}
+
+@media (max-width: 420px) {
+  .row--wide-select {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Stacked single-column form (one field per row, typical sign-up layout) */
 .form-stacked {
   grid-template-columns: 1fr;
@@ -759,7 +782,8 @@ td button:disabled {
 .status-absent,
 .status-late,
 .status-early_left,
-.status-leave {
+.status-leave,
+.status-pending {
   display: inline-block;
   padding: 2px 9px;
   border-radius: 999px;
@@ -791,6 +815,13 @@ td button:disabled {
 .status-leave {
   color: var(--c-primary);
   background: var(--c-primary-soft);
+}
+
+/* Undecided: the session is still running and this student has no record
+   yet. Deliberately neutral — it must not read as a verdict either way. */
+.status-pending {
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
 }
 
 .badge {

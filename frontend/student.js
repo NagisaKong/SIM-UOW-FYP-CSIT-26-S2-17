@@ -371,10 +371,11 @@ async function loadAppealableSessions(selectedRecordId) {
     for (const r of records) {
       const o = document.createElement("option");
       o.value = r.record_id;
-      o.textContent = `${r.course_code} — ${fmt(r.start_time)} (${r.status})`;
+      o.textContent = `${r.course_code} — ${fmtShort(r.start_time)} (${r.status})`;
       sel.appendChild(o);
     }
     if (selectedRecordId != null) sel.value = String(selectedRecordId);
+    syncSelectTitle(sel);
   } catch (e) {
     sel.innerHTML = `<option value="">${e.message}</option>`;
     sel.disabled = true;
@@ -453,6 +454,7 @@ function fillAnalyticsCourses(records) {
     sel.appendChild(o);
   }
   if (prev && seen.has(Number(prev))) sel.value = prev;
+  syncSelectTitle(sel);
 }
 
 async function loadStudentAnalytics() {
@@ -555,9 +557,10 @@ async function loadLeave() {
     for (const s of sessions) {
       const o = document.createElement("option");
       o.value = s.session_id;
-      o.textContent = `#${s.session_id} ${s.course_code} — ${fmt(s.start_time)}`;
+      o.textContent = `#${s.session_id} ${s.course_code} · ${fmtShort(s.start_time)}`;
       sel.appendChild(o);
     }
+    syncSelectTitle(sel);
   } catch { /* leave dropdown empty */ }
   loadMyLeave();
 }
@@ -568,7 +571,7 @@ async function loadMyLeave() {
   try {
     const res = await api("/student/leave-applications");
     if (!res.applications.length) {
-      body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No leave applications.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No leave applications.")));
       return;
     }
     for (const a of res.applications) {
@@ -576,12 +579,13 @@ async function loadMyLeave() {
         el("td", {}, `${a.course_code} — ${a.course_name}`),
         el("td", {}, fmt(a.start_time)),
         el("td", {}, a.reason),
+        el("td", {}, a.has_document ? (a.supporting_doc_name || "Attached") : "—"),
         el("td", {}, el("span", {class: "badge"}, a.status)),
         el("td", {}, a.reviewer_comment || "—"),
       ));
     }
   } catch (e) {
-    body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "error"}, e.message)));
   }
 }
 
@@ -590,19 +594,40 @@ document.getElementById("leave-form").addEventListener("submit", async (e) => {
   const msg = document.getElementById("leave-msg");
   msg.textContent = "";
   const fd = new FormData(e.target);
-  const doc = fd.get("supporting_doc_url");
+  const doc = fd.get("supporting_doc");
   try {
-    await api("/student/leave-applications", {
+    // The application itself is created first, on its own. The attachment is
+    // a separate call so that a rejected or oversized file costs the student
+    // the upload only — never the application they just wrote.
+    const created = await api("/student/leave-applications", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         session_id: Number(fd.get("session_id")),
         reason: fd.get("reason"),
-        supporting_doc_url: doc ? doc : null,
       }),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = "Leave application submitted.";
+    let uploadError = null;
+    if (doc && doc.size) {
+      const upload = new FormData();
+      upload.append("file", doc);
+      try {
+        await api(`/student/leave-applications/${created.leave_application_id}/document`, {
+          method: "POST",
+          body: upload,
+        });
+      } catch (ex) {
+        uploadError = ex.message;
+      }
+    }
+    if (uploadError) {
+      msg.style.color = "#b45309";
+      msg.textContent =
+        `Leave application submitted, but the document was not attached: ${uploadError}`;
+    } else {
+      msg.style.color = "#16a34a";
+      msg.textContent = "Leave application submitted.";
+    }
     e.target.reset();
     loadMyLeave();
     showLeaveView("list");

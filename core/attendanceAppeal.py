@@ -17,11 +17,20 @@ import contextlib
 from typing import Any
 
 import psycopg2
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel
 
 from core.notification import send_review_outcome_email
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import CurrentUser, get_current_user, require_role
 
 
 @contextlib.contextmanager
@@ -205,12 +214,99 @@ class AttendanceAppeal:
             leave_id = cur.fetchone()[0]
         return {"success": True, "leave_application_id": leave_id}
 
+    # ── U28 supporting evidence (upload / fetch) ────────────────────
+    # Kept small and explicit rather than general-purpose: this is the only
+    # user-uploaded file the system stores, and the limits are what make
+    # storing it in the database acceptable.
+    ALLOWED_DOC_TYPES = {
+        "image/png", "image/jpeg", "image/webp", "application/pdf",
+    }
+    MAX_DOC_BYTES = 5 * 1024 * 1024
+
+    def attachSupportingDocument(
+        self, applicant: int, leave_id: int,
+        filename: str | None, content_type: str | None, data: bytes,
+    ) -> dict[str, Any]:
+        if content_type not in self.ALLOWED_DOC_TYPES:
+            raise HTTPException(
+                400,
+                "Supporting document must be a PNG, JPEG, WebP or PDF file "
+                f"(received {content_type or 'an unknown type'})",
+            )
+        if not data:
+            raise HTTPException(400, "The uploaded file is empty")
+        if len(data) > self.MAX_DOC_BYTES:
+            raise HTTPException(
+                400,
+                f"Supporting document must be {self.MAX_DOC_BYTES // (1024 * 1024)} MB "
+                f"or smaller (received {len(data) / (1024 * 1024):.1f} MB)",
+            )
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(
+                "SELECT accountid, status FROM leave_application WHERE leaveapplicationid = %s",
+                (leave_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Leave application not found")
+            owner, status = row
+            if owner != applicant:
+                raise HTTPException(403, "This is not your leave application")
+            # Once a decision is made the evidence it was based on is fixed.
+            if status != "pending":
+                raise HTTPException(
+                    409, "This application has already been reviewed",
+                )
+            cur.execute(
+                """UPDATE leave_application
+                      SET supporting_doc = %s, supporting_doc_name = %s,
+                          supporting_doc_type = %s, updated_at = NOW()
+                    WHERE leaveapplicationid = %s""",
+                (psycopg2.Binary(data), filename, content_type, leave_id),
+            )
+        return {
+            "success": True, "leave_application_id": leave_id,
+            "filename": filename, "content_type": content_type,
+            "bytes": len(data),
+        }
+
+    def getSupportingDocument(
+        self, viewer: int, role: str, leave_id: int,
+    ) -> tuple[bytes, str, str]:
+        """Return (data, content_type, filename) if the viewer may see it.
+
+        Visible to the student who submitted it, to any teacher (they are the
+        review authority for leave, per U31) and to admins for oversight.
+        """
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT accountid, supporting_doc,
+                          supporting_doc_type, supporting_doc_name
+                     FROM leave_application WHERE leaveapplicationid = %s""",
+                (leave_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Leave application not found")
+        owner, data, content_type, filename = row
+        if role == "student" and owner != viewer:
+            raise HTTPException(403, "This is not your leave application")
+        if data is None:
+            raise HTTPException(404, "No supporting document was attached")
+        return (
+            bytes(data),
+            content_type or "application/octet-stream",
+            filename or f"leave_{leave_id}",
+        )
+
     def listMyLeaveApplications(self, applicant: int) -> dict[str, Any]:
         sql = """
             SELECT la.leaveapplicationid, la.attendancesessionid,
                    c.course_code, c.course_name, s.start_time,
                    la.reason, la.status, la.created_at, la.reviewed_at,
-                   la.reviewer_comment
+                   la.reviewer_comment,
+                   (la.supporting_doc IS NOT NULL) AS has_document,
+                   la.supporting_doc_name
             FROM leave_application la
             JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
@@ -276,17 +372,45 @@ class AttendanceAppeal:
             send_review_outcome_email(payload)
         return {"success": True}
 
-    def listPendingLeaveApplications(self) -> dict[str, Any]:
+    def listLeaveApplicationsForReview(self) -> dict[str, Any]:
+        """Every leave application, newest first — not just the pending ones.
+
+        Mirrors the appeals list: the teacher opens one to read it in full and
+        decide, and can still go back to an already-reviewed application to
+        see what was decided and why (reviewer_comment only exists on those).
+
+        `attended` / `sessions_completed` give the student's track record in
+        that same course, so the decision has some context. The ratio counts
+        only ENDED sessions, matching teacher_course_roster — an in-progress
+        session's provisional 'present' must not inflate the numerator.
+        The supporting document is deliberately NOT selected here: it is a
+        BYTEA and would bloat every row of the list. Only its presence and
+        metadata travel with the list; the bytes have their own endpoint.
+        """
         sql = """
             SELECT la.leaveapplicationid, la.accountid,
                    pi.full_name, pi.student_id,
-                   c.course_code, c.course_name, s.start_time,
-                   la.reason, la.supporting_doc_url, la.status, la.created_at
+                   s.courseid, c.course_code, c.course_name, s.start_time,
+                   la.reason, la.status, la.created_at,
+                   la.reviewed_at, la.reviewer_comment,
+                   (la.supporting_doc IS NOT NULL) AS has_document,
+                   la.supporting_doc_name, la.supporting_doc_type,
+                   (SELECT COUNT(*)
+                      FROM attendance_record r2
+                      JOIN attendance_session s2
+                        ON s2.attendancesessionid = r2.attendancesessionid
+                     WHERE r2.accountid = la.accountid
+                       AND s2.courseid = s.courseid
+                       AND s2.status = 'ended'
+                       AND r2.status IN ('present', 'late')) AS attended,
+                   (SELECT COUNT(*)
+                      FROM attendance_session s3
+                     WHERE s3.courseid = s.courseid
+                       AND s3.status = 'ended')              AS sessions_completed
             FROM leave_application la
             JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             LEFT JOIN personal_info pi ON pi.accountid = la.accountid
-            WHERE la.status = 'pending'
             ORDER BY la.created_at DESC
         """
         with _db(self.database_url) as c, c.cursor() as cur:
@@ -375,12 +499,44 @@ def teacher_review_appeal(
     )
 
 
+# U28 supporting evidence. Deliberately a second step rather than part of the
+# create call: the attachment is optional, and keeping POST
+# /student/leave-applications a plain JSON endpoint means an application is
+# never lost because its attachment failed to upload.
+@router.post("/student/leave-applications/{leave_id}/document")
+async def student_attach_leave_document(
+    leave_id: int, request: Request,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_role("student")),
+):
+    data = await file.read()
+    return _svc(request).attachSupportingDocument(
+        user.account_id, leave_id, file.filename, file.content_type, data,
+    )
+
+
+@router.get("/leave-applications/{leave_id}/document")
+def get_leave_document(
+    leave_id: int, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+):
+    data, content_type, filename = _svc(request).getSupportingDocument(
+        user.account_id, user.role, leave_id,
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        # inline: the teacher reviews it in the page, not in a download folder.
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 # Teacher: U31
 @router.get("/teacher/leave-applications")
 def teacher_list_leave(
     request: Request, user: CurrentUser = Depends(require_role("teacher"))
 ):
-    return _svc(request).listPendingLeaveApplications()
+    return _svc(request).listLeaveApplicationsForReview()
 
 
 @router.patch("/teacher/leave-applications/{leave_id}")

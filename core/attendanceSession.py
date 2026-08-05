@@ -69,6 +69,82 @@ def purge_expired_recordings(database_url: str) -> dict[str, int]:
     return {"recordings_deleted": deleted_rows, "files_removed": removed_files}
 
 
+# Overdue-session sweep. Read endpoints call this, so it runs on the teacher's
+# 5-second dashboard poll as well; the throttle keeps that from turning into a
+# query storm without needing a scheduler process.
+_EXPIRY_SWEEP_INTERVAL_SECONDS = 60.0
+_last_expiry_sweep = 0.0
+
+
+def expire_overdue_sessions(
+    database_url: str,
+    background_tasks: BackgroundTasks | None = None,
+    force: bool = False,
+) -> dict[str, int]:
+    """Close out sessions whose scheduled end_time has passed.
+
+    A session used to stay `active` forever if the teacher never pressed
+    "End Scan & Finalize" — it kept showing up as selectable long after the
+    class was over, and no student ever got a final status for it.
+
+    Two cases, deliberately handled differently:
+
+    * `active`   — the scan did run, so finalise it exactly as the teacher
+      would have: aggregate the presence_check snapshots into per-student
+      statuses and send the U05 notifications.
+    * `scheduled` — the scan never started, so there is no attendance
+      evidence at all. Marking the whole class absent for a lesson nobody
+      recorded would both misrepresent the students and trip the U29
+      long-term-absence reminders, so the session is cancelled instead.
+
+    Best-effort: one failing session must not stop the others, and the sweep
+    must never take down the request that triggered it.
+    """
+    import time
+
+    global _last_expiry_sweep
+
+    now = time.time()
+    if not force and now - _last_expiry_sweep < _EXPIRY_SWEEP_INTERVAL_SECONDS:
+        return {"finalized": 0, "cancelled": 0, "skipped": 0}
+    _last_expiry_sweep = now
+
+    finalized = cancelled = skipped = 0
+    try:
+        with _db(database_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT attendancesessionid, status
+                   FROM attendance_session
+                   WHERE status IN ('scheduled', 'active')
+                     AND end_time IS NOT NULL
+                     AND end_time < NOW()"""
+            )
+            overdue = cur.fetchall()
+    except (psycopg2.errors.UndefinedTable, psycopg2.OperationalError):
+        return {"finalized": 0, "cancelled": 0, "skipped": 0}
+
+    svc = AttendanceSession(database_url)
+    for session_id, status in overdue:
+        try:
+            if status == "active":
+                svc.endSession(session_id, background_tasks)
+                finalized += 1
+            else:
+                with _db(database_url) as c, c.cursor() as cur:
+                    cur.execute(
+                        """UPDATE attendance_session SET status = 'cancelled'
+                           WHERE attendancesessionid = %s AND status = 'scheduled'""",
+                        (session_id,),
+                    )
+                cancelled += 1
+        except Exception as exc:  # noqa: BLE001 — never break the caller
+            skipped += 1
+            print(f"[expiry] session {session_id} ({status}) not closed: {exc}")
+    if finalized or cancelled:
+        print(f"[expiry] finalized {finalized}, cancelled {cancelled} overdue session(s)")
+    return {"finalized": finalized, "cancelled": cancelled, "skipped": skipped}
+
+
 class AttendanceSession:
     """Session entity (start/end + view detail + course scheduling)."""
 
@@ -100,17 +176,27 @@ class AttendanceSession:
     def startSession(self, session_id: int) -> dict[str, Any]:
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+                """SELECT courseid, status, end_time IS NOT NULL AND end_time < NOW()
+                   FROM attendance_session WHERE attendancesessionid = %s""",
                 (session_id,),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Session not found")
-            course_id, current_status = row
+            course_id, current_status, overdue = row
             if current_status == "active":
                 raise HTTPException(409, "This session is already in progress")
             if current_status == "ended":
                 raise HTTPException(409, "This session has ended and cannot be started again")
+            if current_status == "cancelled":
+                raise HTTPException(409, "This session has been cancelled")
+            # Closes the gap between the expiry sweep and this click: without
+            # it, a session that went overdue seconds ago could still be
+            # started and would then be cancelled out from under the teacher.
+            if overdue:
+                raise HTTPException(
+                    409, "This session's scheduled end time has already passed",
+                )
             cur.execute(
                 """SELECT 1 FROM attendance_session
                    WHERE courseid = %s AND status = 'active'
@@ -360,10 +446,14 @@ def teacher_list_courses(
 @router.get("/teacher/sessions")
 def teacher_list_sessions(
     request: Request,
+    background_tasks: BackgroundTasks,
     course_id: int | None = None,
     status: str | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    # This feeds the teacher's "Active session" picker, so it is the place
+    # where an overdue session must not still be on offer.
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     clauses, params = [], []
     if course_id is not None:
         clauses.append("s.courseid = %s")
@@ -609,9 +699,11 @@ def admin_delete_enrollment(
 
 @router.get("/admin/sessions")
 def admin_list_sessions(
-    request: Request, course_id: int | None = None,
+    request: Request, background_tasks: BackgroundTasks,
+    course_id: int | None = None,
     user: CurrentUser = Depends(require_role("admin")),
 ):
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     sql = """
         SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
                s.start_time, s.end_time, s.status
@@ -672,8 +764,26 @@ def admin_update_session(
         params.append(body.status)
     if not fields:
         raise HTTPException(400, "No fields to update")
-    params.append(session_id)
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
+        # 'ended' and 'cancelled' are terminal. Reopening one would put a
+        # sitting whose attendance is already finalised back in progress, and
+        # the expiry sweep would immediately finalise it a second time.
+        if body.status is not None:
+            cur.execute(
+                "SELECT status FROM attendance_session WHERE attendancesessionid = %s",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Session not found")
+            current = row[0]
+            if current in ("ended", "cancelled") and body.status != current:
+                raise HTTPException(
+                    409,
+                    f"This session is {current} and cannot be reopened; "
+                    "schedule a new session instead",
+                )
+        params.append(session_id)
         cur.execute(
             f"UPDATE attendance_session SET {', '.join(fields)} WHERE attendancesessionid = %s",
             params,

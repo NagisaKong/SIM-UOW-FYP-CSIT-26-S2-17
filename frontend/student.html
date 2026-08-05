@@ -319,7 +319,7 @@
 
     <section id="tab-analytics" class="panel" style="display:none">
       <h2>Attendance Analytics</h2>
-      <div class="row row--compact">
+      <div class="row row--compact row--wide-select">
         <label>Module
           <select id="sana-course">
             <option value="">All modules</option>
@@ -389,6 +389,7 @@
               <th>Session</th>
               <th>Start</th>
               <th>Reason</th>
+              <th>Document</th>
               <th>Status</th>
               <th>Reviewer Comment</th>
             </tr>
@@ -408,8 +409,11 @@
             <select name="session_id" id="leave-session" required></select>
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
-          <label>Supporting document URL (optional)
-            <input type="url" name="supporting_doc_url" placeholder="https://...">
+          <label>Supporting document (optional)
+            <input type="file" name="supporting_doc"
+              accept="image/png,image/jpeg,image/webp,application/pdf">
+            <span class="muted small">A photo or PDF of your medical certificate or
+              other evidence — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
           </label>
           <button type="submit">Submit Application</button>
         </form>
@@ -458,8 +462,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=6"></script>
-  <script src="student.js?v=3"></script>
+  <script src="app.js?v=8"></script>
+  <script src="student.js?v=5"></script>
 </body>
 
 </html>

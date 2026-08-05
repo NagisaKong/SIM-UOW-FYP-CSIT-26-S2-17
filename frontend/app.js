@@ -94,6 +94,39 @@ function fmt(ts) {
   return new Date(ts).toLocaleString("en-US");
 }
 
+// Compact form for <option> labels: no seconds, two-digit year.
+// A <select> shows its selected label inside a fixed-width control, and on a
+// narrow window that box can fall below 300px — at which point the full
+// fmt() string ("8/3/2026, 1:30:00 PM") gets cut off mid-time and two
+// sittings of the same course become indistinguishable. Every character
+// counts there, so this trims the ~5 that make the difference.
+// Tables and reports keep using fmt(): they have the room, and the seconds
+// are occasionally useful.
+function fmtShort(ts) {
+  if (!ts) return "-";
+  return new Date(ts).toLocaleString("en-US", {
+    year: "2-digit", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
+// Mirror the selected option's text into the control's tooltip, and keep it
+// in sync. Shortening the labels buys enough room down to roughly a 330px
+// window; below that a <select> still truncates its closed state and there
+// is no CSS for it, so hovering has to be able to reveal the rest.
+function syncSelectTitle(sel) {
+  if (!sel) return;
+  const apply = () => {
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    sel.title = opt ? opt.textContent : "";
+  };
+  apply();
+  if (!sel.dataset.titleSynced) {
+    sel.addEventListener("change", apply);
+    sel.dataset.titleSynced = "1";
+  }
+}
+
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

@@ -603,7 +603,10 @@ async function loadSessions() {
       el("td", {}, s.end_time ? fmt(s.end_time) : "-"),
       el("td", {}, s.status),
       el("td", {},
-        s.status !== "active" ? el("button", {
+        // Only a session that has not run yet can be started. "ended" and
+        // "cancelled" are terminal: re-activating one would reopen a sitting
+        // whose attendance has already been finalised.
+        s.status === "scheduled" ? el("button", {
           style: "min-width:64px",
           onclick: () => updateSession(s.attendancesessionid, {status: "active"}),
         }, "Start") : null,

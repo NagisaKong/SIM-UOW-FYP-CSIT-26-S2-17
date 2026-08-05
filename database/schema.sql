@@ -246,6 +246,17 @@ CREATE TABLE IF NOT EXISTS LEAVE_APPLICATION (
         OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 
+-- Supporting evidence is now uploaded, not linked. supporting_doc_url is kept
+-- for rows created before the change; new submissions fill these three.
+-- Stored in the database rather than on disk on purpose: the application
+-- server's filesystem is ephemeral on the cloud host, and keeping the bytes
+-- here means the evidence lives in the same Singapore-region instance as the
+-- rest of the personal data, with no third-party processor involved.
+ALTER TABLE LEAVE_APPLICATION
+    ADD COLUMN IF NOT EXISTS supporting_doc      BYTEA,
+    ADD COLUMN IF NOT EXISTS supporting_doc_name TEXT,
+    ADD COLUMN IF NOT EXISTS supporting_doc_type TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_leave_session  ON LEAVE_APPLICATION(AttendanceSessionID);
 CREATE INDEX IF NOT EXISTS idx_leave_account  ON LEAVE_APPLICATION(AccountID);
 CREATE INDEX IF NOT EXISTS idx_leave_status   ON LEAVE_APPLICATION(status);
