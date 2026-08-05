@@ -158,16 +158,25 @@ async function renderSupportingDocument({url, hasDocument, name, type, ids}) {
     const blob = await res.blob();
     const objectUrl = URL.createObjectURL(blob);
     const label = name || "document";
-    if ((type || blob.type || "").startsWith("image/")) {
+    const isImage = (type || blob.type || "").startsWith("image/");
+    // Images additionally get an inline preview, but the link is shown for
+    // every type: a preview alone left the reviewer with no way to open the
+    // evidence full-size or keep a copy for the record.
+    if (isImage) {
       img.src = objectUrl;
       img.style.display = "";
-      msg.textContent = label;
+      // An image is already on screen, so the link's job is to save a copy.
+      link.download = label;
+      link.textContent = `Download ${label}`;
     } else {
-      link.href = objectUrl;
+      // A PDF cannot be previewed here, so the link opens it for reading
+      // instead — forcing a download would be the wrong default.
+      link.removeAttribute("download");
       link.textContent = `Open ${label} in a new tab`;
-      link.style.display = "";
-      msg.textContent = "";
     }
+    link.href = objectUrl;
+    link.style.display = "";
+    msg.textContent = isImage ? label : "";
     return objectUrl;
   } catch (ex) {
     msg.style.color = "#c0392b";

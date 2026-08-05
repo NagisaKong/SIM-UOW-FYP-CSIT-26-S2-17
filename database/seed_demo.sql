@@ -47,24 +47,28 @@
 --   psql -v demo_password_hash="$HASH" -f database/seed_demo.sql
 -- ============================================================
 
--- Fail loudly if the password hash variable was not provided.
-\if :{?demo_password_hash}
-\else
-  \echo '>>> ERROR: psql variable `demo_password_hash` is not set.'
-  \echo '>>> Generate an Argon2id hash and re-run with:'
-  \echo '>>>   psql -v demo_password_hash="<argon2id-hash>" -f database/seed_demo.sql'
-  \quit
-\endif
-
--- Stash the injected hash in a session GUC so the DO block can read it
--- (psql does not interpolate :variables inside dollar-quoted blocks).
-SELECT set_config('app.demo_password_hash', :'demo_password_hash', false);
+-- Accounts (and their per-account Argon2id password hashes) arrive in the
+-- temporary table `seed_account`, which scripts/seed_demo.py fills on the
+-- SAME connection immediately before running this file. Argon2 cannot be
+-- computed in SQL, and every account now has its OWN password (a student's
+-- password is their student ID), so a single injected hash no longer works.
+--
+--   Run it with:  python scripts/seed_demo.py --yes
+--
+-- Fail loudly rather than silently seeding nothing if this file is applied
+-- straight through psql without that staging table.
+DO $guard$
+BEGIN
+    IF to_regclass('pg_temp.seed_account') IS NULL THEN
+        RAISE EXCEPTION
+            'seed_account staging table not found — run this seed via '
+            '`python scripts/seed_demo.py --yes`, not psql -f';
+    END IF;
+END
+$guard$;
 
 DO $seed$
 DECLARE
-    -- Argon2id password hash for all demo accounts, injected at apply time.
-    v_pwd  TEXT := current_setting('app.demo_password_hash');
-
     p_student INT;
     p_teacher INT;
     p_admin   INT;
@@ -140,41 +144,50 @@ BEGIN
     -- ========================================================
     -- 1. Accounts  (active + inactive — U20)
     -- ========================================================
+    -- Every account comes from the staging table in one statement, ordered by
+    -- its `sort_key` so the accounts the demo talks about get the low, tidy
+    -- IDs. seed_account.demo_key is the stable handle the rest of this script
+    -- uses — it never has to know anyone's email address.
     INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_admin, 'admin@demo.local', v_pwd, 'active')   RETURNING accountid INTO a_admin;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_teacher, 'tara@demo.local', v_pwd, 'active')  RETURNING accountid INTO a_tara;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_teacher, 'tom@demo.local', v_pwd, 'active')   RETURNING accountid INTO a_tom;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_teacher, 'ian@demo.local', v_pwd, 'inactive') RETURNING accountid INTO a_ian;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'zyu010@mymail.sim.edu.sg', v_pwd, 'active') RETURNING accountid INTO a_alice;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'jzhang092@mymail.sim.edu.sg', v_pwd, 'active') RETURNING accountid INTO a_bob;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'carol@demo.local', v_pwd, 'active') RETURNING accountid INTO a_carol;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'david@demo.local', v_pwd, 'active') RETURNING accountid INTO a_david;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'eve@demo.local', v_pwd, 'active')   RETURNING accountid INTO a_eve;
-    INSERT INTO user_account (profileid, email, password_hash, status)
-        VALUES (p_student, 'frank@demo.local', v_pwd, 'inactive') RETURNING accountid INTO a_frank;
+    SELECT CASE sa.role WHEN 'admin'   THEN p_admin
+                        WHEN 'teacher' THEN p_teacher
+                        ELSE p_student END,
+           sa.email, sa.password_hash, sa.status
+    FROM seed_account sa
+    ORDER BY sa.sort_key;
 
     -- ========================================================
     -- 2. Personal info
     -- ========================================================
-    INSERT INTO personal_info (accountid, full_name, student_id, staff_id) VALUES
-        (a_admin, 'Demo Admin', NULL,     'A00001'),
-        (a_tara,  'Tara Wong',  NULL,     'T00001'),
-        (a_tom,   'Tom Chen',   NULL,     'T00002'),
-        (a_ian,   'Ian Lee',    NULL,     'T00003'),
-        (a_alice, 'yu zhanghao',  'S00001', NULL),
-        (a_bob,   'zhang jiqian', 'S00002', NULL),
-        (a_carol, 'Carol Ng',   'S00003', NULL),
-        (a_david, 'David Koh',  'S00004', NULL),
-        (a_eve,   'Eve Sim',    'S00005', NULL),
-        (a_frank, 'Frank Ong',  'S00006', NULL);
+    INSERT INTO personal_info (accountid, full_name, student_id, staff_id)
+    SELECT ua.accountid, sa.full_name, sa.student_id, sa.staff_id
+    FROM seed_account sa
+    JOIN user_account ua ON ua.email = sa.email
+    ORDER BY sa.sort_key;
+
+    -- Handles for the accounts the scripted demo scenario below refers to.
+    -- The five real team members occupy the five richest roles so that every
+    -- screen shows their own data during the presentation.
+    SELECT ua.accountid INTO a_admin FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'admin';
+    SELECT ua.accountid INTO a_tara  FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'teacher_tara';
+    SELECT ua.accountid INTO a_tom   FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'teacher_tom';
+    SELECT ua.accountid INTO a_ian   FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'teacher_ian';
+    SELECT ua.accountid INTO a_alice FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'team_zhanghao';
+    SELECT ua.accountid INTO a_bob   FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'team_jiqian';
+    SELECT ua.accountid INTO a_carol FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'team_chengwei';
+    SELECT ua.accountid INTO a_david FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'team_dominic';
+    SELECT ua.accountid INTO a_eve   FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'team_shiyin';
+    SELECT ua.accountid INTO a_frank FROM user_account ua
+        JOIN seed_account sa ON sa.email = ua.email WHERE sa.demo_key = 'cohort_inactive';
 
     -- ========================================================
     -- 3. Courses  (active/inactive, assigned/unassigned teacher — U26)
@@ -400,6 +413,53 @@ BEGIN
     -- ========================================================
     INSERT INTO session_recording (attendancesessionid, file_path)
         VALUES (s226_active, 'recordings/session_' || s226_active || '.mp4');
+
+    -- ========================================================
+    -- 16. The wider cohort — everyone not hand-placed above
+    -- ========================================================
+    -- The scenario above is deliberately small so each row means something.
+    -- This block gives the system a realistic population on top of it, so the
+    -- roster paginates, the analytics charts have a distribution instead of
+    -- four points, and a classroom scan has a believable class size.
+    --
+    -- Enrolment and attendance are derived from each account's own id, so the
+    -- result is deterministic — re-seeding produces the identical database,
+    -- which is what makes screenshots and test expectations reproducible.
+    INSERT INTO course_enrollment (courseid, accountid, status)
+    SELECT c226, ua.accountid,
+           CASE WHEN ua.accountid % 23 = 0 THEN 'withdrawn' ELSE 'active' END
+    FROM user_account ua
+    JOIN seed_account sa ON sa.email = ua.email
+    WHERE sa.demo_key LIKE 'cohort_%' AND ua.accountid % 2 = 0;
+
+    INSERT INTO course_enrollment (courseid, accountid, status)
+    SELECT c321, ua.accountid,
+           CASE WHEN ua.accountid % 31 = 0 THEN 'completed' ELSE 'active' END
+    FROM user_account ua
+    JOIN seed_account sa ON sa.email = ua.email
+    WHERE sa.demo_key LIKE 'cohort_%' AND ua.accountid % 3 = 0;
+
+    -- Attendance for the two ENDED sessions only. The active session is left
+    -- alone on purpose: it is the live-scan demo target, and pre-filling it
+    -- would mean the scan has nothing left to prove.
+    INSERT INTO attendance_record (attendancesessionid, accountid, status, marked_at)
+    SELECT s.sid, e.accountid,
+           CASE (e.accountid + s.salt) % 10
+               WHEN 0 THEN 'absent' WHEN 1 THEN 'absent'
+               WHEN 2 THEN 'late'   WHEN 3 THEN 'early_left'
+               ELSE 'present'
+           END,
+           s.started + ((e.accountid % 17) * INTERVAL '1 minute')
+    FROM course_enrollment e
+    JOIN user_account ua2 ON ua2.accountid = e.accountid
+    JOIN seed_account sa2 ON sa2.email = ua2.email
+    CROSS JOIN (VALUES
+        (s226_yest, 0, t0 - INTERVAL '1 day' + INTERVAL '9 hours'),
+        (s226_old,  5, t0 - INTERVAL '8 days' + INTERVAL '9 hours')
+    ) AS s(sid, salt, started)
+    WHERE e.courseid = c226 AND e.status = 'active'
+      AND sa2.demo_key LIKE 'cohort_%'
+    ON CONFLICT (attendancesessionid, accountid) DO NOTHING;
 
 END
 $seed$;

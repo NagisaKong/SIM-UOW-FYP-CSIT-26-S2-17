@@ -70,13 +70,15 @@
 
     <label>
       Email
-      <input type="email" name="email" required value="admin@demo.local">
+      <input type="email" name="email" required autocomplete="username"
+        placeholder="you@demo.com">
     </label>
 
     <label>
       Password
       <div class="password-box">
-        <input id="password-input" type="password" name="password" required value="demo123">
+        <input id="password-input" type="password" name="password" required
+          autocomplete="current-password">
         <button type="button" id="toggle-password-btn" class="toggle-password-btn" aria-label="Show password"
           title="Show password">
           <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -100,7 +102,7 @@
   </form>
 
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 
   <script>
     const passwordInput = document.getElementById("password-input");
