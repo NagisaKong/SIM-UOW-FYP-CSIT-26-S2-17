@@ -262,33 +262,23 @@ function setupMobileTabs() {
 // one generic warning everywhere: the admin console touches no camera at all,
 // student face registration opens one, and the teacher's classroom scan opens
 // several concurrently — which is the case browsers differ most on.
-// Simplified marks, drawn from primitives rather than shipping the vendors'
-// official artwork: recognisable next to the name at 15px, and no third-party
-// brand assets are copied into the repository.
+// The marks next to each name are each vendor's own published logo (Google
+// Chrome, Microsoft Edge, Mozilla Firefox), vendored under assets/browser/ so
+// the pages keep working offline. They are used whole and unrecoloured, which
+// is what the vendors' brand guidelines ask for — earlier revisions of this
+// file approximated the shapes by hand and read as the wrong browser at 15px.
 const _BROWSER_MARKS = {
-  chrome:
-    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="11" fill="#fff"/>' +
-    '<path d="M12 1a11 11 0 0 1 9.53 5.5H12a5.5 5.5 0 0 0-5.29 4L3 6.9A11 11 0 0 1 12 1z" fill="#EA4335"/>' +
-    '<path d="M3 6.9l3.71 3.6A5.5 5.5 0 0 0 12 17.5c.3 0 .6-.02.88-.07L9.2 22.5A11 11 0 0 1 3 6.9z" fill="#34A853"/>' +
-    '<path d="M21.53 6.5A11 11 0 0 1 9.2 22.5l3.68-5.07a5.5 5.5 0 0 0 3.6-8.43z" fill="#FBBC05"/>' +
-    '<circle cx="12" cy="12" r="4.6" fill="#4285F4"/></svg>',
-  edge:
-    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="11" fill="#0F7EBD"/>' +
-    '<path d="M5.5 13.6c0-4 3.2-7 7.1-7 3.3 0 5.7 2 5.7 4.6 0 1-.5 1.8-1.5 1.8H9.6c.2 2.3 2 3.8 4.6 3.8 1.4 0 2.7-.4 3.7-1v2.6a10 10 0 0 1-4.6 1c-4.6 0-7.8-2.6-7.8-5.8z" fill="#fff"/>' +
-    '<path d="M9.7 10.9h5.7c0-1.4-1.1-2.4-2.7-2.4-1.5 0-2.7.9-3 2.4z" fill="#0F7EBD"/></svg>',
-  firefox:
-    '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="11" fill="#FF7139"/>' +
-    '<path d="M12 2.6c1.6 1.3 2 3 1.6 4.6 1.5-.5 3-.1 4 1 .9 1 1.3 2.4 1.1 3.8 1 .7 1.6 1.9 1.6 3.2 0 2.9-3.9 5.4-8.3 5.4S3.7 18.1 3.7 15.2c0-2 1.2-3.6 3-4.6-.3-1.6.3-3.2 1.5-4.1.2 1 .8 1.8 1.7 2.2-.4-2.3.3-4.5 2.1-6.1z" fill="#FFD44F"/>' +
-    '<path d="M12 20.6c-4.4 0-8.3-2.5-8.3-5.4 0-1.3.6-2.5 1.6-3.2.5 3.6 4 6 8.2 6 2.4 0 4.5-.8 5.9-2.1-1 2.7-4.2 4.7-7.4 4.7z" fill="#FF4F05"/></svg>',
+  chrome: "assets/browser/chrome.svg",
+  edge: "assets/browser/edge.svg",
+  firefox: "assets/browser/firefox.svg",
 };
 
 function _browserChip(name, key) {
   const span = el("span", {class: "browser-chip"});
-  const mark = el("span", {class: "browser-mark"});
-  mark.innerHTML = _BROWSER_MARKS[key];   // static markup defined above
+  const mark = el("img", {
+    class: "browser-mark", src: _BROWSER_MARKS[key], alt: "",
+    "aria-hidden": "true",
+  });
   span.append(mark, document.createTextNode(name));
   return span;
 }
@@ -383,10 +373,32 @@ function setupBackToTop() {
   sync();
 }
 
+// Small copyright line at the very bottom of the dashboards. Self-injected,
+// like the back-to-top button, so there is one implementation instead of the
+// same text pasted into every HTML file — and a year update only ever needs
+// to happen here.
+const _COPYRIGHT_YEAR = 2026;
+const _COPYRIGHT_TEAM = "FYP-26-S2-17 Team";
+
+function setupCopyrightFooter() {
+  if (document.querySelector(".app-footer")) return;
+  // The login page centres its single card in a flex body, so an appended
+  // footer lands beside the card rather than under it. It is also the one
+  // page with nothing above it to attribute — so it gets no footer at all.
+  if (document.body.classList.contains("centered")) return;
+  document.body.append(
+    el("footer", {class: "app-footer"},
+      el("p", {class: "small"},
+        `© ${_COPYRIGHT_YEAR} ${_COPYRIGHT_TEAM}. All rights reserved.`),
+    ),
+  );
+}
+
 function _initSharedUi() {
   setupMobileTabs();
   renderBrowserNotice();
   setupBackToTop();
+  setupCopyrightFooter();
 }
 
 if (document.readyState === "loading") {

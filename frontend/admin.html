@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 
 <body>
@@ -626,6 +626,19 @@
             </p>
           </div>
 
+          <div class="beh-adaptive">
+            <label>
+              <input type="checkbox" id="behaviour-adaptive-headpose" checked>
+              <span>Calibrate each student's resting head angle individually</span>
+            </label>
+            <p class="muted small">
+              Recommended — compares a student against their OWN resting pitch instead of a
+              fixed angle. Resting posture varies with the student and the chair (a reclining
+              seat shifts the whole baseline), so a fixed angle either misses genuine head-down
+              or flags normal posture shifts as inattentive.
+            </p>
+          </div>
+
           <!-- Sliders are rendered from BEHAVIOUR_TUNING_FIELDS in admin.js so
                the range, default and guidance text live in one place. -->
           <div id="behaviour-sliders"></div>
@@ -642,8 +655,8 @@
   <div class="browser-notice" data-role="admin"></div>
 
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=12"></script>
-  <script src="admin.js?v=14"></script>
+  <script src="app.js?v=14"></script>
+  <script src="admin.js?v=15"></script>
 </body>
 
 </html>

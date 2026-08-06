@@ -180,4 +180,6 @@ SIM-UOW-FYP-CSIT-26-S2-17/
 
 ## License
 
-This project is developed for academic purposes under CSIT321 at the University of Wollongong (SIM campus). All rights reserved by the project team.
+Copyright (c) 2026 the FYP-26-S2-17 project team (YU, ZHANGHAO · WHYE LI HENG, DOMINIC · ZHANG, CHENGWEI · ZHANG, JIQIAN · ZHAO, SHIYIN). All rights reserved.
+
+This project is developed for academic assessment under CSIT321 at the University of Wollongong (SIM campus). See [`LICENSE`](LICENSE) for full terms, including the third-party notice covering the vendored NVIDIA StyleGAN code under `core/training/`.

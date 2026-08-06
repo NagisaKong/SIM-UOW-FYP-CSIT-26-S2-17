@@ -1300,18 +1300,13 @@ img.preview {
 }
 
 .browser-mark {
-  display: inline-flex;
+  display: inline-block;
   width: 15px;
   height: 15px;
   margin-right: 3px;
   vertical-align: -3px;
   flex: none;
-}
-
-.browser-mark svg {
-  width: 100%;
-  height: 100%;
-  display: block;
+  object-fit: contain;   /* the vendor logos differ in aspect ratio */
 }
 
 /* ── Back to top ───────────────────────────────────────────────────── */
@@ -1377,4 +1372,18 @@ img.preview {
   width: 100%;
   max-width: 480px;
   margin-top: .5rem;
+}
+
+/* ── Copyright footer ──────────────────────────────────────────────── */
+.app-footer {
+  margin: 8px auto 24px;
+  padding: 14px 16px 0;
+  max-width: 1200px;
+  border-top: 1px solid var(--c-border);
+  text-align: center;
+}
+
+.app-footer p {
+  margin: 0;
+  color: var(--c-muted);
 }

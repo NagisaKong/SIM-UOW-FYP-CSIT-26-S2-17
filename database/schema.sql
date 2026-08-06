@@ -385,7 +385,18 @@ ALTER TABLE BEHAVIOUR_CONFIG
     -- rather than a literature constant. Eye aperture varies far more between
     -- individuals than between alert and drowsy states for one person, so a
     -- fixed cut-off flags some students permanently and never flags others.
-    ADD COLUMN IF NOT EXISTS adaptive_ear           BOOLEAN NOT NULL DEFAULT TRUE;
+    ADD COLUMN IF NOT EXISTS adaptive_ear           BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Degrees below a student's own calibrated upright pitch that count as
+    -- head-down. Same rationale as adaptive_ear: resting posture varies far
+    -- more between people (and between chairs — a reclining seat shifts the
+    -- whole baseline) than an alert/drowsy state does for one person, so a
+    -- single global delta was too tight for some rooms and too loose for
+    -- others. headpose_pitch_deg above is the fallback used ONLY while this
+    -- is off; while it's on (the default), that field has no effect, which
+    -- the admin UI states explicitly next to its slider.
+    ADD COLUMN IF NOT EXISTS headpose_delta_deg     FLOAT
+        CHECK (headpose_delta_deg IS NULL OR headpose_delta_deg BETWEEN 2 AND 60),
+    ADD COLUMN IF NOT EXISTS adaptive_headpose      BOOLEAN NOT NULL DEFAULT TRUE;
 
 
 -- ------------------------------------------------------------

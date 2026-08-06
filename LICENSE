@@ -1,16 +1,24 @@
-MIT License
+Copyright (c) 2026 the SIM-UOW FYP-26-S2-17 project team.
 
-Copyright (c) 2026 NagisaSAMA
+FYP-26-S2-17: Face Recognition Attendance System.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Final Year Project, submitted in partial fulfilment of the requirements for a
+degree at the University of Wollongong (SIM Global Education campus).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Team:
+  YU, ZHANGHAO
+  WHYE LI HENG, DOMINIC
+  ZHANG, CHENGWEI
+  ZHANG, JIQIAN
+  ZHAO, SHIYIN
+
+All rights reserved.
+
+This repository and its contents are made available for academic assessment,
+supervision and marking purposes only. No permission is granted to use,
+copy, modify, merge, publish, distribute, sublicense, or sell copies of this
+software, in whole or in part, without the prior written consent of the
+copyright holders listed above.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,3 +27,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Third-party code notice: core/training/dnnlib/, core/training/legacy.py and
+core/training/torch_utils/ are vendored from NVIDIA's StyleGAN training
+codebase and remain under NVIDIA's own proprietary source licence, as stated
+in each file's header ("Any use, reproduction, disclosure or distribution of
+this software... without an express license agreement from NVIDIA
+CORPORATION is strictly prohibited."). That third-party code is NOT covered
+by the copyright statement above and is not licensed for reuse by this
+project's authors.

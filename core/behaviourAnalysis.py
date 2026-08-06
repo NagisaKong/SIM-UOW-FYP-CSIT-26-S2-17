@@ -64,9 +64,14 @@ _TUNING_KEYS = (
     "ear_threshold",
     "mar_threshold",
     "headpose_pitch_deg",
+    "headpose_delta_deg",
     "phone_conf",
     "drowsy_confirm_seconds",
 )
+# Boolean tuning flags, handled alongside _TUNING_KEYS wherever both are
+# needed (column lists, request parsing) but kept separate because they are
+# not FLOAT columns.
+_TUNING_BOOL_KEYS = ("adaptive_ear", "adaptive_headpose")
 
 
 def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
@@ -79,7 +84,7 @@ def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
         with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
             cur.execute(
                 f"""SELECT enabled, drowsiness, phone_usage, heatmap,
-                          adaptive_ear, {", ".join(_TUNING_KEYS)}
+                          adaptive_ear, adaptive_headpose, {", ".join(_TUNING_KEYS)}
                    FROM behaviour_config WHERE courseid = %s""",
                 (course_id,),
             )
@@ -91,9 +96,10 @@ def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
                     "phone_usage": bool(row[2]),
                     "heatmap": bool(row[3]),
                     "adaptive_ear": bool(row[4]),
+                    "adaptive_headpose": bool(row[5]),
                 }
                 # None is meaningful: it means "no override, use AIConfig".
-                for offset, key in enumerate(_TUNING_KEYS, start=5):
+                for offset, key in enumerate(_TUNING_KEYS, start=6):
                     flags[key] = None if row[offset] is None else float(row[offset])
                 return flags
     except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
@@ -320,7 +326,7 @@ class InClassBehaviour:
         """
         if not tuning:
             return
-        columns = [k for k in (*_TUNING_KEYS, "adaptive_ear") if k in tuning]
+        columns = [k for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS) if k in tuning]
         if not columns:
             return
         assignments = ", ".join(f"{c} = %s" for c in columns)
@@ -1044,9 +1050,13 @@ class BehaviourAnalysisService:
                     fixed_threshold=_tuned(
                         flags, "headpose_pitch_deg", self.cfg.headpose_pitch_deg
                     ),
-                    adaptive=self.cfg.adaptive_headpose,
+                    adaptive=bool(
+                        flags.get("adaptive_headpose", self.cfg.adaptive_headpose)
+                    ),
                     baseline_samples=self.cfg.headpose_baseline_samples,
-                    delta_deg=self.cfg.headpose_delta_deg,
+                    delta_deg=_tuned(
+                        flags, "headpose_delta_deg", self.cfg.headpose_delta_deg
+                    ),
                 ),
             )
             state.students[account_id] = st
@@ -1411,9 +1421,11 @@ class BehaviourToggleBody(BaseModel):
     ear_threshold: float | None = None
     mar_threshold: float | None = None
     headpose_pitch_deg: float | None = None
+    headpose_delta_deg: float | None = None
     phone_conf: float | None = None
     drowsy_confirm_seconds: float | None = None
     adaptive_ear: bool | None = None
+    adaptive_headpose: bool | None = None
 
 
 @router.patch("/admin/courses/{course_id}/behaviour-analysis")
@@ -1428,7 +1440,7 @@ def admin_toggle_behaviour(
         supplied = body.model_dump(exclude_unset=True)
         tuning = {
             k: supplied[k]
-            for k in (*_TUNING_KEYS, "adaptive_ear")
+            for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS)
             if k in supplied
         }
         return svc.enableBehaviourAnalysis(

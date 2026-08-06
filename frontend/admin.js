@@ -1272,6 +1272,8 @@ async function loadBehaviourConfig() {
     // Tuning: null means "no override", shown as an empty field whose
     // placeholder reads "server default".
     document.getElementById("behaviour-adaptive").checked = cfg.adaptive_ear !== false;
+    document.getElementById("behaviour-adaptive-headpose").checked =
+      cfg.adaptive_headpose !== false;
     renderBehaviourSliders();
     for (const f of BEHAVIOUR_TUNING_FIELDS) {
       const range = document.getElementById(`beh-range-${f.key}`);
@@ -1319,7 +1321,7 @@ const BEHAVIOUR_TUNING_FIELDS = [
   },
   {
     key: "headpose_pitch_deg",
-    label: "Head-tilt limit (degrees)",
+    label: "Head-tilt limit, fixed mode (degrees)",
     min: 5, max: 89, step: 1, fallback: 30, decimals: 0,
     sensitive: "down",
     lowLabel: "5° · sensitive", highLabel: "89° · strict",
@@ -1327,6 +1329,22 @@ const BEHAVIOUR_TUNING_FIELDS = [
         "desk or notes are left alone; genuine head-nodding may be missed.",
     down: "A slight downward tilt already counts. Catches head-nodding early, but " +
           "anyone writing or reading on the desk is flagged.",
+    note: "Only used when individual head-angle calibration (below) is off.",
+  },
+  {
+    key: "headpose_delta_deg",
+    label: "Head-tilt sensitivity (degrees below resting angle)",
+    min: 2, max: 60, step: 1, fallback: 10, decimals: 0,
+    sensitive: "down",
+    lowLabel: "2° · sensitive", highLabel: "60° · strict",
+    up: "The head must dip further below the student's own resting angle before it " +
+        "counts. Fewer false alarms from ordinary posture shifts — reclining, " +
+        "glancing at a phone or notes — but a genuine head-down moment takes a " +
+        "little longer to confirm.",
+    down: "A smaller dip below the student's resting angle counts. Catches head-down " +
+          "sooner, but normal posture changes — especially in a reclining chair, " +
+          "where the resting angle itself moves — start triggering it too.",
+    note: "Only used when individual head-angle calibration (above) is on — the default.",
   },
   {
     key: "phone_conf",
@@ -1435,6 +1453,7 @@ document.getElementById("behaviour-form").addEventListener("submit", async (e) =
     phone_usage: document.getElementById("behaviour-phone").checked,
     heatmap: document.getElementById("behaviour-heatmap").checked,
     adaptive_ear: document.getElementById("behaviour-adaptive").checked,
+    adaptive_headpose: document.getElementById("behaviour-adaptive-headpose").checked,
   };
   // An empty field sends null, which clears the override server-side and
   // returns the course to the server default — that is how an admin undoes
