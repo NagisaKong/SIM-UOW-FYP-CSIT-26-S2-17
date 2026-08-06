@@ -32,6 +32,7 @@
   --shadow-lg: 0 20px 40px -10px rgba(15, 23, 42, .15), 0 8px 16px -8px rgba(15, 23, 42, .08);
 
   --transition: 150ms cubic-bezier(.4, 0, .2, 1);
+  --ease: cubic-bezier(.4, 0, .2, 1);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -533,6 +534,95 @@ main {
   }
 }
 
+/* ── Page transitions ──────────────────────────────────────────────
+   Logging in is a real navigation, so the transition is two halves: the
+   login card fades out (.is-leaving, below) and the dashboard chrome
+   fades in here. Deliberately a plain CSS animation rather than the View
+   Transitions API, so Chrome, Edge and Firefox render it identically.
+
+   This doubles as the fix for the flash of empty dashboard: the chrome
+   starts transparent, and requireAuth() — the first statement of every
+   page script — has redirected a signed-out visitor long before the
+   animation ends, so the empty shell is never seen.
+
+   Two things this rule must never do:
+
+   - Collapse to `body:not(.centered) > *`. .to-top and the calendar
+     modal backdrop are position:fixed children of <body>; an animated
+     ancestor with a transform would become their containing block and
+     break the fixed positioning.
+   - Grow an animation-fill-mode. `forwards` would hold translateY(0) as
+     a computed matrix forever, which is the same problem permanently.
+     Without a fill mode the animation also always ends at opacity 1 on
+     its own, so a JS error can never strand a blank page.
+
+   <main> is left out on purpose: its .panel children already animate
+   with panel-in, and stacking two fades makes the content arrive late
+   and dim. */
+body:not(.centered)>header.topbar,
+body:not(.centered)>.tabs,
+body:not(.centered)>.browser-notice,
+body:not(.centered)>.app-footer {
+  animation: page-enter .38s var(--ease);
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The other half: the login card drifts down and fades before the
+   redirect fires. `forwards` holds the faded-out state so the card
+   cannot flicker back during the navigation — index.html clears the
+   class on pageshow, which is what makes Back work. */
+.is-leaving {
+  animation: page-leave .2s var(--ease) forwards;
+  pointer-events: none;
+}
+
+@keyframes page-leave {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* Busy spinner for buttons. Buttons are already inline-flex with a gap,
+   so this needs no layout rules — only a size and the ring itself.
+   currentColor keeps it legible on primary, danger and secondary alike. */
+.spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+
+.is-busy .spinner {
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Respect users who prefer reduced motion. */
 @media (prefers-reduced-motion: reduce) {
 
@@ -541,8 +631,39 @@ main {
     animation: none;
   }
 
+  /* Not `animation: none` — the movement goes, the fade stays. That fade
+     is what keeps the signed-out shell off screen, and a cross-fade with
+     no motion is what reduced-motion actually asks for. */
+  body:not(.centered)>header.topbar,
+  body:not(.centered)>.tabs,
+  body:not(.centered)>.browser-notice,
+  body:not(.centered)>.app-footer {
+    animation: page-enter-flat .2s linear;
+  }
+
+  /* navigateWithFade() skips the leave animation outright for these
+     users; this keeps the class harmless if applied by other means. */
+  .is-leaving {
+    animation: none;
+    opacity: 0;
+  }
+
+  .spinner {
+    animation-duration: 1.2s;
+  }
+
   .submenu {
     transition: none;
+  }
+}
+
+@keyframes page-enter-flat {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -1014,6 +1135,7 @@ img.preview {
     flex-wrap: wrap;
     gap: .35rem .75rem;
   }
+
   header.topbar h1 {
     font-size: .98rem;
   }
@@ -1022,6 +1144,7 @@ img.preview {
   .tabs {
     display: none;
   }
+
   .tabs-select {
     display: block;
     width: 100%;
@@ -1058,10 +1181,12 @@ img.preview {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+
   .panel table thead th,
   .panel table tbody td {
     white-space: nowrap;
   }
+
   /* Inline detail / slide-out rows should still wrap normally. */
   .panel table .detail-row td,
   .panel table .detail-content,
@@ -1081,9 +1206,11 @@ img.preview {
   header.topbar {
     padding: .6rem .8rem;
   }
+
   header.topbar h1 {
     font-size: .9rem;
   }
+
   /* The email/identity label eats width on tiny screens — hide it; the
      dashboard heading already says which role you're in. */
   header.topbar #who {
@@ -1093,23 +1220,26 @@ img.preview {
   main {
     padding: .85rem .6rem 2rem;
   }
+
   .panel {
     padding: .9rem;
     border-radius: var(--radius);
   }
+
   .panel h2 {
     font-size: 1.15rem;
   }
 
   /* Filter / control rows: stack their inputs full-width so nothing is
      squashed below a usable size. */
-  .att-filters > input,
-  .att-filters > select,
-  .att-filters > label {
+  .att-filters>input,
+  .att-filters>select,
+  .att-filters>label {
     flex: 1 1 100% !important;
     min-width: 0 !important;
   }
 }
+
 /* ── Behaviour Analysis Settings (admin) ─────────────────────────────
    A vertical form: course, then the feature switches it applies to, then
    the sensitivity sliders. Deliberately not .form-stacked — that caps at
@@ -1275,7 +1405,7 @@ img.preview {
   line-height: 1.55;
 }
 
-.browser-notice p + p {
+.browser-notice p+p {
   margin-top: 6px;
 }
 
@@ -1306,7 +1436,8 @@ img.preview {
   margin-right: 3px;
   vertical-align: -3px;
   flex: none;
-  object-fit: contain;   /* the vendor logos differ in aspect ratio */
+  object-fit: contain;
+  /* the vendor logos differ in aspect ratio */
 }
 
 /* ── Back to top ───────────────────────────────────────────────────── */

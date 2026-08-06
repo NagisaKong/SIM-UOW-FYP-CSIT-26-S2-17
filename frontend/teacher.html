@@ -6,7 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teacher — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
+  <!-- Bounce a signed-out visitor before anything paints. requireAuth() in
+       teacher.js is still the authority (it checks the role and re-checks on
+       bfcache restore), but it runs from the bottom of <body>, behind the
+       Chart.js CDN — too late to keep the empty dashboard off screen if that
+       request stalls. This only ever navigates away, so it cannot hide the
+       page. -->
+  <script>if (!localStorage.getItem("token")) location.replace("index.html");</script>
   <style>
     /* ── Left/right scan layout (video | controls + results) ──── */
     /* Wider than the shared .camera-stage--wide cap (960px) so the video
@@ -1137,7 +1144,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
   <script src="teacher.js?v=23"></script>
 </body>
 

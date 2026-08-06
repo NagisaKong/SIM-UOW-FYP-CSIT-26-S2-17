@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Student — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
+  <script>if (!localStorage.getItem("token")) location.replace("index.html");</script>
   <style>
     /* ── Attendance view toggle ───────────────────────────────── */
     .att-view-toggle {
@@ -260,8 +261,8 @@
 
 <body>
   <header class="topbar">
-    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
-        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Student Dashboard</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt="" style="height:26px;vertical-align:-6px;margin-right:8px">FRAS
+      Student Dashboard</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -372,8 +373,7 @@
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
           <label>Supporting document (optional)
-            <input type="file" name="supporting_doc"
-              accept="image/png,image/jpeg,image/webp,application/pdf">
+            <input type="file" name="supporting_doc" accept="image/png,image/jpeg,image/webp,application/pdf">
             <span class="muted small">A photo or PDF of any evidence supporting your
               appeal — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
           </label>
@@ -417,8 +417,7 @@
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
           <label>Supporting document (optional)
-            <input type="file" name="supporting_doc"
-              accept="image/png,image/jpeg,image/webp,application/pdf">
+            <input type="file" name="supporting_doc" accept="image/png,image/jpeg,image/webp,application/pdf">
             <span class="muted small">A photo or PDF of your medical certificate or
               other evidence — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
           </label>
@@ -472,7 +471,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
   <script src="student.js?v=6"></script>
 </body>
 

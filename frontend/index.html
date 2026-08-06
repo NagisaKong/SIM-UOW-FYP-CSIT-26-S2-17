@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FRAS — Login</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 
   <style>
     .password-box {
@@ -100,12 +100,15 @@
       </div>
     </label>
 
-    <button type="submit">Login</button>
-    <p id="login-error" class="error"></p>
+    <button type="submit" id="login-submit">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="login-submit-label">Login</span>
+    </button>
+    <p id="login-error" class="error" role="status" aria-live="polite"></p>
   </form>
 
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
 
   <script>
     const passwordInput = document.getElementById("password-input");
@@ -136,12 +139,35 @@
       passwordTimer = setTimeout(hidePassword, 2000);
     });
 
-    document.getElementById("login-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
+    const loginForm = document.getElementById("login-form");
+    const loginBtn = document.getElementById("login-submit");
+    const loginLabel = document.getElementById("login-submit-label");
+    const loginErr = document.getElementById("login-error");
 
+    // Signing in waits on a network round trip, so the button says so —
+    // and the flag stops a second submit landing while the first is still
+    // in flight. The disabled button already covers clicks and Enter; the
+    // flag is what covers a programmatic requestSubmit().
+    let loginBusy = false;
+
+    function setLoginBusy(busy) {
+      loginBusy = busy;
+      loginBtn.disabled = busy;
+      loginBtn.classList.toggle("is-busy", busy);
+      loginLabel.textContent = busy ? "Signing in…" : "Login";
+      loginForm.setAttribute("aria-busy", busy ? "true" : "false");
+    }
+
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (loginBusy) return;
+
+      // Read the fields before going busy: disabled controls are left out
+      // of FormData, so if the busy state ever grows to cover the inputs
+      // too, doing this afterwards would quietly submit nothing.
       const fd = new FormData(e.target);
-      const err = document.getElementById("login-error");
-      err.textContent = "";
+      loginErr.textContent = "";
+      setLoginBusy(true);
 
       try {
         const res = await api("/auth/login", {
@@ -162,11 +188,25 @@
           student: "student.html"
         };
 
-        location.href = dest[res.user.role] || "student.html";
+        // Stays busy on purpose — the button must not spring back to
+        // "Login" while the card is fading out and the page is leaving.
+        navigateWithFade(dest[res.user.role] || "student.html", loginForm);
 
       } catch (ex) {
-        err.textContent = ex.message;
+        loginErr.textContent = ex.message;
+        setLoginBusy(false);
       }
+    });
+
+    // Back from a dashboard can restore this page from the back-forward
+    // cache exactly as it was left: mid-fade, .is-leaving still applied,
+    // its `forwards` fill holding the card at opacity 0 — invisible and
+    // unclickable. Reset unconditionally; on a fresh load it is a no-op,
+    // and it also covers Firefox restoring form state on reload.
+    window.addEventListener("pageshow", () => {
+      loginForm.classList.remove("is-leaving");
+      setLoginBusy(false);
+      loginErr.textContent = "";
     });
   </script>
 </body>

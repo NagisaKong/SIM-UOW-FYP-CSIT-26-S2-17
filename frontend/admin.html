@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
+  <script>if (!localStorage.getItem("token")) location.replace("index.html");</script>
 </head>
 
 <body>
@@ -40,8 +41,7 @@
           <button type="button" id="show-user-form">+ Register User</button>
         </div>
         <input type="search" id="users-search" class="users-search"
-          placeholder="Search by name, student/staff number, email, or role…"
-          autocomplete="off">
+          placeholder="Search by name, student/staff number, email, or role…" autocomplete="off">
         <p id="users-search-status" class="muted small" style="margin:.35rem 0 0"></p>
         <table>
           <thead>
@@ -655,7 +655,7 @@
   <div class="browser-notice" data-role="admin"></div>
 
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
   <script src="admin.js?v=15"></script>
 </body>
 

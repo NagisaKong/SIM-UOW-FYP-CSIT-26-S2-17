@@ -41,7 +41,7 @@ const API_BASE = (() => {
 
 function authHeader() {
   const token = localStorage.getItem("token");
-  return token ? {"Authorization": "Bearer " + token} : {};
+  return token ? { "Authorization": "Bearer " + token } : {};
 }
 
 async function api(path, opts = {}) {
@@ -49,7 +49,7 @@ async function api(path, opts = {}) {
   try {
     res = await fetch(API_BASE + path, {
       ...opts,
-      headers: {...(opts.headers || {}), ...authHeader()},
+      headers: { ...(opts.headers || {}), ...authHeader() },
     });
   } catch (networkError) {
     // fetch() only rejects when the request never got a response: the API is
@@ -63,7 +63,7 @@ async function api(path, opts = {}) {
   }
   const text = await res.text();
   let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = {raw: text}; }
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   if (!res.ok) {
     const msg = data.detail || data.message || `HTTP ${res.status}`;
     throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
@@ -168,7 +168,7 @@ function syncSelectTitle(sel) {
 // object URL (the same approach as the CSV report export). That URL is
 // returned so the caller can revoke it when the panel closes; object URLs
 // live until revoked, and leaking one per opened record adds up.
-async function renderSupportingDocument({url, hasDocument, name, type, ids}) {
+async function renderSupportingDocument({ url, hasDocument, name, type, ids }) {
   const section = document.getElementById(ids.section);
   const img = document.getElementById(ids.image);
   const link = document.getElementById(ids.link);
@@ -185,7 +185,7 @@ async function renderSupportingDocument({url, hasDocument, name, type, ids}) {
   msg.style.color = "";
   msg.textContent = "Loading document…";
   try {
-    const res = await fetch(API_BASE + url, {headers: authHeader()});
+    const res = await fetch(API_BASE + url, { headers: authHeader() });
     if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`);
     const blob = await res.blob();
     const objectUrl = URL.createObjectURL(blob);
@@ -241,9 +241,9 @@ function setupMobileTabs() {
   const buttons = [...tabs.querySelectorAll(".tab-btn")];
   if (!buttons.length) return;
 
-  const select = el("select", {class: "tabs-select", "aria-label": "Navigation"});
+  const select = el("select", { class: "tabs-select", "aria-label": "Navigation" });
   for (const b of buttons) {
-    const opt = el("option", {value: b.dataset.tab}, b.textContent.trim());
+    const opt = el("option", { value: b.dataset.tab }, b.textContent.trim());
     if (b.classList.contains("active")) opt.selected = true;
     select.append(opt);
   }
@@ -274,7 +274,7 @@ const _BROWSER_MARKS = {
 };
 
 function _browserChip(name, key) {
-  const span = el("span", {class: "browser-chip"});
+  const span = el("span", { class: "browser-chip" });
   const mark = el("img", {
     class: "browser-mark", src: _BROWSER_MARKS[key], alt: "",
     "aria-hidden": "true",
@@ -316,7 +316,7 @@ function renderBrowserNotice() {
   if (_BROWSER_NOTE_BY_ROLE[role]) {
     bits.push(document.createTextNode(_BROWSER_NOTE_BY_ROLE[role] + " "));
   }
-  host.append(el("p", {class: "small"}, ...bits));
+  host.append(el("p", { class: "small" }, ...bits));
 
   // Worth stating explicitly: this is the one failure that looks like a
   // broken feature rather than a configuration mistake. Browsers block
@@ -324,17 +324,17 @@ function renderBrowserNotice() {
   // plain http gives a camera that simply never starts, with no obvious cause.
   if (role === "teacher" || role === "student") {
     const secure = window.isSecureContext;
-    const note = el("p", {class: "small"},
+    const note = el("p", { class: "small" },
       el("strong", {}, secure ? "Camera access: " : "Camera unavailable here: "),
       document.createTextNode(
         secure
           ? "this page is on a secure origin, so cameras can be used. Allow " +
-            "access when the browser asks — the permission is per site."
+          "access when the browser asks — the permission is per site."
           : `this page was opened over an insecure origin (${location.protocol}//` +
-            `${location.host}). Browsers only grant camera access over HTTPS ` +
-            "or on localhost, so scanning and face registration will not " +
-            "start here. Use the deployed HTTPS address, or run the frontend " +
-            "from localhost."),
+          `${location.host}). Browsers only grant camera access over HTTPS ` +
+          "or on localhost, so scanning and face registration will not " +
+          "start here. Use the deployed HTTPS address, or run the frontend " +
+          "from localhost."),
     );
     if (!secure) note.classList.add("browser-notice-warn");
     host.append(note);
@@ -357,7 +357,7 @@ function setupBackToTop() {
   btn.addEventListener("click", () => {
     // `smooth` is ignored when the user has asked for reduced motion, which
     // is the correct behaviour rather than something to work around.
-    window.scrollTo({top: 0, behavior: "smooth"});
+    window.scrollTo({ top: 0, behavior: "smooth" });
   });
   document.body.append(btn);
 
@@ -369,7 +369,7 @@ function setupBackToTop() {
     shown = should;
     btn.classList.toggle("is-visible", should);
   };
-  window.addEventListener("scroll", sync, {passive: true});
+  window.addEventListener("scroll", sync, { passive: true });
   sync();
 }
 
@@ -387,11 +387,39 @@ function setupCopyrightFooter() {
   // page with nothing above it to attribute — so it gets no footer at all.
   if (document.body.classList.contains("centered")) return;
   document.body.append(
-    el("footer", {class: "app-footer"},
-      el("p", {class: "small"},
+    el("footer", { class: "app-footer" },
+      el("p", { class: "small" },
         `© ${_COPYRIGHT_YEAR} ${_COPYRIGHT_TEAM}. All rights reserved.`),
     ),
   );
+}
+
+const PAGE_LEAVE_MS = 200;
+
+function navigateWithFade(url, node) {
+  const target = node || document.querySelector(".card");
+  const reduce = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!target || reduce) {
+    location.href = url;
+    return;
+  }
+
+  let done = false;
+  const go = () => {
+    if (done) return;
+    done = true;
+    target.removeEventListener("animationend", onEnd);
+    location.href = url;
+  };
+  const onEnd = (e) => {
+    if (e.animationName === "page-leave") go();
+  };
+
+  target.addEventListener("animationend", onEnd);
+  setTimeout(go, PAGE_LEAVE_MS + 60);
+  target.classList.add("is-leaving");
 }
 
 function _initSharedUi() {
