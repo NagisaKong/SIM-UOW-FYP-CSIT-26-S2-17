@@ -119,6 +119,23 @@ def _primary(prediction) -> dict[str, Any]:
     return per_model.get(_PRIMARY_MODEL) or next(iter(per_model.values()), {})
 
 
+def _primary_model_name(prediction) -> str | None:
+    """Which model the diagnostic candidates/threshold above actually came
+    from. Usually "arcface" — but ArcFace only gets a free embedding when
+    SCRFD supplied the anchor detection (see _group_anchors); if SCRFD missed
+    a face that MTCNN caught, ArcFace has to re-detect on a cropped/padded
+    region and can come back empty, silently leaving FaceNet — the weaker,
+    secondary model — as the only one that voted. Without surfacing which
+    model this was, "0.70 / 0.71 (need 0.55)" reads as ArcFace failing to
+    separate two people it actually separates cleanly; it is FaceNet's own,
+    less discriminative comparison standing in for ArcFace's absence.
+    """
+    per_model = getattr(prediction, "per_model", None) or {}
+    if _PRIMARY_MODEL in per_model:
+        return _PRIMARY_MODEL
+    return next(iter(per_model), None)
+
+
 def _match_candidates(prediction) -> list[dict[str, Any]]:
     return _primary(prediction).get("candidates", [])
 
@@ -269,6 +286,7 @@ class AttendanceRecord:
                 "score": round(float(p.score), 3),
                 "candidates": _match_candidates(p),
                 "threshold": _match_threshold(p),
+                "diagnostic_model": _primary_model_name(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
 
@@ -308,6 +326,7 @@ class AttendanceRecord:
                 # guessing. Diagnostic only — never used for attendance.
                 "candidates": _match_candidates(p),
                 "threshold": _match_threshold(p),
+                "diagnostic_model": _primary_model_name(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
         return {

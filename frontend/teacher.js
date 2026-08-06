@@ -464,9 +464,12 @@ const behLive = {drowsy: new Set(), phone: new Set(), ts: 0};
 // student (U32). Merging only the public-facing label keeps the accusation
 // low-stakes while the underlying data stays precise, which matters given
 // these detections are assistive indicators rather than proof.
-function behStateFor(accountId) {
-  if (accountId == null || Date.now() - behLive.ts > BEH_STATE_TTL_MS) return [];
-  if (behLive.drowsy.has(accountId) || behLive.phone.has(accountId)) {
+// `snapshot` defaults to the live, currently-mutating state for callers
+// outside a scan round (there are none today, but it keeps this usable on
+// its own). Callers INSIDE a round pass a frozen copy — see captureSnapshot.
+function behStateFor(accountId, snapshot = behLive) {
+  if (accountId == null || Date.now() - snapshot.ts > BEH_STATE_TTL_MS) return [];
+  if (snapshot.drowsy.has(accountId) || snapshot.phone.has(accountId)) {
     return ["Not paying attention"];
   }
   return [];
@@ -477,7 +480,7 @@ function behStateFor(accountId) {
 // frame so CSS scales it onto the displayed video automatically.
 // Colours: green = recognised + attentive, amber = unknown face,
 // red = recognised but flagged sleeping / using phone (label says which).
-function drawScanBoxes(cam, res) {
+function drawScanBoxes(cam, res, behSnapshot) {
   const overlay = cam.overlay;
   if (!overlay) return;
   const fw = res.frame_width || cam.video.videoWidth || 1280;
@@ -496,7 +499,7 @@ function drawScanBoxes(cam, res) {
       color = "#e3a008";
       text = "Unknown";
     } else {
-      const acts = behStateFor(b.account_id);
+      const acts = behStateFor(b.account_id, behSnapshot);
       if (acts.length) {
         color = "#dc2626";
         text = `${b.label} — ${acts.join(" + ")}`;
@@ -536,13 +539,24 @@ function drawScanBoxes(cam, res) {
 // "≈ zhang jiqian 0.38 / DOMINIC 0.31 (need 0.43)" — the top-2 gallery
 // scores plus the active threshold, so the reason for a rejection is
 // readable straight off the video.
+//
+// The scores/threshold shown are ArcFace's UNLESS ArcFace never got to vote
+// for this particular face — which happens when SCRFD missed it and the
+// fallback re-detect (needed to hand MTCNN's box to ArcFace) also came up
+// empty, leaving only the weaker FaceNet model to compare. That case is
+// flagged explicitly rather than silently showing FaceNet's threshold (0.55
+// by default) as if it were ArcFace's (0.40) — a close call from the weaker
+// model can otherwise read as "the system can't tell us apart" when the
+// primary model was never asked.
 function describeCandidates(box) {
   const top = (box.candidates || []).slice(0, 2).map(c => {
     const who = c.full_name || c.student_id || `acc#${c.account_id}`;
     return `${who} ${Number(c.score).toFixed(2)}`;
   });
   const need = box.threshold != null ? ` (need ${Number(box.threshold).toFixed(2)})` : "";
-  return `≈ ${top.join(" / ")}${need}`;
+  const modelNote = box.diagnostic_model && box.diagnostic_model !== "arcface"
+    ? `[${box.diagnostic_model}-only, ArcFace unavailable for this face] ` : "";
+  return `${modelNote}≈ ${top.join(" / ")}${need}`;
 }
 
 // Render this round's result: a small stat row (Recognised / Not paying
@@ -551,13 +565,13 @@ function describeCandidates(box) {
 // state (drowsy / phone) to flag and count how many are currently
 // distracted. The separate ~1 fps live badge (#scan-behaviour) sits right
 // below this card and is updated independently by behaviourTick().
-function renderScanDetected(map) {
+function renderScanDetected(map, behSnapshot) {
   const host = document.getElementById("scan-detected");
   host.innerHTML = "";
 
   let distracted = 0;
   for (const accountId of map.keys()) {
-    if (behStateFor(accountId).length) distracted++;
+    if (behStateFor(accountId, behSnapshot).length) distracted++;
   }
 
   const stats = el("div", {class: "scan-stats-row"},
@@ -575,7 +589,7 @@ function renderScanDetected(map) {
     names.append(el("span", {class: "muted"}, "No students recognised."));
   } else {
     for (const [accountId, name] of map.entries()) {
-      const flagged = behStateFor(accountId).length > 0;
+      const flagged = behStateFor(accountId, behSnapshot).length > 0;
       names.append(el("span", {class: flagged ? "scan-name scan-name--alert" : "scan-name"}, name));
     }
   }
@@ -589,6 +603,21 @@ async function captureSnapshot() {
   scanProgressEl.classList.add("is-scanning");
   let ok = 0, fail = 0;
   const detected = new Map(); // account_id -> display name (union across cameras)
+  // Frozen once, before the per-camera loop starts. Cameras are scanned
+  // sequentially and each round-trip involves the full detection + ensemble
+  // pipeline, so a multi-camera round can take several seconds — long enough
+  // for the independent ~1 fps behaviourTick() to move behLive forward
+  // mid-round. Reading behLive fresh per-camera meant a box painted early in
+  // the round could be green (as of ITS capture time) while the end-of-round
+  // summary — read later, after behLive had already advanced — flagged that
+  // same student red: two renders of the same signal at two different
+  // instants, shown together as if they agreed. Freezing it once here makes
+  // every box and the summary consistent with each other for this round,
+  // even if a newer behaviourTick result lands before the round finishes;
+  // the next round (or the independent live badge below) picks it up.
+  const behSnapshot = {
+    drowsy: new Set(behLive.drowsy), phone: new Set(behLive.phone), ts: behLive.ts,
+  };
   // Sequential: the capture canvas is shared, and it avoids hammering the
   // backend with N simultaneous uploads. Since it's sequential, "camera i
   // of N" is real progress, not a guess — the bar itself is still just an
@@ -603,7 +632,7 @@ async function captureSnapshot() {
       : "Scanning…";
     try {
       const res = await snapshotOneCamera(cam, id);
-      drawScanBoxes(cam, res);
+      drawScanBoxes(cam, res, behSnapshot);
       for (const d of (res.detected || [])) {
         detected.set(d.account_id, d.full_name || d.student_id || `acc#${d.account_id}`);
       }
@@ -616,7 +645,7 @@ async function captureSnapshot() {
   }
   scanProgressEl.classList.remove("is-scanning");
   scanProgressLabel.textContent = "";
-  renderScanDetected(detected);
+  renderScanDetected(detected, behSnapshot);
   scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
   scanMsg.textContent =
     `Captured ${scanCams.length} camera${scanCams.length > 1 ? "s" : ""}` +

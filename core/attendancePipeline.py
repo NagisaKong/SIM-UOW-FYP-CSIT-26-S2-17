@@ -746,6 +746,39 @@ def fuse_detections(
     return groups
 
 
+def filter_low_confidence(
+    groups: list[FaceGroup], det_thresh: float,
+) -> list[FaceGroup]:
+    """Drop groups whose detection evidence is too weak to draw as a box.
+
+    `AI_DET_THRESH` is applied by SCRFD internally (via app.prepare), so
+    SCRFD-backed groups already clear it before reaching here — this floor is
+    a no-op for them. MTCNN has no such wiring: its cascade stage thresholds
+    are fixed at [0.6, 0.7, 0.7] inside MtcnnDetector regardless of
+    AI_DET_THRESH, so an admin raising that env var to suppress false
+    positives sees no effect on MTCNN's own confident-but-wrong detections —
+    textured backgrounds (doorways, posters, AC units) are a known trigger.
+    Applying the same floor uniformly, post-fusion, closes that gap without
+    touching the cascade call itself.
+
+    A group only one detector saw (no fused agreement) gets a stricter bar:
+    corroboration from a second, independently-trained model is itself
+    evidence, and its absence is not — a lone MTCNN hit on background clutter
+    is exactly the case this guards against, without penalising a face SCRFD
+    genuinely missed (off-angle, partial occlusion) that MTCNN alone caught.
+    """
+    out = []
+    for g in groups:
+        if len(g.det_scores) >= 2:
+            floor = det_thresh
+        else:
+            (source, score), = g.det_scores.items()
+            floor = det_thresh if source == "scrfd" else min(0.95, det_thresh + 0.25)
+        if g.average_det_score() >= floor:
+            out.append(g)
+    return out
+
+
 def assign_embeddings(
     groups: list[FaceGroup], embeddings: list[Embedding], iou_threshold: float,
 ) -> None:
@@ -1446,6 +1479,7 @@ class AttendancePipeline:
                and (d.bbox[3] - d.bbox[1]) >= min_px
         ]
         groups = fuse_detections(dets, self.cfg.ensemble_iou)
+        groups = filter_low_confidence(groups, self.cfg.det_thresh)
         anchors = self._group_anchors(groups, dets)
         embeddings: list[Embedding] = []
         embeddings.extend(embed_all(self._arcface, frame_in, anchors))

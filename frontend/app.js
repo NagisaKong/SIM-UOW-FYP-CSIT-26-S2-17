@@ -71,22 +71,54 @@ async function api(path, opts = {}) {
   return data;
 }
 
-function requireAuth(expectedRole) {
+// Guards a dashboard page: redirects to the login page unless a valid
+// session for `expectedRole` is present. `alertOnMismatch` controls whether a
+// role mismatch pops an alert — suppressed on the bfcache re-check below,
+// since that fires mid-navigation (e.g. while the browser is restoring a
+// cached page for Back) and an alert there reads as a random interruption
+// rather than feedback on something the user just did.
+function _checkAuth(expectedRole, alertOnMismatch) {
   const token = localStorage.getItem("token");
   const user = JSON.parse(localStorage.getItem("user") || "null");
-  if (!token || !user) { location.href = "index.html"; return null; }
+  if (!token || !user) { location.replace("index.html"); return null; }
   if (expectedRole && user.role !== expectedRole) {
-    alert("Insufficient permissions: " + expectedRole + " role required");
-    location.href = "index.html";
+    if (alertOnMismatch) {
+      alert("Insufficient permissions: " + expectedRole + " role required");
+    }
+    location.replace("index.html");
     return null;
   }
   return user;
 }
 
+function requireAuth(expectedRole) {
+  // Browsers restore a page from the back-forward cache (bfcache) on Back /
+  // Forward without re-running this script, so the check below only runs
+  // once, at the initial load. That is exactly what breaks logout: the
+  // dashboard is still sitting in bfcache with its last-rendered DOM, and
+  // clicking Back after logout would show it as-is even though localStorage
+  // no longer holds a session.
+  //
+  // `pageshow` fires on both a normal load AND a bfcache restore, and only
+  // the latter sets `event.persisted`, so re-running the same check there
+  // catches exactly the case that needs it. The listener is attached once,
+  // during this normal call, and — because it lives on an object bfcache
+  // keeps alive rather than in the script body — survives to fire again when
+  // the page is restored, even though the script itself does not re-execute.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) _checkAuth(expectedRole, false);
+  });
+  return _checkAuth(expectedRole, true);
+}
+
 function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
-  location.href = "index.html";
+  // replace(), not href=, so the dashboard is dropped from history instead
+  // of sitting one Forward-click away from a page pageshow will immediately
+  // bounce out of anyway — no functional difference, just avoids a redirect
+  // the user would visibly see happen if they went Forward.
+  location.replace("index.html");
 }
 
 function fmt(ts) {
