@@ -17,10 +17,19 @@ def calibrate_threshold(synthetic_pairs, labels):
     # Use zip() to loop through pairs and labels simultaneously
     for (img_a, img_b), label in zip(synthetic_pairs, labels):
         
-        # FIX 1: Shrink and pad the StyleGAN image with a black border.
-        # This tricks the webcam-trained face detector into easily finding the face.
-        img_a = cv2.copyMakeBorder(cv2.resize(img_a, (512, 512)), 100, 100, 100, 100, cv2.BORDER_CONSTANT, value=[0,0,0])
-        img_b = cv2.copyMakeBorder(cv2.resize(img_b, (512, 512)), 100, 100, 100, 100, cv2.BORDER_CONSTANT, value=[0,0,0])
+        # FIX 1: Shrink and pad the StyleGAN image with a black border so the
+        # face occupies roughly a third of the frame, not nearly all of it.
+        # FFHQ's crop fills the frame with the face; SCRFD (trained on webcam/
+        # classroom shots where the face is a smaller part of a wider scene)
+        # finds nothing at all in a tight face-filling crop — confirmed by
+        # testing detection at increasing padding ratios: 0px and 100px of
+        # padding around a 512px face both yield zero detections, but 512px
+        # of padding (face:frame = 512:1536, i.e. the face is a third of the
+        # frame) reliably finds the face. 100px was not "a trick that mostly
+        # works"; it was well below the threshold where detection starts
+        # working at all.
+        img_a = cv2.copyMakeBorder(cv2.resize(img_a, (512, 512)), 512, 512, 512, 512, cv2.BORDER_CONSTANT, value=[0,0,0])
+        img_b = cv2.copyMakeBorder(cv2.resize(img_b, (512, 512)), 512, 512, 512, 512, cv2.BORDER_CONSTANT, value=[0,0,0])
 
         faces_a = arcface.app.get(img_a)
         faces_b = arcface.app.get(img_b)

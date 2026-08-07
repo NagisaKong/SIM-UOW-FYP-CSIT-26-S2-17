@@ -901,6 +901,50 @@ class ClaheEnhancer(_BaseEnhancer):
         return out
 
 
+def _patch_torchvision_functional_tensor() -> None:
+    """Work around a real, hard-crashing incompatibility: basicsr (last
+    released 2022, a transitive dependency of gfpgan/realesrgan) imports
+    ``torchvision.transforms.functional_tensor``, a module torchvision
+    removed in newer releases (the function it wants, ``rgb_to_grayscale``,
+    moved to ``torchvision.transforms.functional``). Without this shim,
+    ``import gfpgan`` / ``import realesrgan`` raises ModuleNotFoundError on
+    any current torchvision and GanEnhancer falls back to CLAHE unconditionally
+    — confirmed by testing against a real torchvision 2.5.1 install, not a
+    hypothetical. Only touches sys.modules when the old path is genuinely
+    absent, so it is a no-op on a torchvision old enough to still have it.
+    """
+    import sys
+
+    if "torchvision.transforms.functional_tensor" in sys.modules:
+        return
+    try:
+        import importlib
+        importlib.import_module("torchvision.transforms.functional_tensor")
+        return  # present on this torchvision version; nothing to patch
+    except ModuleNotFoundError:
+        pass
+
+    import types
+    import torchvision.transforms.functional as _F
+
+    shim = types.ModuleType("torchvision.transforms.functional_tensor")
+    shim.rgb_to_grayscale = _F.rgb_to_grayscale
+    sys.modules["torchvision.transforms.functional_tensor"] = shim
+
+
+# Well-known, stable release URLs. Both libraries treat a model_path starting
+# with "https://" as "download this to a local weights/ cache if not already
+# there" — passing None (as earlier code did) is not a lighter-weight default,
+# it is a crash: both constructors immediately call model_path.startswith(...).
+_GFPGAN_MODEL_URL = (
+    "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth"
+)
+_REALESRGAN_MODEL_URL = (
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/"
+    "RealESRGAN_x2plus.pth"
+)
+
+
 class GanEnhancer(_BaseEnhancer):
     """Thin wrapper around a face-restoration GAN (GFPGAN / Real-ESRGAN)."""
 
@@ -914,10 +958,11 @@ class GanEnhancer(_BaseEnhancer):
     def _load_backend(backend: str, device: str):
         if backend in ("auto", "gfpgan"):
             try:
+                _patch_torchvision_functional_tensor()
                 from gfpgan import GFPGANer  # type: ignore
 
                 runner = GFPGANer(
-                    model_path=None, upscale=1, arch="clean",
+                    model_path=_GFPGAN_MODEL_URL, upscale=1, arch="clean",
                     channel_multiplier=2, bg_upsampler=None,
                 )
 
@@ -935,6 +980,7 @@ class GanEnhancer(_BaseEnhancer):
 
         if backend in ("auto", "realesrgan"):
             try:
+                _patch_torchvision_functional_tensor()
                 from basicsr.archs.rrdbnet_arch import RRDBNet  # type: ignore
                 from realesrgan import RealESRGANer  # type: ignore
 
@@ -943,7 +989,7 @@ class GanEnhancer(_BaseEnhancer):
                     num_block=23, num_grow_ch=32, scale=2,
                 )
                 runner = RealESRGANer(
-                    scale=2, model_path=None, model=model,
+                    scale=2, model_path=_REALESRGAN_MODEL_URL, model=model,
                     tile=0, half=False, device=device,
                 )
 
