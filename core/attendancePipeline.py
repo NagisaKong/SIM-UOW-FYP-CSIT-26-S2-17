@@ -925,6 +925,7 @@ def _patch_torchvision_functional_tensor() -> None:
         pass
 
     import types
+
     import torchvision.transforms.functional as _F
 
     shim = types.ModuleType("torchvision.transforms.functional_tensor")
