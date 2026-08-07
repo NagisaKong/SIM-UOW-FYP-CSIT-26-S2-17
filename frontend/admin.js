@@ -1204,6 +1204,8 @@ async function loadAttConfig() {
     form.late_grace_seconds.value = cfg.late_grace_seconds;
     form.minimum_rate.value = cfg.minimum_attendance_rate;
     form.consecutive_threshold.value = cfg.absence_threshold;
+    form.minimum_presence_ratio.value = cfg.minimum_presence_ratio;
+    form.tail_ratio.value = cfg.tail_ratio;
   } catch (e) {
     msg.style.color = "#c0392b";
     msg.textContent = e.message;
@@ -1219,6 +1221,8 @@ document.getElementById("att-config-form").addEventListener("submit", async (e) 
     late_grace_seconds: Number(fd.get("late_grace_seconds")),
     minimum_rate: Number(fd.get("minimum_rate")),
     consecutive_threshold: Number(fd.get("consecutive_threshold")),
+    minimum_presence_ratio: Number(fd.get("minimum_presence_ratio")),
+    tail_ratio: Number(fd.get("tail_ratio")),
   };
   try {
     const res = await api("/admin/config/absence-threshold", {
@@ -1229,7 +1233,8 @@ document.getElementById("att-config-form").addEventListener("submit", async (e) 
     msg.style.color = "#16a34a";
     msg.textContent = `Saved. Detection interval ${res.detection_interval_seconds}s · ` +
       `late grace ${res.late_grace_seconds}s · min rate ${res.minimum_attendance_rate}% · ` +
-      `reminder after ${res.absence_threshold} sessions.`;
+      `reminder after ${res.absence_threshold} sessions · ` +
+      `min presence ${res.minimum_presence_ratio}% · tail window ${res.tail_ratio}%.`;
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;

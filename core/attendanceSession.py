@@ -11,6 +11,7 @@ Attributes: sessionDetail* (start_time, end_time, status, courseid, …)
 from __future__ import annotations
 
 import contextlib
+import math
 from typing import Any
 
 import psycopg2
@@ -258,8 +259,13 @@ class AttendanceSession:
             )
             roster = [r[0] for r in cur.fetchall()]
 
-            late_grace = load_threshold_config(self.database_url)["late_grace_seconds"]
-            final_status = self._aggregate_presence(cur, session_id, roster, late_grace)
+            thresholds = load_threshold_config(self.database_url)
+            final_status = self._aggregate_presence(
+                cur, session_id, roster,
+                late_grace_seconds=thresholds["late_grace_seconds"],
+                minimum_presence_ratio=thresholds["minimum_presence_ratio"],
+                tail_ratio=thresholds["tail_ratio"],
+            )
 
             counts = {"present": 0, "late": 0, "early_left": 0, "absent": 0}
             for acc in roster:
@@ -304,22 +310,50 @@ class AttendanceSession:
 
     # ── internal: snapshot aggregation (U03) ─────────────────────────
     def _aggregate_presence(
-        self, cur, session_id: int, roster: list[int], late_grace_seconds: int = 0,
+        self, cur, session_id: int, roster: list[int],
+        late_grace_seconds: int = 0,
+        minimum_presence_ratio: float = 50.0,
+        tail_ratio: float = 20.0,
     ) -> dict[int, str]:
         """Return {account_id: final_status} from presence_check snapshots.
 
         A "snapshot" is a distinct detected_at timestamp (one detection
         window writes all its rows in a single transaction).
 
-        Rules (per enrolled student):
-          * never detected            → absent (also when no scan ran)
-          * missing from last snapshot → early_left (signed-in-then-left)
-          * first detected later than (scan start + late_grace) → late
-          * otherwise                  → present
+        Rules (per enrolled student), checked in this order:
+          1. never detected in any snapshot
+                 → absent (also when no scan ran)
+          2. detected, but detected in fewer than ``minimum_presence_ratio``%
+             (floor-rounded) of the snapshots taken from their OWN first
+             detection onward — i.e. even restricted to the snapshots that
+             could plausibly have caught them, they were still mostly missed
+                 → absent
+          3. detected, meets the presence-ratio floor, but ABSENT FROM EVERY
+             ONE of the last ``tail_ratio``% of the session's snapshots
+             (floor-rounded, at least 1)
+                 → early_left (signed in, then left before the end)
+          4. first detected later than (scan start + late_grace_seconds)
+                 → late
+          5. otherwise
+                 → present
 
-        ``late_grace_seconds`` is the configurable tolerance (U34): a
-        student first seen within this many seconds of the scan starting
-        still counts as on-time.
+        Replaces an earlier version of this rule that only ever looked at
+        the single very-last snapshot to decide early_left: one missed
+        detection on the final snapshot was enough to brand someone who
+        was present almost the entire class as early_left, while someone
+        who left mid-class but happened to be caught on the last snapshot
+        was not flagged at all. Using a floor-rounded percentage of the
+        tail, plus an overall presence-ratio floor, absorbs a single missed
+        detection without losing the ability to catch a genuine early exit.
+
+        The presence-ratio denominator (step 2) is counted only from the
+        student's own first detection onward, not the whole session, so a
+        student who simply arrived late is not double-penalised for
+        snapshots taken before they showed up — that case is instead
+        handled by the separate ``late`` check in step 4.
+
+        ``late_grace_seconds``, ``minimum_presence_ratio`` and
+        ``tail_ratio`` are all admin-configurable (U34).
         """
         try:
             cur.execute(
@@ -338,22 +372,32 @@ class AttendanceSession:
         if not snapshots:
             return {acc: "absent" for acc in roster}
 
-        scan_start, last = snapshots[0], snapshots[-1]
-        seen_last: set[int] = set()
+        scan_start = snapshots[0]
+        tail_count = max(1, math.floor(len(snapshots) * (tail_ratio / 100.0)))
+        tail_snapshots = set(snapshots[-tail_count:])
+
         first_seen: dict[int, Any] = {}
+        detected_snapshots: dict[int, set] = {}
         for acc, ts, seen in rows:
             if not seen:
                 continue
+            detected_snapshots.setdefault(acc, set()).add(ts)
             if acc not in first_seen or ts < first_seen[acc]:
                 first_seen[acc] = ts
-            if ts == last:
-                seen_last.add(acc)
 
         result: dict[int, str] = {}
         for acc in roster:
             if acc not in first_seen:
                 result[acc] = "absent"
-            elif acc not in seen_last:
+                continue
+
+            applicable = [s for s in snapshots if s >= first_seen[acc]]
+            required = math.floor(len(applicable) * (minimum_presence_ratio / 100.0))
+            detected_count = len(detected_snapshots[acc])
+
+            if detected_count < required:
+                result[acc] = "absent"
+            elif not (detected_snapshots[acc] & tail_snapshots):
                 result[acc] = "early_left"
             elif (first_seen[acc] - scan_start).total_seconds() > late_grace_seconds:
                 result[acc] = "late"
