@@ -43,6 +43,8 @@ _DEFAULT_MIN_RATE = 70.0
 _DEFAULT_ABSENCE_THRESHOLD = 3
 _DEFAULT_LATE_GRACE = 600
 _DEFAULT_DETECTION_INTERVAL = 1200  # 20 min between detection windows (U03)
+_DEFAULT_MINIMUM_PRESENCE_RATIO = 50.0  # within-session presence floor
+_DEFAULT_TAIL_RATIO = 20.0  # fraction of final snapshots checked for early_left
 
 
 def load_threshold_config(database_url: str) -> dict[str, Any]:
@@ -55,7 +57,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
         with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT minimum_attendance_rate, absence_threshold,
-                          late_grace_seconds, detection_interval_seconds
+                          late_grace_seconds, detection_interval_seconds,
+                          minimum_presence_ratio, tail_ratio
                    FROM attendance_threshold_config WHERE configid = 1"""
             )
             row = cur.fetchone()
@@ -65,6 +68,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
                     "absence_threshold": int(row[1]),
                     "late_grace_seconds": int(row[2]),
                     "detection_interval_seconds": int(row[3]),
+                    "minimum_presence_ratio": float(row[4]),
+                    "tail_ratio": float(row[5]),
                 }
     except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
             psycopg2.OperationalError):
@@ -76,6 +81,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
         "absence_threshold": _DEFAULT_ABSENCE_THRESHOLD,
         "late_grace_seconds": _DEFAULT_LATE_GRACE,
         "detection_interval_seconds": _DEFAULT_DETECTION_INTERVAL,
+        "minimum_presence_ratio": _DEFAULT_MINIMUM_PRESENCE_RATIO,
+        "tail_ratio": _DEFAULT_TAIL_RATIO,
     }
 
 
@@ -594,6 +601,8 @@ class AttendanceRecord:
         minimum_rate: float | None = None,
         late_grace_seconds: int | None = None,
         detection_interval_seconds: int | None = None,
+        minimum_presence_ratio: float | None = None,
+        tail_ratio: float | None = None,
         updated_by: int | None = None,
     ) -> dict[str, Any]:
         """Persist threshold updates to attendance_threshold_config (U34)."""
@@ -609,6 +618,12 @@ class AttendanceRecord:
         if detection_interval_seconds is not None:
             if detection_interval_seconds < 3 or detection_interval_seconds > 86400:
                 raise HTTPException(400, "detection_interval_seconds must be between 3 and 86400")
+        if minimum_presence_ratio is not None:
+            if minimum_presence_ratio < 0 or minimum_presence_ratio > 100:
+                raise HTTPException(400, "minimum_presence_ratio must be between 0 and 100")
+        if tail_ratio is not None:
+            if tail_ratio < 0 or tail_ratio > 100:
+                raise HTTPException(400, "tail_ratio must be between 0 and 100")
 
         # Build a parameterised UPDATE so we only touch the supplied fields.
         sets, params = [], []
@@ -624,6 +639,12 @@ class AttendanceRecord:
         if detection_interval_seconds is not None:
             sets.append("detection_interval_seconds = %s")
             params.append(int(detection_interval_seconds))
+        if minimum_presence_ratio is not None:
+            sets.append("minimum_presence_ratio = %s")
+            params.append(float(minimum_presence_ratio))
+        if tail_ratio is not None:
+            sets.append("tail_ratio = %s")
+            params.append(float(tail_ratio))
         if updated_by is not None:
             sets.append("updated_by = %s")
             params.append(updated_by)
@@ -657,6 +678,8 @@ class AttendanceRecord:
             "minimum_attendance_rate": cfg["minimum_attendance_rate"],
             "late_grace_seconds": cfg["late_grace_seconds"],
             "detection_interval_seconds": cfg["detection_interval_seconds"],
+            "minimum_presence_ratio": cfg["minimum_presence_ratio"],
+            "tail_ratio": cfg["tail_ratio"],
         }
 
 
@@ -809,6 +832,8 @@ class ThresholdBody(BaseModel):
     minimum_rate: float | None = None
     late_grace_seconds: int | None = None
     detection_interval_seconds: int | None = None
+    minimum_presence_ratio: float | None = None
+    tail_ratio: float | None = None
 
 
 @router.patch("/admin/config/absence-threshold")
@@ -820,6 +845,7 @@ def admin_configure_absence_threshold(
     return _svc(request).configureAbsenceThreshold(
         body.consecutive_threshold, body.minimum_rate,
         body.late_grace_seconds, body.detection_interval_seconds,
+        body.minimum_presence_ratio, body.tail_ratio,
         updated_by=user.account_id,
     )
 

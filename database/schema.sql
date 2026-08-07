@@ -414,13 +414,35 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_THRESHOLD_CONFIG (
     -- U03: default gap between detection windows during a scan (20 minutes).
     detection_interval_seconds  INTEGER     NOT NULL DEFAULT 1200
                                             CHECK (detection_interval_seconds BETWEEN 3 AND 86400),
+    -- Within-session presence ratio: fraction (0-100) of a student's own
+    -- applicable snapshot count (counted from their first detection onward,
+    -- so a late arrival isn't penalised for snapshots taken before they
+    -- showed up) they must be detected in, or the session is 'absent'
+    -- outright rather than 'early_left'. Floor-rounded when applied.
+    minimum_presence_ratio       FLOAT       NOT NULL DEFAULT 50.0
+                                            CHECK (minimum_presence_ratio BETWEEN 0 AND 100),
+    -- Fraction (0-100) of the session's final snapshots (floor-rounded,
+    -- minimum 1) that must ALL be misses for a student to be marked
+    -- 'early_left' rather than 'present'/'late'. Adaptive to snapshot count
+    -- rather than a fixed wall-clock cutoff, so it isn't thrown off by
+    -- session length or by scanning a pre-recorded video.
+    tail_ratio                   FLOAT       NOT NULL DEFAULT 20.0
+                                            CHECK (tail_ratio BETWEEN 0 AND 100),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by                  INTEGER     REFERENCES USER_ACCOUNT(AccountID)
 );
 
--- Idempotent add for databases created before this column existed.
+-- Idempotent adds for databases created before these columns existed —
+-- ADD COLUMN ... NOT NULL DEFAULT backfills the existing single config row
+-- with the default automatically, so it is never left NULL.
 ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
     ADD COLUMN IF NOT EXISTS detection_interval_seconds INTEGER NOT NULL DEFAULT 1200;
+ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
+    ADD COLUMN IF NOT EXISTS minimum_presence_ratio FLOAT NOT NULL DEFAULT 50.0
+        CHECK (minimum_presence_ratio BETWEEN 0 AND 100);
+ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
+    ADD COLUMN IF NOT EXISTS tail_ratio FLOAT NOT NULL DEFAULT 20.0
+        CHECK (tail_ratio BETWEEN 0 AND 100);
 
 INSERT INTO ATTENDANCE_THRESHOLD_CONFIG (ConfigID) VALUES (1)
 ON CONFLICT DO NOTHING;

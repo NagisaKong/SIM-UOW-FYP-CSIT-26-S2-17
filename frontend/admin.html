@@ -507,6 +507,14 @@
         <label>Absence reminder threshold (sessions)
           <input type="number" name="consecutive_threshold" min="1" max="100" required>
         </label>
+        <label>Minimum in-session presence (%)
+          <input type="number" name="minimum_presence_ratio" min="0" max="100" step="0.1" required>
+          <span class="muted small">Floor-rounded share of a student's own applicable snapshots they must be detected in, or the session counts as absent outright.</span>
+        </label>
+        <label>Early-left tail window (%)
+          <input type="number" name="tail_ratio" min="0" max="100" step="0.1" required>
+          <span class="muted small">Floor-rounded share of the session's final snapshots (at least 1) that must ALL be misses to flag early_left.</span>
+        </label>
         <button type="submit">Save</button>
         <p id="att-config-msg" class="small"></p>
       </form>
