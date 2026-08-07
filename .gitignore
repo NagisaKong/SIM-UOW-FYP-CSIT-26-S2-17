@@ -26,7 +26,8 @@ __pycache__/
 .venv/
 venv/
 
-demo.bat
+# The Windows launcher (FYP-26-S2-17_FRAS_System_Launcher.bat) IS tracked:
+# FTD 5.5.2 lists it as a change-controlled configuration item.
 demo.sh
 
 # Ignore AI Model Weights

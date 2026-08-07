@@ -16,6 +16,8 @@ models/stylegan
 *.pth
 *.pt
 *.pkl
-demo.bat
+FYP-26-S2-17_FRAS_System_Launcher.bat
+scripts/fras_launcher_gui.ps1
+setup.bat
 demo.sh
 *.md

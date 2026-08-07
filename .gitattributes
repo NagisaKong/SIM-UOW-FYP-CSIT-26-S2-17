@@ -1,0 +1,4 @@
+# Windows batch files must keep CRLF: cmd.exe mis-seeks CALL/GOTO labels
+# in LF-only .bat files, which surfaces as "cannot find the batch label".
+*.bat text eol=crlf
+*.ps1 text eol=crlf

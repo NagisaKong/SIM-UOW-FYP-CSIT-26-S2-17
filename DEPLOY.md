@@ -12,6 +12,36 @@ python scripts/setup.py
 On Windows you can double-click **`setup.bat`** instead; it creates `.venv`
 first if there isn't one, so packages never land system-wide by accident.
 
+Or double-click **`FYP-26-S2-17_FRAS_System_Launcher.bat`**, which opens a
+point-and-click window. **START SYSTEM** is the demo path — API, frontend and
+browser in one step — and **Stop system** shuts both servers down again by
+listening port, which is the reliable way when the API is in its own window
+where `Ctrl+C` never reaches it. Around those sit the same `scripts/setup.py`
+under **Install deps**, the database seed, `check_gpu.py`, `pytest`/`ruff`,
+and the ST measurement runs below. It delegates to these scripts rather than
+reimplementing them, and it works even with no `.venv` and no dependencies
+installed — which is the state **Install deps** exists to fix.
+
+Each button opens its own console window, so `Ctrl+C` stops a server and the
+destructive-action confirmations behave exactly as they do on the command line.
+The GUI itself holds no logic: every button re-invokes the `.bat` with an
+action token (`launcher.bat system`, `launcher.bat stop`, `launcher.bat pytest`,
+…), which is also how you script a single step. Run it with `--console` for the text menu instead —
+that is the automatic fallback where PowerShell is unavailable.
+
+The terminal that Windows opens on double-click closes itself a few seconds
+later, once the GUI is up, leaving only the window. It comes back when you
+press **Text menu**. That is done by re-spawning the GUI with
+`CREATE_NO_WINDOW` rather than by hiding the console: under Windows Terminal —
+the default host for a double-clicked `.bat` on Windows 11 — `SW_HIDE`,
+`-WindowStyle Hidden` and `FreeConsole()` all leave the window on screen,
+because `GetConsoleWindow()` returns the ConPTY pseudo-window rather than the
+real one. Not allocating a console is the only host-independent fix.
+
+> The window itself is `scripts/fras_launcher_gui.ps1`. Don't try to open that
+> directly: Windows gives `.ps1` no file association, so double-clicking one
+> does nothing. The `.bat` in the repo root is the only entry point.
+
 It is safe to re-run: an existing `.env` is never overwritten, CUDA wheels are
 never installed on a machine without a GPU, and `--check` reports what it would
 do without changing anything. Then fill in `DATABASE_URL` (ask the project
@@ -31,6 +61,27 @@ python scripts/check_gpu.py --fix        # only if you have an NVIDIA GPU
 
 `.env.example` documents every `AI_*` knob and the measured reason for each
 default, so it is worth reading once even if the script does the work.
+
+### The GAN enhancer is an optional extra
+
+`gfpgan` / `realesrgan` / `basicsr` live in `requirements-enhancer.txt`, not
+`requirements.txt`. Without them `build_enhancer()` returns `ClaheEnhancer`
+and everything else works unchanged, so an optional component no longer fails
+the whole install:
+
+```bash
+pip install -r requirements-enhancer.txt      # Python 3.10-3.12
+```
+
+They cannot be installed on **Python 3.13**. `basicsr` 1.4.2 (last released
+2022) reads its own version with `exec()` + `locals()` inside a function, and
+PEP 667 made `locals()` return an independent snapshot in 3.13, so its build
+backend fails with `KeyError: '__version__'` before anything installs.
+
+The project supports 3.10-3.13, so this affects only the top of that range.
+`Dockerfile` and CI pin **3.11** and install the packages normally; a dev
+machine on 3.13 gets the CLAHE baseline instead — which is what the hosted
+deployment runs anyway (`AI_USE_ENHANCER=false`).
 
 > Point `DATABASE_URL` at a **local** Postgres for testing. `tests/` exercises
 > the real database — it creates accounts, sessions and embeddings — so running

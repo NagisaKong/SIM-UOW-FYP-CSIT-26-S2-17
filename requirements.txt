@@ -54,14 +54,13 @@ argon2-cffi>=23.1.0
 mediapipe>=0.10.14
 ultralytics>=8.2.0
 
-# --- GAN-based face restoration for low-light enhancement (AI_ENHANCER) ---
-# Backs GanEnhancer in core/attendancePipeline.py. Both are heavy; if you need
-# the lightweight baseline instead, set AI_ENHANCER=clahe rather than removing
-# these — the code already falls back to CLAHE automatically when they are
-# unavailable, so leaving them installed but unused costs nothing at runtime.
-gfpgan>=1.3.8
-realesrgan>=0.3.0
-basicsr>=1.4.2
+# --- GAN-based face restoration (AI_ENHANCER) — moved out, see below ------
+# gfpgan / realesrgan / basicsr now live in requirements-enhancer.txt. They
+# cannot be installed on Python 3.13+ (basicsr 1.4.2 reads its own version via
+# exec() + locals(), which PEP 667 broke, so its build backend raises
+# KeyError: '__version__'), and having them here failed the whole install for
+# an optional component. build_enhancer() already falls back to CLAHE when
+# they are absent.
 
 
 # --- StyleGAN Synthetic Generation -----------------------------------

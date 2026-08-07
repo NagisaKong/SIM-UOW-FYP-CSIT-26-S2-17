@@ -1,0 +1,23 @@
+# Optional: GAN-based face restoration for the low-light path (AI_ENHANCER).
+#
+#     pip install -r requirements-enhancer.txt
+#
+# Backs GanEnhancer in core/attendancePipeline.py. Without these,
+# build_enhancer() falls back to ClaheEnhancer — the pipeline stays fully
+# functional, which is why they are not in requirements.txt.
+#
+# REQUIRES PYTHON 3.10-3.12. The project documents 3.10-3.13; these packages
+# cover all of that range except 3.13. basicsr 1.4.2 was last released in 2022
+# and reads its own version with exec() + locals() inside a function, and PEP
+# 667 made locals() return an independent snapshot in 3.13, so the build
+# backend dies with KeyError: '__version__' before anything is installed.
+# There is no workaround short of patching basicsr.
+#
+# Dockerfile and CI pin 3.11, so they install here normally.
+#
+# basicsr also imports torchvision.transforms.functional_tensor, removed in
+# torchvision 0.17+. core/attendancePipeline.py installs a shim for that at
+# import time — do not delete it while these packages are supported.
+gfpgan>=1.3.8
+realesrgan>=0.3.0
+basicsr>=1.4.2
