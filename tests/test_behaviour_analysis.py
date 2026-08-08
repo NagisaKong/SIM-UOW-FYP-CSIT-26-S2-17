@@ -16,13 +16,13 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 
 from core import behaviourAnalysis as ba
+from core.attendancePipeline import AIConfig
 from core.behaviourAnalysis import (
     BehaviourAnalysisService,
     HeatmapAccumulator,
@@ -252,11 +252,14 @@ def test_event_and_heatmap_rows_round_trip():
     import psycopg2
 
     db = os.environ["DATABASE_URL"]
-    cfg = SimpleNamespace(
-        phone_conf=0.35, ear_consec_seconds=2.0, phone_consec_samples=3,
-        phone_model="yolov8n.pt", phone_imgsz=1280,
-        heatmap_grid=(8, 6), heatmap_flush_seconds=60,
-    )
+    # The real config, not a hand-rolled stub. A SimpleNamespace here only
+    # duplicated AIConfig field for field, and drifted the moment
+    # BehaviourAnalysisService.__init__ started reading cfg.ctx_id — a break
+    # this test could not catch locally, since it only runs in CI. The values
+    # are irrelevant to what is asserted below: _write_events() and
+    # _write_heatmap() never touch cfg, and conftest pins AI_CTX_ID=-1 so the
+    # phone detector is constructed for CPU (it loads its model lazily anyway).
+    cfg = AIConfig()
     svc = BehaviourAnalysisService(cfg, db)
 
     with psycopg2.connect(db) as conn, conn.cursor() as cur:
