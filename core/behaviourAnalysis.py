@@ -326,6 +326,7 @@ class InClassBehaviour:
         """
 
         """  if not tuning:
+        if not tuning:
             return
         columns = [k for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS) if k in tuning]
         if not columns:
@@ -346,6 +347,7 @@ class InClassBehaviour:
                 "Detection thresholds need the latest schema — run "
                 "database/schema.sql, then save again.",
             )"""
+            )
 
     def _upsert_config(
         self, course_id: int, enabled: bool,
