@@ -371,10 +371,11 @@ async function loadAppealableSessions(selectedRecordId) {
     for (const r of records) {
       const o = document.createElement("option");
       o.value = r.record_id;
-      o.textContent = `${r.course_code} — ${fmt(r.start_time)} (${r.status})`;
+      o.textContent = `${r.course_code} — ${fmtShort(r.start_time)} (${r.status})`;
       sel.appendChild(o);
     }
     if (selectedRecordId != null) sel.value = String(selectedRecordId);
+    syncSelectTitle(sel);
   } catch (e) {
     sel.innerHTML = `<option value="">${e.message}</option>`;
     sel.disabled = true;
@@ -387,8 +388,11 @@ document.getElementById("appeal-form").addEventListener("submit", async (e) => {
   const msg = document.getElementById("appeal-msg");
   msg.textContent = "";
   const fd = new FormData(e.target);
+  const doc = fd.get("supporting_doc");
   try {
-    await api("/student/appeals", {
+    // Same two-step shape as the leave form: the appeal is created first, so
+    // a rejected or oversized attachment never costs the student the appeal.
+    const created = await api("/student/appeals", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
@@ -396,8 +400,26 @@ document.getElementById("appeal-form").addEventListener("submit", async (e) => {
         reason: fd.get("reason"),
       }),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = "Appeal submitted.";
+    let uploadError = null;
+    if (doc && doc.size) {
+      const upload = new FormData();
+      upload.append("file", doc);
+      try {
+        await api(`/student/appeals/${created.appeal_id}/document`, {
+          method: "POST",
+          body: upload,
+        });
+      } catch (ex) {
+        uploadError = ex.message;
+      }
+    }
+    if (uploadError) {
+      msg.style.color = "#b45309";
+      msg.textContent = `Appeal submitted, but the document was not attached: ${uploadError}`;
+    } else {
+      msg.style.color = "#16a34a";
+      msg.textContent = "Appeal submitted.";
+    }
     e.target.reset();
     loadAppeals();
     showAppealsView("list");
@@ -413,7 +435,7 @@ async function loadAppeals() {
   try {
     const res = await api("/student/appeals");
     if (!res.appeals.length) {
-      body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No appeals.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No appeals.")));
       return;
     }
     for (const a of res.appeals) {
@@ -421,12 +443,13 @@ async function loadAppeals() {
         el("td", {}, a.appealid),
         el("td", {}, a.attendancerecordid),
         el("td", {}, a.reason),
+        el("td", {}, a.has_document ? (a.supporting_doc_name || "Attached") : "—"),
         el("td", {}, el("span", {class: "badge"}, a.status)),
         el("td", {}, fmt(a.created_at)),
       ));
     }
   } catch (e) {
-    body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "error"}, e.message)));
   }
 }
 
@@ -453,6 +476,7 @@ function fillAnalyticsCourses(records) {
     sel.appendChild(o);
   }
   if (prev && seen.has(Number(prev))) sel.value = prev;
+  syncSelectTitle(sel);
 }
 
 async function loadStudentAnalytics() {
@@ -555,9 +579,10 @@ async function loadLeave() {
     for (const s of sessions) {
       const o = document.createElement("option");
       o.value = s.session_id;
-      o.textContent = `#${s.session_id} ${s.course_code} — ${fmt(s.start_time)}`;
+      o.textContent = `#${s.session_id} ${s.course_code} · ${fmtShort(s.start_time)}`;
       sel.appendChild(o);
     }
+    syncSelectTitle(sel);
   } catch { /* leave dropdown empty */ }
   loadMyLeave();
 }
@@ -568,7 +593,7 @@ async function loadMyLeave() {
   try {
     const res = await api("/student/leave-applications");
     if (!res.applications.length) {
-      body.append(el("tr", {}, el("td", {colspan: 5, class: "muted"}, "No leave applications.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No leave applications.")));
       return;
     }
     for (const a of res.applications) {
@@ -576,12 +601,13 @@ async function loadMyLeave() {
         el("td", {}, `${a.course_code} — ${a.course_name}`),
         el("td", {}, fmt(a.start_time)),
         el("td", {}, a.reason),
+        el("td", {}, a.has_document ? (a.supporting_doc_name || "Attached") : "—"),
         el("td", {}, el("span", {class: "badge"}, a.status)),
         el("td", {}, a.reviewer_comment || "—"),
       ));
     }
   } catch (e) {
-    body.append(el("tr", {}, el("td", {colspan: 5, class: "error"}, e.message)));
+    body.append(el("tr", {}, el("td", {colspan: 6, class: "error"}, e.message)));
   }
 }
 
@@ -590,19 +616,40 @@ document.getElementById("leave-form").addEventListener("submit", async (e) => {
   const msg = document.getElementById("leave-msg");
   msg.textContent = "";
   const fd = new FormData(e.target);
-  const doc = fd.get("supporting_doc_url");
+  const doc = fd.get("supporting_doc");
   try {
-    await api("/student/leave-applications", {
+    // The application itself is created first, on its own. The attachment is
+    // a separate call so that a rejected or oversized file costs the student
+    // the upload only — never the application they just wrote.
+    const created = await api("/student/leave-applications", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         session_id: Number(fd.get("session_id")),
         reason: fd.get("reason"),
-        supporting_doc_url: doc ? doc : null,
       }),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = "Leave application submitted.";
+    let uploadError = null;
+    if (doc && doc.size) {
+      const upload = new FormData();
+      upload.append("file", doc);
+      try {
+        await api(`/student/leave-applications/${created.leave_application_id}/document`, {
+          method: "POST",
+          body: upload,
+        });
+      } catch (ex) {
+        uploadError = ex.message;
+      }
+    }
+    if (uploadError) {
+      msg.style.color = "#b45309";
+      msg.textContent =
+        `Leave application submitted, but the document was not attached: ${uploadError}`;
+    } else {
+      msg.style.color = "#16a34a";
+      msg.textContent = "Leave application submitted.";
+    }
     e.target.reset();
     loadMyLeave();
     showLeaveView("list");
@@ -614,22 +661,46 @@ document.getElementById("leave-form").addEventListener("submit", async (e) => {
 
 // ── Face re-register ──────────────────────────────────────────
 // ── Face Re-register: shared submit ───────────────────────────
-async function submitFaceBlob(blob, filename) {
+// `append` decides whether this photo REPLACES the student's stored face or
+// is added as an extra angle. One frontal photo taken in one place is the
+// main cause of look-alike mix-ups in a classroom: a live frame captured at
+// a different distance or under different lighting drifts away from that
+// single vector. Several angles give the matcher something to be sure about.
+async function submitFaceBlob(blob, filename, append = false) {
   const msg = document.getElementById("face-msg");
   msg.style.color = "#555";
-  msg.textContent = "Uploading...";
+  msg.textContent = append ? "Adding angle..." : "Uploading...";
   const fd = new FormData();
   fd.append("account_id", user.account_id);
   fd.append("file", blob, filename);
+  if (append) fd.append("append", "true");
   try {
     const res = await api("/register", {method: "POST", body: fd});
     msg.style.color = res.success ? "#16a34a" : "#c0392b";
     msg.textContent = res.message;
+    if (res.success) loadMyFaceGallery();
     return res.success;
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
     return false;
+  }
+}
+
+// Show how many angles are stored, so the student knows whether to add more.
+async function loadMyFaceGallery() {
+  const el_ = document.getElementById("face-gallery-count");
+  if (!el_) return;
+  try {
+    const res = await api("/student/faces");
+    const n = res.count || 0;
+    el_.textContent = n === 0
+      ? "No photo registered yet."
+      : `${n} photo${n > 1 ? "s" : ""} registered.` +
+        (n < 3 ? " Adding 3–5 angles (front, slight left/right, with and without glasses) makes recognition noticeably more reliable." : "");
+    el_.style.color = n > 0 && n < 3 ? "#b06000" : "";
+  } catch {
+    el_.textContent = "";
   }
 }
 
@@ -663,8 +734,16 @@ const faceStartBtn   = document.getElementById("face-cam-start");
 const faceCaptureBtn = document.getElementById("face-cam-capture");
 const faceRetakeBtn  = document.getElementById("face-cam-retake");
 const faceSubmitBtn  = document.getElementById("face-cam-submit");
+const faceAddBtn     = document.getElementById("face-cam-add");
 let faceStream = null;
 let faceBlob = null;
+
+// Both capture buttons act on the same captured blob; only the append flag
+// differs (replace the gallery vs. add another angle).
+function setFaceButtonsEnabled(enabled) {
+  faceSubmitBtn.disabled = !enabled;
+  faceAddBtn.disabled = !enabled;
+}
 
 function stopFaceCam() {
   if (faceStream) faceStream.getTracks().forEach(t => t.stop());
@@ -680,9 +759,14 @@ faceStartBtn.addEventListener("click", async () => {
   faceVideo.style.display = "";
   faceRetakeBtn.style.display = "none";
   faceBlob = null;
-  faceSubmitBtn.disabled = true;
+  setFaceButtonsEnabled(false);
   try {
-    faceStream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    // `ideal` lets the browser fall back if the camera can't do 720p. A
+    // fixed 640x480 request left too little detail margin for SCRFD to
+    // reliably find a face on borderline angles/lighting during enrolment.
+    faceStream = await navigator.mediaDevices.getUserMedia({
+      video: {width: {ideal: 1280}, height: {ideal: 720}},
+    });
     faceVideo.srcObject = faceStream;
     faceStartBtn.disabled = true;
     faceCaptureBtn.disabled = false;
@@ -704,31 +788,35 @@ faceCaptureBtn.addEventListener("click", () => {
     facePreview.style.display = "";
     faceVideo.style.display = "none";
     faceRetakeBtn.style.display = "";
-    faceSubmitBtn.disabled = false;
+    setFaceButtonsEnabled(true);
     stopFaceCam();
   }, "image/jpeg", 0.92);
 });
 
 faceRetakeBtn.addEventListener("click", () => {
   faceBlob = null;
-  faceSubmitBtn.disabled = true;
+  setFaceButtonsEnabled(false);
   faceStartBtn.click();
 });
 
-faceSubmitBtn.addEventListener("click", async () => {
+async function sendCapturedFace(append) {
   if (!faceBlob) return;
-  faceSubmitBtn.disabled = true;
-  const ok = await submitFaceBlob(faceBlob, "face.jpg");
+  setFaceButtonsEnabled(false);
+  const ok = await submitFaceBlob(faceBlob, "face.jpg", append);
   if (ok) {
     facePreview.style.display = "none";
     faceRetakeBtn.style.display = "none";
     faceBlob = null;
   } else {
-    faceSubmitBtn.disabled = false;
+    setFaceButtonsEnabled(true);
   }
-});
+}
+
+faceSubmitBtn.addEventListener("click", () => sendCapturedFace(false));
+faceAddBtn.addEventListener("click", () => sendCapturedFace(true));
 
 window.addEventListener("pagehide", stopFaceCam);
 
 loadAttendance();
 loadAppeals();
+loadMyFaceGallery();

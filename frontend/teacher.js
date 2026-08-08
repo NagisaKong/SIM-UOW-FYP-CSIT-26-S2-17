@@ -40,6 +40,7 @@ async function loadCourses() {
       sel.appendChild(o);
     }
     if (prev) sel.value = prev;
+    syncSelectTitle(sel);
   }
 }
 
@@ -138,10 +139,13 @@ async function loadLiveSessions() {
   for (const s of res.sessions || []) {
     const o = document.createElement("option");
     o.value = s.attendancesessionid;
-    o.textContent = `#${s.attendancesessionid} ${s.course_code} (${fmt(s.start_time)})`;
+    // "·" rather than parentheses: two characters saved matters here, see
+    // the note on fmtShort — this label lives inside a narrow <select>.
+    o.textContent = `#${s.attendancesessionid} ${s.course_code} · ${fmtShort(s.start_time)}`;
     sel.appendChild(o);
   }
   if (prev) sel.value = prev;
+  syncSelectTitle(sel);
   if (sel.value) refreshLive();
 }
 
@@ -156,9 +160,14 @@ async function refreshLive() {
   loadEarlyLeft(id);
   try {
     const res = await api(`/teacher/sessions/${id}/live`);
+    // A student with no attendance row yet is undecided, not absent: the
+    // final status is only assigned when the session is finalized. Showing
+    // "Absent" mid-lesson told the teacher the opposite of the truth for
+    // everyone the scan had not reached yet.
+    const finalized = (res.session || {}).status === "ended";
     tbody.innerHTML = "";
     for (const r of res.roster || []) {
-      const status = r.attendance_status || "absent";
+      const status = r.attendance_status || (finalized ? "absent" : "pending");
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${r.student_id || "-"}</td>
@@ -171,7 +180,8 @@ async function refreshLive() {
     const sm = res.summary || {};
     document.getElementById("live-summary").textContent =
       `Present ${sm.present || 0} · Late ${sm.late || 0} · Left early ${sm.early_left || 0} · ` +
-      `Absent ${sm.absent || 0} · No record ${sm.no_record || 0}`;
+      `Absent ${sm.absent || 0} · ` +
+      `${finalized ? "No record" : "Pending"} ${sm.no_record || 0}`;
   } catch (e) {
     document.getElementById("live-summary").textContent = "Error: " + e.message;
   }
@@ -204,7 +214,6 @@ async function loadEarlyLeft(id) {
 }
 
 document.getElementById("live-session").addEventListener("change", refreshLive);
-document.getElementById("live-refresh").addEventListener("click", refreshLive);
 
 // ──────────────────────────────────────────────────────────────
 // U03 Classroom camera scan (teacher-activated detection windows)
@@ -221,23 +230,16 @@ const scanStop = document.getElementById("scan-stop");
 const scanAuto = document.getElementById("scan-auto");
 const scanInterval = document.getElementById("scan-interval");
 const scanCountdownToggle = document.getElementById("scan-countdown-toggle");
+const scanDiagnostics = document.getElementById("scan-diagnostics");
 const scanCountdownEl = document.getElementById("scan-countdown");
 const scanMsg = document.getElementById("scan-msg");
+const scanProgressEl = document.getElementById("scan-progress");
+const scanProgressLabel = document.getElementById("scan-progress-label");
 // One entry per opened camera: {deviceId, stream, video, label}.
 let scanCams = [];
 let scanTimer = null;
 let scanBusy = false;
 let scanCountdown = 0;
-
-// Live box preview (detection-only, no attendance recording).
-// The loop is self-throttling: the next round starts PREVIEW_GAP_MS after
-// the previous one finishes, so the effective frame rate adapts to how fast
-// the backend can run inference (fast GPU → several fps; slow CPU → the
-// inference time itself becomes the pace and requests never pile up).
-let previewTimer = null;
-let previewBusy = false;
-const PREVIEW_GAP_MS = 200;
-const previewCanvas = document.createElement("canvas"); // off-screen, separate from capture
 
 // Default the auto-snapshot interval to the admin-configured detection
 // interval (U03/U34). Falls back to the input's existing value on error.
@@ -257,7 +259,6 @@ function currentSessionId() {
 
 function stopScanCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-  stopPreviewLoop();
   stopBehaviourLoop();
   for (const cam of scanCams) cam.stream.getTracks().forEach(t => t.stop());
   scanCams = [];
@@ -368,11 +369,18 @@ scanCamRefresh.addEventListener("click", async () => {
 
 function updateCountdownDisplay() {
   // Only show while auto-scanning is actively running and the toggle is on.
-  if (scanCountdownToggle.checked && scanTimer) {
-    scanCountdownEl.textContent = `Next snapshot in ${scanCountdown}s`;
-  } else {
+  if (!(scanCountdownToggle.checked && scanTimer)) {
     scanCountdownEl.textContent = "";
+    return;
   }
+  // While a round is actually in flight, say so honestly instead of letting
+  // the countdown keep ticking on its own 1-second clock — that used to
+  // desync from when the on-screen boxes really refreshed (the countdown
+  // could already be several seconds into the *next* cycle by the time a
+  // slow round finished).
+  scanCountdownEl.textContent = scanBusy
+    ? "Capturing…"
+    : `Next snapshot in ${scanCountdown}s`;
 }
 
 scanStart.addEventListener("click", async () => {
@@ -415,8 +423,11 @@ scanStart.addEventListener("click", async () => {
     scanCapture.disabled = false;
     scanFinalize.disabled = false;
     scanStop.disabled = false;
-    startPreviewLoop(); // real-time boxes
     startBehaviourLoop(); // CR-06 ~1 fps behaviour sampling (self-stops if disabled)
+    // The on-screen boxes are now driven only by the same accurate scan used
+    // for attendance (captureSnapshot) — no separate fast/approximate loop —
+    // so the box only updates on a manual "Capture Snapshot" click or on the
+    // next Auto-every-N-seconds tick, never off-cadence.
     if (scanAuto.checked) startAutoSnapshots();
   } catch (e) {
     scanMsg.style.color = "#c0392b";
@@ -446,12 +457,22 @@ async function snapshotOneCamera(cam, sessionId) {
 const BEH_STATE_TTL_MS = 8000;
 const behLive = {drowsy: new Set(), phone: new Set(), ts: 0};
 
-function behStateFor(accountId) {
-  if (accountId == null || Date.now() - behLive.ts > BEH_STATE_TTL_MS) return [];
-  const acts = [];
-  if (behLive.drowsy.has(accountId)) acts.push("Sleeping");
-  if (behLive.phone.has(accountId)) acts.push("Using phone");
-  return acts;
+// The live overlay reports a single state — "Not paying attention" — rather
+// than naming sleeping or phone use over a student's head in front of the
+// class. The distinction is still recorded: behaviour_event stores the
+// specific type, and the teacher's Behaviour report breaks it down per
+// student (U32). Merging only the public-facing label keeps the accusation
+// low-stakes while the underlying data stays precise, which matters given
+// these detections are assistive indicators rather than proof.
+// `snapshot` defaults to the live, currently-mutating state for callers
+// outside a scan round (there are none today, but it keeps this usable on
+// its own). Callers INSIDE a round pass a frozen copy — see captureSnapshot.
+function behStateFor(accountId, snapshot = behLive) {
+  if (accountId == null || Date.now() - snapshot.ts > BEH_STATE_TTL_MS) return [];
+  if (snapshot.drowsy.has(accountId) || snapshot.phone.has(accountId)) {
+    return ["Not paying attention"];
+  }
+  return [];
 }
 
 // Draw the detected face boxes returned for one camera onto its overlay.
@@ -459,7 +480,7 @@ function behStateFor(accountId) {
 // frame so CSS scales it onto the displayed video automatically.
 // Colours: green = recognised + attentive, amber = unknown face,
 // red = recognised but flagged sleeping / using phone (label says which).
-function drawScanBoxes(cam, res) {
+function drawScanBoxes(cam, res, behSnapshot) {
   const overlay = cam.overlay;
   if (!overlay) return;
   const fw = res.frame_width || cam.video.videoWidth || 1280;
@@ -478,7 +499,7 @@ function drawScanBoxes(cam, res) {
       color = "#e3a008";
       text = "Unknown";
     } else {
-      const acts = behStateFor(b.account_id);
+      const acts = behStateFor(b.account_id, behSnapshot);
       if (acts.length) {
         color = "#dc2626";
         text = `${b.label} — ${acts.join(" + ")}`;
@@ -495,23 +516,83 @@ function drawScanBoxes(cam, res) {
     ctx.fillRect(x1, ty - fontPx - 2, tw + 10, fontPx + 6);
     ctx.fillStyle = "#fff";
     ctx.fillText(text, x1 + 5, ty);
+
+    // Diagnostic sub-label under an unrecognised face: the nearest gallery
+    // entries and the threshold in force. It distinguishes "nobody is close"
+    // (raise enrolment quality) from "two people are equally close" (the
+    // margin rule refusing to guess) — invisible otherwise.
+    if (!b.recognised && scanDiagnostics.checked && (b.candidates || []).length) {
+      const hint = describeCandidates(b);
+      const smallPx = Math.round(fontPx * 0.62);
+      ctx.font = `${smallPx}px sans-serif`;
+      const hw = ctx.measureText(hint).width;
+      const hy = ty + smallPx + 6;
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(x1, hy - smallPx - 2, hw + 8, smallPx + 6);
+      ctx.fillStyle = "#fde68a";
+      ctx.fillText(hint, x1 + 4, hy);
+      ctx.font = `bold ${fontPx}px sans-serif`;
+    }
   }
 }
 
-// Render the "Detected N: name1, name2…" summary from the union of all
-// cameras' recognised students in the latest snapshot cycle.
-function renderScanDetected(map, totalFaces) {
+// "≈ zhang jiqian 0.38 / DOMINIC 0.31 (need 0.43)" — the top-2 gallery
+// scores plus the active threshold, so the reason for a rejection is
+// readable straight off the video.
+//
+// The scores/threshold shown are ArcFace's UNLESS ArcFace never got to vote
+// for this particular face — which happens when SCRFD missed it and the
+// fallback re-detect (needed to hand MTCNN's box to ArcFace) also came up
+// empty, leaving only the weaker FaceNet model to compare. That case is
+// flagged explicitly rather than silently showing FaceNet's threshold (0.55
+// by default) as if it were ArcFace's (0.40) — a close call from the weaker
+// model can otherwise read as "the system can't tell us apart" when the
+// primary model was never asked.
+function describeCandidates(box) {
+  const top = (box.candidates || []).slice(0, 2).map(c => {
+    const who = c.full_name || c.student_id || `acc#${c.account_id}`;
+    return `${who} ${Number(c.score).toFixed(2)}`;
+  });
+  const need = box.threshold != null ? ` (need ${Number(box.threshold).toFixed(2)})` : "";
+  const modelNote = box.diagnostic_model && box.diagnostic_model !== "arcface"
+    ? `[${box.diagnostic_model}-only, ArcFace unavailable for this face] ` : "";
+  return `${modelNote}≈ ${top.join(" / ")}${need}`;
+}
+
+// Render this round's result: a small stat row (Recognised / Not paying
+// attention) above a row of name chips. `map` is keyed by account_id, so
+// each recognised student can be cross-checked against the live behaviour
+// state (drowsy / phone) to flag and count how many are currently
+// distracted. The separate ~1 fps live badge (#scan-behaviour) sits right
+// below this card and is updated independently by behaviourTick().
+function renderScanDetected(map, behSnapshot) {
   const host = document.getElementById("scan-detected");
   host.innerHTML = "";
-  // Stats line: total faces in frame vs. recognised students.
-  host.append(el("div", {class: "scan-stats small"},
-    `Faces in frame: ${totalFaces} · Recognised: ${map.size}`));
-  if (!map.size) {
-    host.append(el("div", {class: "muted small"}, "No students recognised."));
-    return;
+
+  let distracted = 0;
+  for (const accountId of map.keys()) {
+    if (behStateFor(accountId, behSnapshot).length) distracted++;
   }
+
+  const stats = el("div", {class: "scan-stats-row"},
+    el("span", {class: "scan-stat"},
+      el("span", {class: "scan-stat__value"}, String(map.size)),
+      el("span", {class: "scan-stat__label"}, "recognised")),
+    el("span", {class: "scan-stat scan-stat--alert"},
+      el("span", {class: "scan-stat__value"}, String(distracted)),
+      el("span", {class: "scan-stat__label"}, "not paying attention (this round)")),
+  );
+  host.append(stats);
+
   const names = el("div", {class: "scan-names"});
-  for (const name of map.values()) names.append(el("span", {class: "chip"}, name));
+  if (!map.size) {
+    names.append(el("span", {class: "muted"}, "No students recognised."));
+  } else {
+    for (const [accountId, name] of map.entries()) {
+      const flagged = behStateFor(accountId, behSnapshot).length > 0;
+      names.append(el("span", {class: flagged ? "scan-name scan-name--alert" : "scan-name"}, name));
+    }
+  }
   host.append(names);
 }
 
@@ -519,15 +600,39 @@ async function captureSnapshot() {
   const id = currentSessionId();
   if (!scanCams.length || !id || scanBusy) return;
   scanBusy = true;
-  let ok = 0, fail = 0, totalFaces = 0;
+  scanProgressEl.classList.add("is-scanning");
+  let ok = 0, fail = 0;
   const detected = new Map(); // account_id -> display name (union across cameras)
+  // Frozen once, before the per-camera loop starts. Cameras are scanned
+  // sequentially and each round-trip involves the full detection + ensemble
+  // pipeline, so a multi-camera round can take several seconds — long enough
+  // for the independent ~1 fps behaviourTick() to move behLive forward
+  // mid-round. Reading behLive fresh per-camera meant a box painted early in
+  // the round could be green (as of ITS capture time) while the end-of-round
+  // summary — read later, after behLive had already advanced — flagged that
+  // same student red: two renders of the same signal at two different
+  // instants, shown together as if they agreed. Freezing it once here makes
+  // every box and the summary consistent with each other for this round,
+  // even if a newer behaviourTick result lands before the round finishes;
+  // the next round (or the independent live badge below) picks it up.
+  const behSnapshot = {
+    drowsy: new Set(behLive.drowsy), phone: new Set(behLive.phone), ts: behLive.ts,
+  };
   // Sequential: the capture canvas is shared, and it avoids hammering the
-  // backend with N simultaneous uploads.
+  // backend with N simultaneous uploads. Since it's sequential, "camera i
+  // of N" is real progress, not a guess — the bar itself is still just an
+  // indeterminate "still working" animation, because we have no visibility
+  // into how far a single camera's own recognition call has gotten.
+  const n = scanCams.length;
+  let i = 0;
   for (const cam of scanCams) {
+    i++;
+    scanProgressLabel.textContent = n > 1
+      ? `Scanning camera ${i} of ${n}…`
+      : "Scanning…";
     try {
       const res = await snapshotOneCamera(cam, id);
-      drawScanBoxes(cam, res);
-      totalFaces += res.faces_in_frame || (res.boxes ? res.boxes.length : 0);
+      drawScanBoxes(cam, res, behSnapshot);
       for (const d of (res.detected || [])) {
         detected.set(d.account_id, d.full_name || d.student_id || `acc#${d.account_id}`);
       }
@@ -538,7 +643,9 @@ async function captureSnapshot() {
       console.warn(`Scan failed for ${cam.label}:`, ex);
     }
   }
-  renderScanDetected(detected, totalFaces);
+  scanProgressEl.classList.remove("is-scanning");
+  scanProgressLabel.textContent = "";
+  renderScanDetected(detected, behSnapshot);
   scanMsg.style.color = fail ? "#c0392b" : "#16a34a";
   scanMsg.textContent =
     `Captured ${scanCams.length} camera${scanCams.length > 1 ? "s" : ""}` +
@@ -548,55 +655,6 @@ async function captureSnapshot() {
 }
 
 scanCapture.addEventListener("click", captureSnapshot);
-
-// ── Live box preview ──────────────────────────────────────────
-// Polls a detection-only endpoint per camera and redraws the boxes, giving a
-// near-real-time overlay without writing any attendance rows.
-async function previewOneCamera(cam) {
-  const v = cam.video;
-  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
-  previewCanvas.width = w; previewCanvas.height = h;
-  previewCanvas.getContext("2d").drawImage(v, 0, 0, w, h);
-  const blob = await new Promise(r => previewCanvas.toBlob(r, "image/jpeg", 0.7));
-  const fd = new FormData();
-  fd.append("file", blob, "preview.jpg");
-  return api("/teacher/preview-detect", {method: "POST", body: fd});
-}
-
-async function previewTick() {
-  if (previewBusy || !scanCams.length) return;
-  previewBusy = true;
-  const detected = new Map(); // label -> name (deduped across cameras)
-  let totalFaces = 0;
-  for (const cam of scanCams) {
-    try {
-      const res = await previewOneCamera(cam);
-      drawScanBoxes(cam, res);
-      totalFaces += res.faces_in_frame || 0;
-      for (const b of (res.boxes || [])) {
-        if (b.recognised) detected.set(b.label, b.label);
-      }
-    } catch (e) {
-      // Transient errors (busy model, network) — skip this round silently.
-    }
-  }
-  renderScanDetected(detected, totalFaces);
-  previewBusy = false;
-}
-
-function startPreviewLoop() {
-  stopPreviewLoop();
-  const loop = async () => {
-    await previewTick();
-    if (scanCams.length) previewTimer = setTimeout(loop, PREVIEW_GAP_MS);
-  };
-  previewTimer = setTimeout(loop, 100);
-}
-
-function stopPreviewLoop() {
-  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  previewBusy = false;
-}
 
 // ── CR-06 behaviour sampling (~1 fps) ─────────────────────────
 // While the classroom scan is running, one frame per second is sent to the
@@ -611,6 +669,18 @@ const behStatusEl = document.getElementById("scan-behaviour");
 let behTimer = null;
 let behBusy = false;
 let behCamIndex = 0;
+
+// Rebuilds the small badge below the round-summary card. `pulsing` is true
+// only for the actively-updating "N not paying attention" state; the rarer
+// status messages (starting / disabled / service off) get a static dot —
+// the full "what is this and how often does it update" explanation lives
+// in the badge's `title` tooltip (set once in teacher.html) rather than
+// repeated inline every time, which is what made the old text so long.
+function setLiveBadge(text, pulsing) {
+  behStatusEl.className = "scan-live-badge" + (pulsing ? "" : " scan-live-badge--muted");
+  behStatusEl.innerHTML = "";
+  behStatusEl.append(el("span", {class: "scan-live-badge__dot"}), el("span", {}, text));
+}
 
 async function behaviourTick() {
   if (behBusy || !scanCams.length) return;
@@ -632,7 +702,7 @@ async function behaviourTick() {
     });
     if (res.enabled === false) {
       // U35: switched off for this course — no point sampling further.
-      behStatusEl.textContent = "Behaviour analysis: disabled for this course (U35).";
+      setLiveBadge("Behaviour analysis disabled for this course (U35).", false);
       stopBehaviourLoop(true);
       return;
     }
@@ -643,13 +713,16 @@ async function behaviourTick() {
     behLive.ts = Date.now();
     const drowsy = (res.drowsy_active || []).length;
     const phone = (res.phone_active || []).length;
-    behStatusEl.textContent =
-      `Behaviour analysis: sampling ~1 fps · drowsy now ${drowsy} · on phone now ${phone}` +
-      (res.events_written ? ` · +${res.events_written} event(s) recorded` : "");
+    setLiveBadge(
+      `${new Set([...(res.drowsy_active || []), ...(res.phone_active || [])]).size}` +
+      ` not paying attention right now (drowsy ${drowsy} / phone ${phone})` +
+      (res.events_written ? ` · +${res.events_written} event(s) recorded` : ""),
+      true,
+    );
   } catch (e) {
     // 503 = AI_BEHAVIOUR off on this server; anything else transient → keep trying.
     if (/not running|AI_BEHAVIOUR/i.test(e.message)) {
-      behStatusEl.textContent = "Behaviour analysis: service not enabled on this server.";
+      setLiveBadge("Behaviour analysis service not enabled on this server.", false);
       stopBehaviourLoop(true);
     }
   } finally {
@@ -659,7 +732,7 @@ async function behaviourTick() {
 
 function startBehaviourLoop() {
   stopBehaviourLoop();
-  behStatusEl.textContent = "Behaviour analysis: starting…";
+  setLiveBadge("Starting…", false);
   const loop = async () => {
     await behaviourTick();
     if (scanCams.length && behTimer !== null) {
@@ -677,7 +750,10 @@ function stopBehaviourLoop(keepMessage = false) {
   behLive.drowsy.clear();
   behLive.phone.clear();
   behLive.ts = 0;
-  if (!keepMessage && behStatusEl) behStatusEl.textContent = "";
+  if (!keepMessage && behStatusEl) {
+    behStatusEl.className = "scan-live-badge";
+    behStatusEl.innerHTML = "";
+  }
 }
 
 function startAutoSnapshots() {
@@ -685,15 +761,30 @@ function startAutoSnapshots() {
   const secs = Math.max(3, Number(scanInterval.value) || 15);
   scanCountdown = secs;
   updateCountdownDisplay();
-  // 1-second tick drives both the countdown and the capture, so the
-  // displayed number always matches when the next snapshot fires.
-  scanTimer = setInterval(async () => {
+  // Ticks every 1s, but never starts a new cycle while the previous
+  // capture is still in flight: if the countdown would hit 0 before that
+  // round has actually finished, the display just holds at 0
+  // ("Capturing…") instead of quietly restarting a fresh count — that
+  // mismatch used to make the boxes look like they refreshed several
+  // seconds "late" compared to what the countdown showed, when really the
+  // countdown had just kept ticking on its own during a slow round.
+  scanTimer = setInterval(() => {
+    if (scanBusy) {
+      scanCountdown = 0;
+      updateCountdownDisplay();
+      return;
+    }
     scanCountdown -= 1;
     if (scanCountdown <= 0) {
-      scanCountdown = secs;
-      await captureSnapshot();
+      scanCountdown = 0;
+      updateCountdownDisplay();
+      captureSnapshot().then(() => {
+        scanCountdown = secs;
+        updateCountdownDisplay();
+      });
+    } else {
+      updateCountdownDisplay();
     }
-    updateCountdownDisplay();
   }, 1000);
 }
 
@@ -884,10 +975,11 @@ async function loadBehaviourSessions() {
   for (const s of (res.sessions || []).filter(x => x.status === "active" || x.status === "ended")) {
     const o = document.createElement("option");
     o.value = s.attendancesessionid;
-    o.textContent = `#${s.attendancesessionid} ${s.course_code} (${fmt(s.start_time)}) [${s.status}]`;
+    o.textContent = `#${s.attendancesessionid} ${s.course_code} · ${fmtShort(s.start_time)} [${s.status}]`;
     sel.appendChild(o);
   }
   if (prev) sel.value = prev;
+  syncSelectTitle(sel);
 }
 
 async function loadBehaviourData() {
@@ -1106,31 +1198,49 @@ document.getElementById("report-form").addEventListener("submit", async e => {
 // ──────────────────────────────────────────────────────────────
 // U31 Leave Applications tab
 // ──────────────────────────────────────────────────────────────
+// List shows no reason column; the teacher opens a detail view to read the
+// reason, the student's record for the course and any supporting document,
+// and decides there (mirrors the appeals UX below).
+let currentLeave = null;
+let leaveDocUrl = null;   // object URL of the document currently on screen
+
+function showLeaveView(view) {
+  document.getElementById("tleave-list-view").style.display = view === "list" ? "" : "none";
+  document.getElementById("tleave-detail-view").style.display = view === "detail" ? "" : "none";
+  if (view === "list") releaseLeaveDoc();
+}
+
+// Object URLs stay alive until explicitly revoked; without this every opened
+// application would leak its document for the life of the page.
+function releaseLeaveDoc() {
+  if (leaveDocUrl) {
+    URL.revokeObjectURL(leaveDocUrl);
+    leaveDocUrl = null;
+  }
+}
+
+
 async function loadTeacherLeave() {
   const body = document.getElementById("tleave-body");
   const msg = document.getElementById("tleave-msg");
   body.innerHTML = "";
   msg.textContent = "";
+  showLeaveView("list");
   try {
     const res = await api("/teacher/leave-applications");
     const apps = res.applications || [];
     if (!apps.length) {
-      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No pending leave applications.")));
+      body.append(el("tr", {}, el("td", {colspan: 6, class: "muted"}, "No leave applications.")));
       return;
     }
     for (const a of apps) {
-      const doc = a.supporting_doc_url
-        ? el("a", {href: a.supporting_doc_url, target: "_blank"}, "View")
-        : "—";
-      const approveBtn = el("button", {onclick: () => reviewLeave(a.leaveapplicationid, "approved")}, "Approve");
-      const rejectBtn = el("button", {class: "danger", onclick: () => reviewLeave(a.leaveapplicationid, "rejected")}, "Reject");
       body.append(el("tr", {},
         el("td", {}, `${a.full_name || "-"} (${a.student_id || a.accountid})`),
         el("td", {}, `${a.course_code} — ${a.course_name}`),
         el("td", {}, fmt(a.start_time)),
-        el("td", {}, a.reason),
-        el("td", {}, doc),
-        el("td", {}, approveBtn, rejectBtn),
+        el("td", {}, fmt(a.created_at)),
+        el("td", {}, el("span", {class: "badge"}, a.status)),
+        el("td", {}, el("button", {onclick: () => openTeacherLeave(a)}, "View")),
       ));
     }
   } catch (e) {
@@ -1139,18 +1249,74 @@ async function loadTeacherLeave() {
   }
 }
 
-async function reviewLeave(leaveId, decision) {
-  const comment = prompt(`Optional comment for this ${decision} decision:`, "") || null;
-  const msg = document.getElementById("tleave-msg");
+// "3 of 5 sessions (60%)" — the denominator counts only sessions that have
+// actually ended, so an in-progress class never drags the rate down.
+function formatAttendance(a) {
+  const done = a.sessions_completed || 0;
+  if (!done) return "No completed sessions yet";
+  const attended = a.attended || 0;
+  return `${attended} of ${done} sessions (${Math.round(attended / done * 100)}%)`;
+}
+
+async function openTeacherLeave(a) {
+  currentLeave = a;
+  const pending = a.status === "pending";
+  document.getElementById("tleave-student").textContent =
+    `${a.full_name || "-"} (${a.student_id || a.accountid})`;
+  document.getElementById("tleave-session").textContent =
+    `${a.course_code} — ${a.course_name} · ${fmt(a.start_time)}`;
+  document.getElementById("tleave-created").textContent = fmt(a.created_at);
+  document.getElementById("tleave-status").textContent = a.status;
+  document.getElementById("tleave-reviewed").textContent =
+    a.reviewed_at ? fmt(a.reviewed_at) : "Not reviewed yet";
+  document.getElementById("tleave-attendance").textContent = formatAttendance(a);
+  document.getElementById("tleave-reason").textContent = a.reason || "-";
+
+  // Pending: write a comment. Already decided: show what was written.
+  const box = document.getElementById("tleave-comment");
+  const readonly = document.getElementById("tleave-comment-readonly");
+  box.style.display = pending ? "" : "none";
+  box.value = "";
+  readonly.style.display = pending ? "none" : "";
+  readonly.textContent = a.reviewer_comment || "No comment was left.";
+  document.getElementById("tleave-actions").style.display = pending ? "" : "none";
+  document.getElementById("tleave-detail-msg").textContent = "";
+
+  showLeaveView("detail");
+  await showLeaveDocument(a);
+}
+
+async function showLeaveDocument(a) {
+  releaseLeaveDoc();
+  leaveDocUrl = await renderSupportingDocument({
+    url: `/leave-applications/${a.leaveapplicationid}/document`,
+    hasDocument: a.has_document,
+    name: a.supporting_doc_name,
+    type: a.supporting_doc_type,
+    ids: {
+      section: "tleave-doc-section",
+      image: "tleave-doc-image",
+      link: "tleave-doc-link",
+      msg: "tleave-doc-msg",
+    },
+  });
+}
+
+async function reviewLeave(decision) {
+  if (!currentLeave) return;
+  const msg = document.getElementById("tleave-detail-msg");
+  const comment = document.getElementById("tleave-comment").value.trim() || null;
   try {
-    await api(`/teacher/leave-applications/${leaveId}`, {
+    await api(`/teacher/leave-applications/${currentLeave.leaveapplicationid}`, {
       method: "PATCH",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({decision, comment}),
     });
-    msg.style.color = "#16a34a";
-    msg.textContent = `Application ${decision}.`;
-    loadTeacherLeave();
+    showLeaveView("list");
+    await loadTeacherLeave();
+    const listMsg = document.getElementById("tleave-msg");
+    listMsg.style.color = "#16a34a";
+    listMsg.textContent = `Application ${decision}.`;
   } catch (ex) {
     msg.style.color = "#c0392b";
     msg.textContent = ex.message;
@@ -1158,6 +1324,9 @@ async function reviewLeave(leaveId, decision) {
 }
 
 document.getElementById("leave-refresh").addEventListener("click", loadTeacherLeave);
+document.getElementById("tleave-back").addEventListener("click", () => showLeaveView("list"));
+document.getElementById("tleave-approve").addEventListener("click", () => reviewLeave("approved"));
+document.getElementById("tleave-reject").addEventListener("click", () => reviewLeave("rejected"));
 
 // ──────────────────────────────────────────────────────────────
 // U08 Attendance Appeals tab (teacher review)
@@ -1165,10 +1334,15 @@ document.getElementById("leave-refresh").addEventListener("click", loadTeacherLe
 // read the reason and decide there (mirrors the Admin appeals UX).
 // ──────────────────────────────────────────────────────────────
 let currentAppeal = null;
+let appealDocUrl = null;
 
 function showAppealsView(view) {
   document.getElementById("tappeals-list-view").style.display = view === "list" ? "" : "none";
   document.getElementById("tappeals-detail-view").style.display = view === "detail" ? "" : "none";
+  if (view === "list" && appealDocUrl) {
+    URL.revokeObjectURL(appealDocUrl);
+    appealDocUrl = null;
+  }
 }
 
 async function loadTeacherAppeals() {
@@ -1200,8 +1374,12 @@ async function loadTeacherAppeals() {
   }
 }
 
-function openTeacherAppeal(a) {
+async function openTeacherAppeal(a) {
   currentAppeal = a;
+  if (appealDocUrl) {
+    URL.revokeObjectURL(appealDocUrl);
+    appealDocUrl = null;
+  }
   document.getElementById("tappeal-student").textContent =
     `${a.full_name || "-"} (${a.student_id || a.accountid})`;
   document.getElementById("tappeal-session").textContent =
@@ -1216,6 +1394,18 @@ function openTeacherAppeal(a) {
     a.status === "pending" ? "" : "none";
   document.getElementById("tappeal-detail-msg").textContent = "";
   showAppealsView("detail");
+  appealDocUrl = await renderSupportingDocument({
+    url: `/appeals/${a.appealid}/document`,
+    hasDocument: a.has_document,
+    name: a.supporting_doc_name,
+    type: a.supporting_doc_type,
+    ids: {
+      section: "tappeal-doc-section",
+      image: "tappeal-doc-image",
+      link: "tappeal-doc-link",
+      msg: "tappeal-doc-msg",
+    },
+  });
 }
 
 async function reviewAppeal(status) {

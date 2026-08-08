@@ -1,5 +1,137 @@
 # Deployment Guide
 
+## 0. Local setup after pulling the branch
+
+One command does all of it — dependencies, `.env`, and the GPU wheels if the
+machine has an NVIDIA card:
+
+```bash
+python scripts/setup.py
+```
+
+On Windows you can double-click **`setup.bat`** instead; it creates `.venv`
+first if there isn't one, so packages never land system-wide by accident.
+
+Or double-click **`FYP-26-S2-17_FRAS_System_Launcher.bat`**, which opens a
+point-and-click window. **START SYSTEM** is the demo path — API, frontend and
+browser in one step — and **Stop system** shuts both servers down again by
+listening port, which is the reliable way when the API is in its own window
+where `Ctrl+C` never reaches it. Around those sit the same `scripts/setup.py`
+under **Install deps**, the database seed, `check_gpu.py`, `pytest`/`ruff`,
+and the ST measurement runs below. It delegates to these scripts rather than
+reimplementing them, and it works even with no `.venv` and no dependencies
+installed — which is the state **Install deps** exists to fix.
+
+Each button opens its own console window, so `Ctrl+C` stops a server and the
+destructive-action confirmations behave exactly as they do on the command line.
+The GUI itself holds no logic: every button re-invokes the `.bat` with an
+action token (`launcher.bat system`, `launcher.bat stop`, `launcher.bat pytest`,
+…), which is also how you script a single step. Run it with `--console` for the text menu instead —
+that is the automatic fallback where PowerShell is unavailable.
+
+The terminal that Windows opens on double-click closes itself a few seconds
+later, once the GUI is up, leaving only the window. It comes back when you
+press **Text menu**. That is done by re-spawning the GUI with
+`CREATE_NO_WINDOW` rather than by hiding the console: under Windows Terminal —
+the default host for a double-clicked `.bat` on Windows 11 — `SW_HIDE`,
+`-WindowStyle Hidden` and `FreeConsole()` all leave the window on screen,
+because `GetConsoleWindow()` returns the ConPTY pseudo-window rather than the
+real one. Not allocating a console is the only host-independent fix.
+
+> The window itself is `scripts/fras_launcher_gui.ps1`. Don't try to open that
+> directly: Windows gives `.ps1` no file association, so double-clicking one
+> does nothing. The `.bat` in the repo root is the only entry point.
+
+It is safe to re-run: an existing `.env` is never overwritten, CUDA wheels are
+never installed on a machine without a GPU, and `--check` reports what it would
+do without changing anything. Then fill in `DATABASE_URL` (ask the project
+leader) and:
+
+```bash
+python -m pytest tests/ -q
+```
+
+Doing it by hand instead, if you prefer:
+
+```bash
+cp .env.example .env                     # copy .env.example .env  on Windows
+pip install -r requirements.txt
+python scripts/check_gpu.py --fix        # only if you have an NVIDIA GPU
+```
+
+`.env.example` documents every `AI_*` knob and the measured reason for each
+default, so it is worth reading once even if the script does the work.
+
+### The GAN enhancer is an optional extra
+
+`gfpgan` / `realesrgan` / `basicsr` live in `requirements-enhancer.txt`, not
+`requirements.txt`. Without them `build_enhancer()` returns `ClaheEnhancer`
+and everything else works unchanged, so an optional component no longer fails
+the whole install:
+
+```bash
+pip install -r requirements-enhancer.txt      # Python 3.10-3.12
+```
+
+They cannot be installed on **Python 3.13**. `basicsr` 1.4.2 (last released
+2022) reads its own version with `exec()` + `locals()` inside a function, and
+PEP 667 made `locals()` return an independent snapshot in 3.13, so its build
+backend fails with `KeyError: '__version__'` before anything installs.
+
+The project supports 3.10-3.13, so this affects only the top of that range.
+`Dockerfile` and CI pin **3.11** and install the packages normally; a dev
+machine on 3.13 gets the CLAHE baseline instead — which is what the hosted
+deployment runs anyway (`AI_USE_ENHANCER=false`).
+
+> Point `DATABASE_URL` at a **local** Postgres for testing. `tests/` exercises
+> the real database — it creates accounts, sessions and embeddings — so running
+> the suite against the production Supabase instance writes test data into it.
+
+### If you have an NVIDIA GPU
+
+`requirements.txt` gives everyone the CPU runtimes, so a GPU is not used until
+you switch the wheels — and that failure is silent, not loud. Run:
+
+```bash
+python scripts/check_gpu.py --fix
+```
+
+Then set `AI_DEVICE=cuda` and `AI_CTX_ID=0` in `.env`. Both halves are needed:
+correct wheels with `AI_CTX_ID=-1` still runs on CPU, and `cuda` with CPU
+wheels also runs on CPU.
+
+Confirm what is actually running rather than assuming — `/health` reports the
+live configuration, and InsightFace logs the provider per model at startup:
+
+```bash
+python -c "from core.attendancePipeline import AIConfig; c=AIConfig(); print(c.log_summary())"
+```
+
+### Two ways to tune the models
+
+| | Changed by | Applies |
+|---|---|---|
+| **Environment (`AI_*`)** | editing `.env`, restart required | server-wide; detector choice, thresholds, device, ensemble |
+| **Admin UI** | Model Management (U22–U25), Behaviour Analysis (U35) | at runtime, no restart; recognition similarity threshold and per-course behaviour parameters |
+
+Prefer the Admin UI for anything it covers: the recognition threshold deployed
+there is persisted to `MODEL_CONFIGS` and hot-applied, so it survives restarts
+and is shared by everyone, whereas `.env` is per-machine. Use `AI_*` for
+choices the UI does not expose — which detector, which device, which models
+are loaded at all.
+
+If you change a detection default, re-measure rather than guessing:
+
+```bash
+python tests/record_behaviour_clips.py --camera 0 --out clips
+python tests/run_behaviour_st.py --clips clips --evidence docs/evidence
+python tests/run_ml_st.py --clips clips --evidence docs/evidence
+```
+
+`clips/` holds real facial images and is gitignored — keep it that way.
+
+---
+
 Production stack: **Vercel** (static frontend) + **Railway** (FastAPI backend, CPU) +
 **Supabase** (Postgres + pgvector, already live).
 
@@ -122,15 +254,86 @@ AI_BEHAVIOUR=true            # master switch (default false)
 # AI_EAR_CONSEC_SECONDS=2.0  # signal must persist this long to count
 # AI_MAR_THRESHOLD=0.6       # yawn cutoff
 # AI_HEADPOSE_PITCH_DEG=30   # head-tilt cutoff (degrees)
-# AI_PHONE_CONF=0.35         # YOLO phone confidence
+# AI_PHONE_CONF=0.50         # YOLO phone confidence (see model table below)
 # AI_PHONE_CONSEC=3          # consecutive ~1s samples to confirm phone use
-# AI_PHONE_MODEL=yolov8n.pt  # yolov8s/8m: much better distant-phone recall (GPU)
+# AI_PHONE_MODEL=yolov8n.pt  # see the model table below BEFORE changing this
 # AI_PHONE_IMGSZ=1280        # YOLO input size; the 640 default shrinks frames
 #                            # and loses phones beyond ~3 m. Match your capture
 #                            # width on GPU: 1920 for 1080p cameras, 1280 for 720p
+# AI_HEADPOSE_SOURCE=insightface  # 'solvepnp' to skip the extra pose model
+# AI_HEADPOSE_DELTA_DEG=10   # degrees below personal baseline = head down
+# AI_PHONE_STATIC_SAMPLES=45 # samples of an immobile box before it is judged
+#                            # a room fixture (wall switch, socket) and ignored
 # AI_HEATMAP_GRID=8x6        # heatmap cells (cols x rows)
 # AI_HEATMAP_FLUSH_SECONDS=60
 ```
+
+### Choosing the phone-detection model — bigger is not better
+
+Measured against labelled clips at `AI_PHONE_CONF=0.50`
+(`docs/evidence/behaviour_st_analysis.md`), recall / false-alarm rate:
+
+| Model | @1280 | @1920 |
+|---|---|---|
+| `yolov8n.pt` | 1.00 / **0.000** | 1.00 / **0.000** |
+| `yolov8s.pt` | 1.00 / 0.267 | 0.90 / 0.324 |
+| `yolov8m.pt` | 1.00 / **0.000** | 1.00 / **0.000** |
+| `yolov8l.pt` | — | 1.00 / 0.106 |
+
+> ⚠️ **Do not use `yolov8s.pt`.** It scores a wall-mounted switch panel as a
+> phone at up to 0.59 confidence, and because that panel never moves it lands
+> in the same student's reach region every sample — one student gets blamed
+> all lesson. `yolov8n` and `yolov8m` do not do this at any input size.
+>
+> Do not try to fix a noisy model by raising `AI_PHONE_CONF`. It suppresses
+> the false alarms but costs real recall: at 0.80, `yolov8n` drops from 1.00
+> to 0.25 because genuine phones do not always score high either.
+
+`_StaticBoxFilter` is a second line of defence — a detection whose position is
+unchanged for `AI_PHONE_STATIC_SAMPLES` samples is treated as a fixture. Note
+that temporal debouncing does *not* help here: a permanently present false
+positive is exactly what the episode tracker confirms into an event.
+
+### GPU setup
+
+`requirements.txt` installs the CPU runtimes on purpose — it has to work on
+Railway, in CI, and on machines without an NVIDIA card. GPU machines switch
+afterwards:
+
+```bash
+python scripts/check_gpu.py --fix
+```
+
+That runs the three steps in the only order that works; `requirements-gpu.txt`
+documents them if you would rather do it by hand.
+
+The ordering matters because `onnxruntime` (CPU) and `onnxruntime-gpu` install
+into the same `onnxruntime/` package directory. With both present the CPU build
+wins and `get_available_providers()` silently omits CUDA — the app then runs on
+CPU while appearing configured for GPU. Uninstalling the CPU build is therefore
+required, and it deletes files the GPU build shares, which is why the reinstall
+that follows uses `--force-reinstall`.
+
+Verify before trusting it. `pip list` is not evidence — it will show
+`onnxruntime-gpu` as installed while the CPU build silently shadows it:
+
+```bash
+python scripts/check_gpu.py
+```
+
+It checks the driver, both package sets, the actual provider list, the torch
+build and the `.env` configuration, and prints the exact fix if any of them
+disagree. Exit code 1 means the GPU will not be used.
+
+The app also reports this at runtime: `/health` returns the live device, and
+both InsightFace and the YOLO phone detector log a warning at startup when a
+GPU was requested but they came up on CPU.
+
+Measured on an RTX 4060 Laptop, per behaviour frame: InsightFace detection +
+3D pose 17 ms, YOLOv8s@1920 32 ms (vs 377 ms on CPU), MediaPipe 7 ms — about
+56 ms total against the 1 fps budget, roughly 17x headroom. The same clips
+score **identically** on CPU and GPU: the GPU buys capacity for heavier models
+(`AI_DETECT_TILES=2x2`, `yolov8m`), not accuracy by itself.
 
 Notes:
 - `pip install mediapipe ultralytics` is required (already in

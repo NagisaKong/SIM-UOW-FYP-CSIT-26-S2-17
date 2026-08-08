@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core import all_routers
 from core.attendancePipeline import AIConfig, AttendancePipeline
-from core.attendanceSession import purge_expired_recordings
+from core.attendanceSession import expire_overdue_sessions, purge_expired_recordings
 
 # ── Connection timezone patch ─────────────────────────────────────────
 # Supabase's connection pooler (Supavisor) ignores database/role-level
@@ -83,6 +83,12 @@ async def lifespan(app: FastAPI):
             print(f"[retention] purged {stats['recordings_deleted']} expired recording(s)")
     except Exception as exc:  # noqa: BLE001 — startup must not crash on cleanup
         print(f"[retention] skipped: {exc}")
+    # U15: close out any session whose scheduled end passed while the server
+    # was down, so nothing is still "in progress" once it comes back up.
+    try:
+        expire_overdue_sessions(cfg.database_url, force=True)
+    except Exception as exc:  # noqa: BLE001 — startup must not crash on cleanup
+        print(f"[expiry] startup sweep skipped: {exc}")
     yield
 
 

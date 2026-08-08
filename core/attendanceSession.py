@@ -11,6 +11,7 @@ Attributes: sessionDetail* (start_time, end_time, status, courseid, …)
 from __future__ import annotations
 
 import contextlib
+import math
 from typing import Any
 
 import psycopg2
@@ -69,6 +70,82 @@ def purge_expired_recordings(database_url: str) -> dict[str, int]:
     return {"recordings_deleted": deleted_rows, "files_removed": removed_files}
 
 
+# Overdue-session sweep. Read endpoints call this, so it runs on the teacher's
+# 5-second dashboard poll as well; the throttle keeps that from turning into a
+# query storm without needing a scheduler process.
+_EXPIRY_SWEEP_INTERVAL_SECONDS = 60.0
+_last_expiry_sweep = 0.0
+
+
+def expire_overdue_sessions(
+    database_url: str,
+    background_tasks: BackgroundTasks | None = None,
+    force: bool = False,
+) -> dict[str, int]:
+    """Close out sessions whose scheduled end_time has passed.
+
+    A session used to stay `active` forever if the teacher never pressed
+    "End Scan & Finalize" — it kept showing up as selectable long after the
+    class was over, and no student ever got a final status for it.
+
+    Two cases, deliberately handled differently:
+
+    * `active`   — the scan did run, so finalise it exactly as the teacher
+      would have: aggregate the presence_check snapshots into per-student
+      statuses and send the U05 notifications.
+    * `scheduled` — the scan never started, so there is no attendance
+      evidence at all. Marking the whole class absent for a lesson nobody
+      recorded would both misrepresent the students and trip the U29
+      long-term-absence reminders, so the session is cancelled instead.
+
+    Best-effort: one failing session must not stop the others, and the sweep
+    must never take down the request that triggered it.
+    """
+    import time
+
+    global _last_expiry_sweep
+
+    now = time.time()
+    if not force and now - _last_expiry_sweep < _EXPIRY_SWEEP_INTERVAL_SECONDS:
+        return {"finalized": 0, "cancelled": 0, "skipped": 0}
+    _last_expiry_sweep = now
+
+    finalized = cancelled = skipped = 0
+    try:
+        with _db(database_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT attendancesessionid, status
+                   FROM attendance_session
+                   WHERE status IN ('scheduled', 'active')
+                     AND end_time IS NOT NULL
+                     AND end_time < NOW()"""
+            )
+            overdue = cur.fetchall()
+    except (psycopg2.errors.UndefinedTable, psycopg2.OperationalError):
+        return {"finalized": 0, "cancelled": 0, "skipped": 0}
+
+    svc = AttendanceSession(database_url)
+    for session_id, status in overdue:
+        try:
+            if status == "active":
+                svc.endSession(session_id, background_tasks)
+                finalized += 1
+            else:
+                with _db(database_url) as c, c.cursor() as cur:
+                    cur.execute(
+                        """UPDATE attendance_session SET status = 'cancelled'
+                           WHERE attendancesessionid = %s AND status = 'scheduled'""",
+                        (session_id,),
+                    )
+                cancelled += 1
+        except Exception as exc:  # noqa: BLE001 — never break the caller
+            skipped += 1
+            print(f"[expiry] session {session_id} ({status}) not closed: {exc}")
+    if finalized or cancelled:
+        print(f"[expiry] finalized {finalized}, cancelled {cancelled} overdue session(s)")
+    return {"finalized": finalized, "cancelled": cancelled, "skipped": skipped}
+
+
 class AttendanceSession:
     """Session entity (start/end + view detail + course scheduling)."""
 
@@ -100,17 +177,27 @@ class AttendanceSession:
     def startSession(self, session_id: int) -> dict[str, Any]:
         with _db(self.database_url) as c, c.cursor() as cur:
             cur.execute(
-                "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+                """SELECT courseid, status, end_time IS NOT NULL AND end_time < NOW()
+                   FROM attendance_session WHERE attendancesessionid = %s""",
                 (session_id,),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Session not found")
-            course_id, current_status = row
+            course_id, current_status, overdue = row
             if current_status == "active":
                 raise HTTPException(409, "This session is already in progress")
             if current_status == "ended":
                 raise HTTPException(409, "This session has ended and cannot be started again")
+            if current_status == "cancelled":
+                raise HTTPException(409, "This session has been cancelled")
+            # Closes the gap between the expiry sweep and this click: without
+            # it, a session that went overdue seconds ago could still be
+            # started and would then be cancelled out from under the teacher.
+            if overdue:
+                raise HTTPException(
+                    409, "This session's scheduled end time has already passed",
+                )
             cur.execute(
                 """SELECT 1 FROM attendance_session
                    WHERE courseid = %s AND status = 'active'
@@ -172,8 +259,13 @@ class AttendanceSession:
             )
             roster = [r[0] for r in cur.fetchall()]
 
-            late_grace = load_threshold_config(self.database_url)["late_grace_seconds"]
-            final_status = self._aggregate_presence(cur, session_id, roster, late_grace)
+            thresholds = load_threshold_config(self.database_url)
+            final_status = self._aggregate_presence(
+                cur, session_id, roster,
+                late_grace_seconds=thresholds["late_grace_seconds"],
+                minimum_presence_ratio=thresholds["minimum_presence_ratio"],
+                tail_ratio=thresholds["tail_ratio"],
+            )
 
             counts = {"present": 0, "late": 0, "early_left": 0, "absent": 0}
             for acc in roster:
@@ -218,22 +310,50 @@ class AttendanceSession:
 
     # ── internal: snapshot aggregation (U03) ─────────────────────────
     def _aggregate_presence(
-        self, cur, session_id: int, roster: list[int], late_grace_seconds: int = 0,
+        self, cur, session_id: int, roster: list[int],
+        late_grace_seconds: int = 0,
+        minimum_presence_ratio: float = 50.0,
+        tail_ratio: float = 20.0,
     ) -> dict[int, str]:
         """Return {account_id: final_status} from presence_check snapshots.
 
         A "snapshot" is a distinct detected_at timestamp (one detection
         window writes all its rows in a single transaction).
 
-        Rules (per enrolled student):
-          * never detected            → absent (also when no scan ran)
-          * missing from last snapshot → early_left (signed-in-then-left)
-          * first detected later than (scan start + late_grace) → late
-          * otherwise                  → present
+        Rules (per enrolled student), checked in this order:
+          1. never detected in any snapshot
+                 → absent (also when no scan ran)
+          2. detected, but detected in fewer than ``minimum_presence_ratio``%
+             (floor-rounded) of the snapshots taken from their OWN first
+             detection onward — i.e. even restricted to the snapshots that
+             could plausibly have caught them, they were still mostly missed
+                 → absent
+          3. detected, meets the presence-ratio floor, but ABSENT FROM EVERY
+             ONE of the last ``tail_ratio``% of the session's snapshots
+             (floor-rounded, at least 1)
+                 → early_left (signed in, then left before the end)
+          4. first detected later than (scan start + late_grace_seconds)
+                 → late
+          5. otherwise
+                 → present
 
-        ``late_grace_seconds`` is the configurable tolerance (U34): a
-        student first seen within this many seconds of the scan starting
-        still counts as on-time.
+        Replaces an earlier version of this rule that only ever looked at
+        the single very-last snapshot to decide early_left: one missed
+        detection on the final snapshot was enough to brand someone who
+        was present almost the entire class as early_left, while someone
+        who left mid-class but happened to be caught on the last snapshot
+        was not flagged at all. Using a floor-rounded percentage of the
+        tail, plus an overall presence-ratio floor, absorbs a single missed
+        detection without losing the ability to catch a genuine early exit.
+
+        The presence-ratio denominator (step 2) is counted only from the
+        student's own first detection onward, not the whole session, so a
+        student who simply arrived late is not double-penalised for
+        snapshots taken before they showed up — that case is instead
+        handled by the separate ``late`` check in step 4.
+
+        ``late_grace_seconds``, ``minimum_presence_ratio`` and
+        ``tail_ratio`` are all admin-configurable (U34).
         """
         try:
             cur.execute(
@@ -252,22 +372,32 @@ class AttendanceSession:
         if not snapshots:
             return {acc: "absent" for acc in roster}
 
-        scan_start, last = snapshots[0], snapshots[-1]
-        seen_last: set[int] = set()
+        scan_start = snapshots[0]
+        tail_count = max(1, math.floor(len(snapshots) * (tail_ratio / 100.0)))
+        tail_snapshots = set(snapshots[-tail_count:])
+
         first_seen: dict[int, Any] = {}
+        detected_snapshots: dict[int, set] = {}
         for acc, ts, seen in rows:
             if not seen:
                 continue
+            detected_snapshots.setdefault(acc, set()).add(ts)
             if acc not in first_seen or ts < first_seen[acc]:
                 first_seen[acc] = ts
-            if ts == last:
-                seen_last.add(acc)
 
         result: dict[int, str] = {}
         for acc in roster:
             if acc not in first_seen:
                 result[acc] = "absent"
-            elif acc not in seen_last:
+                continue
+
+            applicable = [s for s in snapshots if s >= first_seen[acc]]
+            required = math.floor(len(applicable) * (minimum_presence_ratio / 100.0))
+            detected_count = len(detected_snapshots[acc])
+
+            if detected_count < required:
+                result[acc] = "absent"
+            elif not (detected_snapshots[acc] & tail_snapshots):
                 result[acc] = "early_left"
             elif (first_seen[acc] - scan_start).total_seconds() > late_grace_seconds:
                 result[acc] = "late"
@@ -360,10 +490,14 @@ def teacher_list_courses(
 @router.get("/teacher/sessions")
 def teacher_list_sessions(
     request: Request,
+    background_tasks: BackgroundTasks,
     course_id: int | None = None,
     status: str | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    # This feeds the teacher's "Active session" picker, so it is the place
+    # where an overdue session must not still be on offer.
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     clauses, params = [], []
     if course_id is not None:
         clauses.append("s.courseid = %s")
@@ -424,6 +558,21 @@ class CourseBody(BaseModel):
     course_code: str
     course_name: str
     teacher_id: int | None = None
+
+
+class CoursePatchBody(BaseModel):
+    """Partial update — only the fields actually sent are written.
+
+    `teacher_id` needs three states, not two: absent = leave the assignment
+    alone, null = unassign, an id = reassign. A plain `int | None` default of
+    None could not tell "not sent" from "clear it", so the sentinel below is
+    what distinguishes them.
+    """
+
+    course_code: str | None = None
+    course_name: str | None = None
+    teacher_id: int | None = None
+    status: str | None = None
 
 
 class CourseStatusBody(BaseModel):
@@ -494,6 +643,63 @@ def admin_create_course(
         )
         course_id = cur.fetchone()[0]
     return {"success": True, "course_id": course_id}
+
+
+@router.patch("/admin/courses/{course_id}")
+def admin_update_course(
+    course_id: int, body: CoursePatchBody, request: Request,
+    user: CurrentUser = Depends(require_role("admin")),
+):
+    """U26: edit a course's details (code, name, assigned teacher, status)."""
+    supplied = body.model_dump(exclude_unset=True)
+    if not supplied:
+        raise HTTPException(400, "No fields to update")
+    if "status" in supplied and supplied["status"] not in ("active", "inactive"):
+        raise HTTPException(400, "Invalid status")
+    for field in ("course_code", "course_name"):
+        if field in supplied and not (supplied[field] or "").strip():
+            raise HTTPException(400, f"{field} cannot be empty")
+
+    with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
+        cur.execute("SELECT 1 FROM course WHERE courseid = %s", (course_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Course not found")
+
+        # course_code carries a UNIQUE constraint; catching the clash here
+        # gives the admin the offending code instead of a 500 from the driver.
+        if "course_code" in supplied:
+            cur.execute(
+                "SELECT 1 FROM course WHERE course_code = %s AND courseid <> %s",
+                (supplied["course_code"], course_id),
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    409, f"Course code {supplied['course_code']} already exists",
+                )
+
+        # Same rule as course creation: an assignment must point at a teacher.
+        if supplied.get("teacher_id") is not None:
+            cur.execute(
+                """SELECT up.role FROM user_account ua
+                   JOIN user_profiles up ON up.profileid = ua.profileid
+                   WHERE ua.accountid = %s""",
+                (supplied["teacher_id"],),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Assigned teacher account not found")
+            if row[0] != "teacher":
+                raise HTTPException(400, "Assigned account must be a teacher")
+
+        columns = [f for f in
+                   ("course_code", "course_name", "teacher_id", "status")
+                   if f in supplied]
+        cur.execute(
+            f"UPDATE course SET {', '.join(f'{c_} = %s' for c_ in columns)} "
+            "WHERE courseid = %s",
+            [supplied[c_] for c_ in columns] + [course_id],
+        )
+    return {"success": True, "course_id": course_id, "updated": columns}
 
 
 @router.patch("/admin/courses/{course_id}/status")
@@ -609,9 +815,11 @@ def admin_delete_enrollment(
 
 @router.get("/admin/sessions")
 def admin_list_sessions(
-    request: Request, course_id: int | None = None,
+    request: Request, background_tasks: BackgroundTasks,
+    course_id: int | None = None,
     user: CurrentUser = Depends(require_role("admin")),
 ):
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     sql = """
         SELECT s.attendancesessionid, s.courseid, c.course_code, c.course_name,
                s.start_time, s.end_time, s.status
@@ -672,8 +880,26 @@ def admin_update_session(
         params.append(body.status)
     if not fields:
         raise HTTPException(400, "No fields to update")
-    params.append(session_id)
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
+        # 'ended' and 'cancelled' are terminal. Reopening one would put a
+        # sitting whose attendance is already finalised back in progress, and
+        # the expiry sweep would immediately finalise it a second time.
+        if body.status is not None:
+            cur.execute(
+                "SELECT status FROM attendance_session WHERE attendancesessionid = %s",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Session not found")
+            current = row[0]
+            if current in ("ended", "cancelled") and body.status != current:
+                raise HTTPException(
+                    409,
+                    f"This session is {current} and cannot be reopened; "
+                    "schedule a new session instead",
+                )
+        params.append(session_id)
         cur.execute(
             f"UPDATE attendance_session SET {', '.join(fields)} WHERE attendancesessionid = %s",
             params,

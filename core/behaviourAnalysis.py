@@ -58,6 +58,21 @@ _DEFAULT_FLAGS = {
     "heatmap": False,
 }
 
+# Per-course detection tuning (U35). NULL in the database means "inherit the
+# server-wide AIConfig value", so None is preserved rather than defaulted here.
+_TUNING_KEYS = (
+    "ear_threshold",
+    "mar_threshold",
+    "headpose_pitch_deg",
+    "headpose_delta_deg",
+    "phone_conf",
+    "drowsy_confirm_seconds",
+)
+# Boolean tuning flags, handled alongside _TUNING_KEYS wherever both are
+# needed (column lists, request parsing) but kept separate because they are
+# not FLOAT columns.
+_TUNING_BOOL_KEYS = ("adaptive_ear", "adaptive_headpose")
+
 
 def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
     """Read the per-course behaviour-analysis switch from behaviour_config.
@@ -68,6 +83,41 @@ def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
     try:
         with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
             cur.execute(
+                f"""SELECT enabled, drowsiness, phone_usage, heatmap,
+                          adaptive_ear, adaptive_headpose, {", ".join(_TUNING_KEYS)}
+                   FROM behaviour_config WHERE courseid = %s""",
+                (course_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                flags = {
+                    "enabled": bool(row[0]),
+                    "drowsiness": bool(row[1]),
+                    "phone_usage": bool(row[2]),
+                    "heatmap": bool(row[3]),
+                    "adaptive_ear": bool(row[4]),
+                    "adaptive_headpose": bool(row[5]),
+                }
+                # None is meaningful: it means "no override, use AIConfig".
+                for offset, key in enumerate(_TUNING_KEYS, start=6):
+                    flags[key] = None if row[offset] is None else float(row[offset])
+                return flags
+    except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
+            psycopg2.OperationalError) as exc:
+        # Older database without the tuning columns — fall back to the basic
+        # switches so behaviour analysis still works before the migration.
+        print(f"[behaviour] tuning columns unavailable ({exc}); using base config")
+        return _load_basic_flags(database_url, course_id)
+    except Exception as exc:  # noqa: BLE001 — config read must never 500
+        print(f"[behaviour] config read failed, defaulting to off: {exc}")
+    return dict(_DEFAULT_FLAGS)
+
+
+def _load_basic_flags(database_url: str, course_id: int) -> dict[str, Any]:
+    """Pre-migration fallback: the four original on/off switches only."""
+    try:
+        with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
+            cur.execute(
                 """SELECT enabled, drowsiness, phone_usage, heatmap
                    FROM behaviour_config WHERE courseid = %s""",
                 (course_id,),
@@ -75,16 +125,11 @@ def load_behaviour_config(database_url: str, course_id: int) -> dict[str, bool]:
             row = cur.fetchone()
             if row:
                 return {
-                    "enabled": bool(row[0]),
-                    "drowsiness": bool(row[1]),
-                    "phone_usage": bool(row[2]),
-                    "heatmap": bool(row[3]),
+                    "enabled": bool(row[0]), "drowsiness": bool(row[1]),
+                    "phone_usage": bool(row[2]), "heatmap": bool(row[3]),
                 }
-    except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
-            psycopg2.OperationalError) as exc:
-        print(f"[behaviour] config table unavailable, defaulting to off: {exc}")
-    except Exception as exc:  # noqa: BLE001 — config read must never 500
-        print(f"[behaviour] config read failed, defaulting to off: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[behaviour] base config read failed: {exc}")
     return dict(_DEFAULT_FLAGS)
 
 
@@ -250,7 +295,7 @@ class InClassBehaviour:
     def enableBehaviourAnalysis(
         self, course_id: int,
         drowsiness: bool = True, phone_usage: bool = True, heatmap: bool = True,
-        updated_by: int | None = None,
+        updated_by: int | None = None, tuning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self._upsert_config(
             course_id,
@@ -259,6 +304,7 @@ class InClassBehaviour:
             phone_usage=phone_usage,
             heatmap=heatmap,
             updated_by=updated_by,
+            tuning=tuning,
         )
 
     def disableBehaviourAnalysis(
@@ -269,10 +315,42 @@ class InClassBehaviour:
         )
 
     # ── internal ────────────────────────────────────────────────────
+    @staticmethod
+    def _apply_tuning(cur, course_id: int, tuning: dict[str, Any] | None) -> None:
+        """Write per-course detection thresholds (U35).
+
+        Only keys actually supplied are touched, and an explicit ``None``
+        clears the override so the course falls back to the server default —
+        that distinction is what lets an administrator undo a bad setting
+        without knowing what the global value is.
+        """
+        if not tuning:
+            return
+        columns = [k for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS) if k in tuning]
+        if not columns:
+            return
+        assignments = ", ".join(f"{c} = %s" for c in columns)
+        params = [tuning[c] for c in columns]
+        params.append(course_id)
+        try:
+            cur.execute(
+                f"UPDATE behaviour_config SET {assignments}, updated_at = NOW() "
+                "WHERE courseid = %s",
+                params,
+            )
+        except (psycopg2.errors.UndefinedColumn, psycopg2.errors.UndefinedTable):
+            # Pre-migration database: the on/off switches above still applied.
+            raise HTTPException(
+                503,
+                "Detection thresholds need the latest schema — run "
+                "database/schema.sql, then save again.",
+            )
+
     def _upsert_config(
         self, course_id: int, enabled: bool,
         drowsiness: bool | None = None, phone_usage: bool | None = None,
         heatmap: bool | None = None, updated_by: int | None = None,
+        tuning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             with psycopg2.connect(self.database_url) as conn:
@@ -300,6 +378,7 @@ class InClassBehaviour:
                                          updated_at = NOW()""",
                                 (course_id, drowsiness, phone_usage, heatmap, updated_by),
                             )
+                            self._apply_tuning(cur, course_id, tuning)
                         else:
                             cur.execute(
                                 """INSERT INTO behaviour_config
@@ -504,10 +583,12 @@ class PhoneDetector:
     _COCO_CELL_PHONE = 67
 
     def __init__(self, conf_threshold: float,
-                 model_name: str = "yolov8n.pt", imgsz: int = 1280):
+                 model_name: str = "yolov8n.pt", imgsz: int = 1280,
+                 want_gpu: bool = False):
         self.conf_threshold = conf_threshold
         self.model_name = model_name
         self.imgsz = imgsz
+        self.want_gpu = want_gpu
         self._model = None
         self._failed = False
 
@@ -520,7 +601,16 @@ class PhoneDetector:
             from ultralytics import YOLO  # type: ignore
 
             self._model = YOLO(self.model_name)  # weights download once on first use
-            print(f"[behaviour] phone detector: {self.model_name} @ imgsz={self.imgsz}")
+            device = getattr(self._model, "device", "?")
+            print(f"[behaviour] phone detector: {self.model_name} "
+                  f"@ imgsz={self.imgsz} on {device}")
+            # A CPU-only torch build runs happily and silently at roughly ten
+            # times the latency, which at 1 fps shows up as dropped frames
+            # rather than an error. Say so rather than letting it look normal.
+            if self.want_gpu and "cuda" not in str(device).lower():
+                print("[behaviour] WARNING: GPU requested but YOLO is on CPU. "
+                      "The installed torch is a CPU build — reinstall with "
+                      "--index-url https://download.pytorch.org/whl/cu126")
             return True
         except Exception as exc:  # noqa: BLE001
             print(f"[behaviour] phone detection disabled (ultralytics unavailable): {exc}")
@@ -642,16 +732,225 @@ class _EpisodeTracker:
         return episode
 
 
+class _EyeClosureModel:
+    """Decides "eyes closed" per student, and aggregates it with PERCLOS.
+
+    Two problems with comparing a raw eye-aspect ratio against one constant:
+
+    * Eye aperture varies far more between people than between one person's
+      alert and drowsy states. A literature constant (0.21, from datasets
+      that are not representative of this cohort) marks some students as
+      permanently asleep and never trips for others.
+    * A single low sample is usually a blink, not sleep.
+
+    So the first `baseline_samples` observations establish that student's own
+    open-eye median (people are alert at the start of a lesson), closure is
+    then judged relative to it, and the verdict is PERCLOS — the share of
+    closed samples inside a rolling time window — rather than one frame.
+    """
+
+    def __init__(
+        self, fixed_threshold: float, adaptive: bool, baseline_samples: int,
+        baseline_ratio: float, window_seconds: float, perclos_threshold: float,
+    ):
+        self.fixed_threshold = fixed_threshold
+        self.adaptive = adaptive
+        self.baseline_samples = max(1, baseline_samples)
+        self.baseline_ratio = baseline_ratio
+        self.window_seconds = window_seconds
+        self.perclos_threshold = perclos_threshold
+        self._calibration: list[float] = []
+        self.baseline: float | None = None
+        # (timestamp, closed) inside the rolling window.
+        self._window: list[tuple[float, bool]] = []
+
+    @property
+    def threshold(self) -> float:
+        """The EAR value currently treated as 'closed' for this student."""
+        if self.adaptive and self.baseline is not None:
+            return self.baseline * self.baseline_ratio
+        return self.fixed_threshold
+
+    def observe(self, ear: float, now: float) -> bool:
+        """Feed one sample; returns whether PERCLOS says the eyes are closed."""
+        if self.adaptive and self.baseline is None:
+            self._calibration.append(ear)
+            if len(self._calibration) >= self.baseline_samples:
+                # Median, so a few blinks during calibration cannot drag the
+                # reference down and desensitise the student permanently.
+                ordered = sorted(self._calibration)
+                mid = len(ordered) // 2
+                self.baseline = (
+                    ordered[mid] if len(ordered) % 2
+                    else (ordered[mid - 1] + ordered[mid]) / 2.0
+                )
+            # Judging with the fixed threshold while still learning would
+            # re-introduce exactly the bias adaptation exists to remove: a
+            # student whose open eyes sit below the constant would have every
+            # calibration sample recorded as closed, poisoning the window
+            # before their real baseline is even known. Observe, don't judge.
+            return False
+
+        closed = ear < self.threshold
+        self._window.append((now, closed))
+        cutoff = now - self.window_seconds
+        self._window = [(t, c) for t, c in self._window if t >= cutoff]
+        return self.perclos() >= self.perclos_threshold
+
+    def perclos(self) -> float:
+        if not self._window:
+            return 0.0
+        return sum(1 for _, closed in self._window if closed) / len(self._window)
+
+    def calibrating(self) -> bool:
+        return self.adaptive and self.baseline is None
+
+
+class _HeadPoseModel:
+    """Decides "head down" per student, relative to their own upright pose.
+
+    An absolute pitch cutoff does not survive contact with real classrooms.
+    The 6-point solvePnP model compresses the angle badly — a head lowered
+    about 40 degrees is estimated at 12-20 — and the upright reading itself
+    depends on where the camera is mounted and how the student sits, which
+    measured between 6 and 8 degrees here. A single global cutoff therefore
+    either never fires (the shipped 30) or fires constantly for anyone whose
+    natural posture is slightly forward.
+
+    So the first `baseline_samples` readings establish that student's own
+    upright pitch, and head-down is judged as a departure from it.
+
+    Readings are DIRECTIONAL: callers pass `down_deg`, increasing as the head
+    tilts down. Comparing on magnitude instead would make a student who sits
+    upright-and-slightly-back look identical to one slumped forward — which
+    is measurably wrong, not merely imprecise: a segment recorded sitting
+    back read +8 to +11 degrees and was flagged as head-down by an
+    abs()-based test.
+    """
+
+    def __init__(self, fixed_threshold: float, adaptive: bool,
+                 baseline_samples: int, delta_deg: float):
+        self.fixed_threshold = fixed_threshold
+        self.adaptive = adaptive
+        self.baseline_samples = max(1, baseline_samples)
+        self.delta_deg = delta_deg
+        self._calibration: list[float] = []
+        self.baseline: float | None = None
+
+    def observe(self, down_deg: float) -> bool:
+        """Feed one directional reading; returns whether the head is down."""
+        if not self.adaptive:
+            return down_deg > self.fixed_threshold
+        if self.baseline is None:
+            self._calibration.append(down_deg)
+            if len(self._calibration) >= self.baseline_samples:
+                ordered = sorted(self._calibration)
+                mid = len(ordered) // 2
+                self.baseline = (
+                    ordered[mid] if len(ordered) % 2
+                    else (ordered[mid - 1] + ordered[mid]) / 2.0
+                )
+            # Withhold a verdict while learning, for the same reason the eye
+            # model does: judging against the global cutoff during
+            # calibration reintroduces the bias adaptation exists to remove.
+            return False
+        return down_deg - self.baseline > self.delta_deg
+
+    @property
+    def threshold(self) -> float:
+        """The |pitch| currently treated as head-down for this student."""
+        if self.adaptive and self.baseline is not None:
+            return self.baseline + self.delta_deg
+        return self.fixed_threshold
+
+    def calibrating(self) -> bool:
+        return self.adaptive and self.baseline is None
+
+
+class _StaticBoxFilter:
+    """Suppress phone detections that never move.
+
+    Wall fixtures — light switches, thermostats, sockets, projector panels —
+    are small bright rectangles, which is close enough to a phone that YOLO
+    scores them well above any usable confidence floor. Because they sit in
+    the same pixels all lesson, they fall inside some student's reach region
+    every single sample, and that student is blamed for the whole class.
+
+    Temporal debouncing makes this worse rather than better: a detection that
+    is present in every frame is precisely what `_EpisodeTracker` promotes
+    into a confirmed episode. The distinguishing property is not confidence
+    or duration but immobility, so that is what is tested here — a box whose
+    position is essentially unchanged over a long run of samples is a fixture.
+
+    A phone held still for a while is not misclassified: `persist_samples`
+    defaults to ~45 s of continuous, near-pixel-identical position, and any
+    real hand movement resets the track.
+    """
+
+    def __init__(self, persist_samples: int, iou_threshold: float):
+        self.persist_samples = persist_samples
+        self.iou_threshold = iou_threshold
+        # (box, consecutive_hits) per candidate fixture.
+        self._tracks: list[list[Any]] = []
+
+    @staticmethod
+    def _iou(a, b) -> float:
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+        inter = iw * ih
+        if inter <= 0:
+            return 0.0
+        area_a = max(1, (a[2] - a[0]) * (a[3] - a[1]))
+        area_b = max(1, (b[2] - b[0]) * (b[3] - b[1]))
+        return inter / float(area_a + area_b - inter)
+
+    def update(self, boxes: list) -> None:
+        """Feed every phone box seen in this sample."""
+        matched = set()
+        for track in self._tracks:
+            hit = None
+            for i, box in enumerate(boxes):
+                if i in matched:
+                    continue
+                if self._iou(track[0], box) >= self.iou_threshold:
+                    hit = i
+                    break
+            if hit is None:
+                track[1] = 0  # moved or vanished — not a fixture
+            else:
+                matched.add(hit)
+                track[1] += 1
+                track[0] = boxes[hit]
+        for i, box in enumerate(boxes):
+            if i not in matched:
+                self._tracks.append([box, 1])
+        # Bound memory: only plausible fixtures are worth remembering.
+        self._tracks = [t for t in self._tracks if t[1] > 0][-32:]
+
+    def is_static(self, box) -> bool:
+        for track_box, hits in self._tracks:
+            if (hits >= self.persist_samples
+                    and self._iou(track_box, box) >= self.iou_threshold):
+                return True
+        return False
+
+
 @dataclass
 class _StudentState:
     drowsy: _EpisodeTracker
     phone: _EpisodeTracker
+    eyes: "_EyeClosureModel | None" = None
+    head: "_HeadPoseModel | None" = None
 
 
 @dataclass
 class _SessionState:
     students: dict[int, _StudentState] = field(default_factory=dict)
     heatmap: HeatmapAccumulator | None = None
+    # Fixture suppression is per-room, not per-student: a wall panel is the
+    # same object no matter whose reach region it happens to fall in.
+    static_phones: "_StaticBoxFilter | None" = None
     last_heatmap_flush: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     # U32 coverage: account_id -> [samples_total, samples_analysed] since the
@@ -667,6 +966,12 @@ class _SessionState:
 _SESSION_STALE_SECONDS = 600  # drop per-session state after 10 min idle
 
 
+def _tuned(flags: dict[str, Any], key: str, fallback: float) -> float:
+    """Per-course override if the admin set one, else the server default."""
+    value = (flags or {}).get(key)
+    return fallback if value is None else float(value)
+
+
 class BehaviourAnalysisService:
     """Per-frame behaviour analysis: drowsiness + phone + heatmap.
 
@@ -679,7 +984,8 @@ class BehaviourAnalysisService:
         self.cfg = cfg
         self.database_url = database_url
         self._drowsy = DrowsinessDetector()
-        self._phone = PhoneDetector(cfg.phone_conf, cfg.phone_model, cfg.phone_imgsz)
+        self._phone = PhoneDetector(cfg.phone_conf, cfg.phone_model,
+                                    cfg.phone_imgsz, want_gpu=cfg.ctx_id >= 0)
         self._sessions: dict[int, _SessionState] = {}
         # Frame-drop guard: if a frame is still being processed when the
         # next arrives (CPU too slow for 1 fps), the new one is skipped.
@@ -706,18 +1012,52 @@ class BehaviourAnalysisService:
         state = self._sessions.get(session_id)
         if state is None:
             cols, rows = self.cfg.heatmap_grid
-            state = _SessionState(heatmap=HeatmapAccumulator(cols, rows))
+            state = _SessionState(
+                heatmap=HeatmapAccumulator(cols, rows),
+                static_phones=_StaticBoxFilter(
+                    self.cfg.phone_static_samples, self.cfg.phone_static_iou,
+                ),
+            )
             self._sessions[session_id] = state
         state.last_seen = now
         return state
 
-    def _student(self, state: _SessionState, account_id: int) -> _StudentState:
+    def _student(
+        self, state: _SessionState, account_id: int,
+        flags: dict[str, Any] | None = None,
+    ) -> _StudentState:
         st = state.students.get(account_id)
         if st is None:
+            flags = flags or {}
+            confirm = _tuned(
+                flags, "drowsy_confirm_seconds", self.cfg.ear_consec_seconds
+            )
             st = _StudentState(
-                drowsy=_EpisodeTracker(self.cfg.ear_consec_seconds),
+                drowsy=_EpisodeTracker(confirm),
                 # ~1 fps sampling: N consecutive samples ≈ N seconds.
                 phone=_EpisodeTracker(float(self.cfg.phone_consec_samples)),
+                eyes=_EyeClosureModel(
+                    fixed_threshold=_tuned(
+                        flags, "ear_threshold", self.cfg.ear_threshold
+                    ),
+                    adaptive=bool(flags.get("adaptive_ear", self.cfg.adaptive_ear)),
+                    baseline_samples=self.cfg.ear_baseline_samples,
+                    baseline_ratio=self.cfg.ear_baseline_ratio,
+                    window_seconds=self.cfg.perclos_window_seconds,
+                    perclos_threshold=self.cfg.perclos_threshold,
+                ),
+                head=_HeadPoseModel(
+                    fixed_threshold=_tuned(
+                        flags, "headpose_pitch_deg", self.cfg.headpose_pitch_deg
+                    ),
+                    adaptive=bool(
+                        flags.get("adaptive_headpose", self.cfg.adaptive_headpose)
+                    ),
+                    baseline_samples=self.cfg.headpose_baseline_samples,
+                    delta_deg=_tuned(
+                        flags, "headpose_delta_deg", self.cfg.headpose_delta_deg
+                    ),
+                ),
             )
             state.students[account_id] = st
         return st
@@ -738,16 +1078,23 @@ class BehaviourAnalysisService:
         phone_box: np.ndarray, recognised: list["Prediction"],
     ) -> int | None:
         """Attribute a phone box to the nearest recognised face whose
-        'reach region' (face bbox expanded 2 face-widths down / 1 sideways)
-        contains the phone centre."""
+        'reach region' contains the phone centre.
+
+        The region starts at eye level and extends downwards, because a phone
+        being looked at is held below the face — never above it. Anything
+        higher (a screen behind the class, a poster, a reflection) belongs to
+        nobody and is dropped rather than blamed on the nearest student.
+        """
         pcx = (phone_box[0] + phone_box[2]) / 2.0
         pcy = (phone_box[1] + phone_box[3]) / 2.0
         best: tuple[float, int | None] = (float("inf"), None)
         for p in recognised:
             x1, y1, x2, y2 = p.bbox
             fw = max(1, x2 - x1)
+            fh = max(1, y2 - y1)
             rx1, rx2 = x1 - fw, x2 + fw
-            ry1, ry2 = y1, y2 + 2 * fw
+            # From mid-face downwards only.
+            ry1, ry2 = y1 + fh * 0.4, y2 + 2 * fw
             if not (rx1 <= pcx <= rx2 and ry1 <= pcy <= ry2):
                 continue
             fcx, fcy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
@@ -778,25 +1125,98 @@ class BehaviourAnalysisService:
                 state.heatmap.add_point((x1 + x2) / 2.0, (y1 + y2) / 2.0,
                                         frame_w, frame_h)
 
+        # ── phone usage: YOLO on the full frame, attributed by bbox ──
+        # Resolved before drowsiness because a student looking down at a phone
+        # is looking down for a known reason; see the head_pose gate below.
+        holders: dict[int, float] = {}
+        if flags.get("phone_usage"):
+            min_conf = _tuned(flags, "phone_conf", self.cfg.phone_conf)
+            detections = [
+                (box, conf) for box, conf in self._phone.detect(frame)
+                # A per-course override may be stricter than YOLO's own floor.
+                if conf >= min_conf
+            ]
+            # Track every surviving box so immobile ones can be recognised as
+            # room fixtures, then drop those before anybody is blamed.
+            if state.static_phones is not None:
+                state.static_phones.update([b for b, _ in detections])
+                detections = [
+                    (b, c) for b, c in detections
+                    if not state.static_phones.is_static(b)
+                ]
+            for box, conf in detections:
+                owner = self._phone_owner(box, recognised)
+                if owner is not None:
+                    holders[owner] = max(holders.get(owner, 0.0), conf)
+
         # ── drowsiness: per recognised face (identity attribution) ───
         if flags.get("drowsiness"):
             for p in recognised:
-                obs = self._drowsy.observe(self._face_crop(frame, p.bbox))
+                st = self._student(state, p.account_id, flags)
                 # U32 coverage: this sample recognised the student; it only
                 # counts as *analysed* when landmarks were actually usable.
                 cov = state.coverage.setdefault(p.account_id, [0, 0])
                 cov[0] += 1
-                if obs is not None:
+
+                crop = self._face_crop(frame, p.bbox)
+                # Landmarks on a tiny face are noise. Leaving the sample
+                # unanalysed feeds the "inconclusive" report (U32) instead of
+                # inventing a verdict from unreliable geometry.
+                too_small = min(crop.shape[:2]) < self.cfg.behaviour_min_face_px
+                obs = None if too_small else self._drowsy.observe(crop)
+
+                # Head pose is taken from the detector that already found this
+                # face, and is therefore still available on exactly the frames
+                # the landmarker gives up on — which are the head-down frames
+                # this signal exists to catch.
+                #
+                # The two sources disagree on sign: the detector reports pitch
+                # negative-downward, while the landmarker's normalised
+                # solvePnP estimate grows with any departure from frontal.
+                # Both are converted to "degrees downward" so _HeadPoseModel
+                # sees one convention.
+                if p.head_pitch is not None:
+                    down_deg = -p.head_pitch
+                elif obs is not None and obs["pitch"] is not None:
+                    down_deg = abs(obs["pitch"])
+                else:
+                    down_deg = None
+                if obs is not None or down_deg is not None:
                     cov[1] += 1
+
                 reasons = []
+                head_down = (down_deg is not None and st.head is not None
+                             and st.head.observe(down_deg))
+                # A student bent over a phone is bent over for a reason that
+                # is already being reported as its own behaviour. Counting it
+                # as drowsiness too would double-report one posture as two
+                # findings and, worse, put "drowsy" next to the name of
+                # someone who is wide awake and texting. Measured: this alone
+                # accounts for 40% of head-down samples on the phone segment.
+                if head_down and p.account_id not in holders:
+                    reasons.append("head_pose")
                 if obs is not None:
-                    if obs["ear"] < self.cfg.ear_threshold:
+                    # PERCLOS over this student's own baseline, not a frame
+                    # against a global constant.
+                    if st.eyes is not None and st.eyes.observe(obs["ear"], now):
                         reasons.append("eyes_closed")
-                    if obs["mar"] > self.cfg.mar_threshold:
+                    if obs["mar"] > _tuned(flags, "mar_threshold", self.cfg.mar_threshold):
                         reasons.append("yawn")
-                    if obs["pitch"] is not None and abs(obs["pitch"]) > self.cfg.headpose_pitch_deg:
-                        reasons.append("head_pose")
-                st = self._student(state, p.account_id)
+                if obs is not None and st.eyes is not None:
+                    obs = {
+                        **obs,
+                        "ear_threshold": round(st.eyes.threshold, 3),
+                        "perclos": round(st.eyes.perclos(), 2),
+                        "calibrating": st.eyes.calibrating(),
+                    }
+                    if st.head is not None:
+                        obs["pitch_threshold"] = round(st.head.threshold, 1)
+                elif down_deg is not None:
+                    # Landmarks unavailable but pose was: record what the
+                    # verdict was actually based on, so a head_pose event is
+                    # never mistaken for a full facial-landmark analysis.
+                    obs = {"down_deg": round(down_deg, 1),
+                           "source": "detector_pose"}
                 meta = {**obs, "reasons": reasons} if reasons else None
                 episode = st.drowsy.update(bool(reasons), now, meta)
                 if episode is not None:
@@ -805,15 +1225,10 @@ class BehaviourAnalysisService:
                 if st.drowsy.is_confirmed(now):
                     drowsy_active.append(p.account_id)
 
-        # ── phone usage: YOLO on the full frame, attributed by bbox ──
+        # ── phone episodes (detection itself ran before drowsiness) ──
         if flags.get("phone_usage"):
-            holders: dict[int, float] = {}
-            for box, conf in self._phone.detect(frame):
-                owner = self._phone_owner(box, recognised)
-                if owner is not None:
-                    holders[owner] = max(holders.get(owner, 0.0), conf)
             for p in recognised:
-                st = self._student(state, p.account_id)
+                st = self._student(state, p.account_id, flags)
                 conf = holders.get(p.account_id)
                 meta = {"conf": round(conf, 3)} if conf is not None else None
                 episode = st.phone.update(conf is not None, now, meta)
@@ -1000,6 +1415,17 @@ class BehaviourToggleBody(BaseModel):
     drowsiness: bool = True
     phone_usage: bool = True
     heatmap: bool = True
+    # Detection tuning. Omit a field to leave it as-is; send null to clear the
+    # override and inherit the server default. Ranges are enforced by CHECK
+    # constraints on behaviour_config.
+    ear_threshold: float | None = None
+    mar_threshold: float | None = None
+    headpose_pitch_deg: float | None = None
+    headpose_delta_deg: float | None = None
+    phone_conf: float | None = None
+    drowsy_confirm_seconds: float | None = None
+    adaptive_ear: bool | None = None
+    adaptive_headpose: bool | None = None
 
 
 @router.patch("/admin/courses/{course_id}/behaviour-analysis")
@@ -1009,9 +1435,17 @@ def admin_toggle_behaviour(
 ):
     svc = _svc(request)
     if body.enable:
+        # Only fields present in the request body are written, so a client
+        # that knows nothing about tuning cannot silently reset it.
+        supplied = body.model_dump(exclude_unset=True)
+        tuning = {
+            k: supplied[k]
+            for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS)
+            if k in supplied
+        }
         return svc.enableBehaviourAnalysis(
             course_id, body.drowsiness, body.phone_usage, body.heatmap,
-            updated_by=user.account_id,
+            updated_by=user.account_id, tuning=tuning,
         )
     return svc.disableBehaviourAnalysis(course_id, updated_by=user.account_id)
 

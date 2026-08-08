@@ -165,6 +165,14 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_APPEAL (
     CHECK ((status = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL) OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
 
+-- Optional evidence for the appeal (same treatment as LEAVE_APPLICATION:
+-- stored here rather than on disk, so it stays in the one Singapore-region
+-- instance and survives the cloud host's ephemeral filesystem).
+ALTER TABLE ATTENDANCE_APPEAL
+    ADD COLUMN IF NOT EXISTS supporting_doc      BYTEA,
+    ADD COLUMN IF NOT EXISTS supporting_doc_name TEXT,
+    ADD COLUMN IF NOT EXISTS supporting_doc_type TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_appeal_record  ON ATTENDANCE_APPEAL(AttendanceRecordID);
 CREATE INDEX IF NOT EXISTS idx_appeal_account ON ATTENDANCE_APPEAL(AccountID);
 CREATE INDEX IF NOT EXISTS idx_appeal_status  ON ATTENDANCE_APPEAL(status);
@@ -245,6 +253,17 @@ CREATE TABLE IF NOT EXISTS LEAVE_APPLICATION (
     CHECK ((status = 'pending'  AND reviewed_by IS NULL     AND reviewed_at IS NULL)
         OR (status IN ('approved', 'rejected') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
 );
+
+-- Supporting evidence is now uploaded, not linked. supporting_doc_url is kept
+-- for rows created before the change; new submissions fill these three.
+-- Stored in the database rather than on disk on purpose: the application
+-- server's filesystem is ephemeral on the cloud host, and keeping the bytes
+-- here means the evidence lives in the same Singapore-region instance as the
+-- rest of the personal data, with no third-party processor involved.
+ALTER TABLE LEAVE_APPLICATION
+    ADD COLUMN IF NOT EXISTS supporting_doc      BYTEA,
+    ADD COLUMN IF NOT EXISTS supporting_doc_name TEXT,
+    ADD COLUMN IF NOT EXISTS supporting_doc_type TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_leave_session  ON LEAVE_APPLICATION(AttendanceSessionID);
 CREATE INDEX IF NOT EXISTS idx_leave_account  ON LEAVE_APPLICATION(AccountID);
@@ -346,6 +365,39 @@ CREATE TABLE IF NOT EXISTS BEHAVIOUR_CONFIG (
     updated_by          INTEGER         REFERENCES USER_ACCOUNT(AccountID)
 );
 
+-- Per-course detection tuning (U35). All NULL by default, meaning "use the
+-- server-wide AIConfig value"; an administrator overrides them per course
+-- from the Behaviour Analysis Settings screen. Rooms differ enormously in
+-- lighting and camera distance, and a single global threshold produced both
+-- false alarms and silent misses during testing.
+ALTER TABLE BEHAVIOUR_CONFIG
+    ADD COLUMN IF NOT EXISTS ear_threshold          FLOAT
+        CHECK (ear_threshold IS NULL OR ear_threshold BETWEEN 0.05 AND 0.60),
+    ADD COLUMN IF NOT EXISTS mar_threshold          FLOAT
+        CHECK (mar_threshold IS NULL OR mar_threshold BETWEEN 0.20 AND 1.50),
+    ADD COLUMN IF NOT EXISTS headpose_pitch_deg     FLOAT
+        CHECK (headpose_pitch_deg IS NULL OR headpose_pitch_deg BETWEEN 5 AND 89),
+    ADD COLUMN IF NOT EXISTS phone_conf             FLOAT
+        CHECK (phone_conf IS NULL OR phone_conf BETWEEN 0.05 AND 0.95),
+    ADD COLUMN IF NOT EXISTS drowsy_confirm_seconds FLOAT
+        CHECK (drowsy_confirm_seconds IS NULL OR drowsy_confirm_seconds BETWEEN 1 AND 120),
+    -- Adaptive baseline: judge each student against their own open-eye EAR
+    -- rather than a literature constant. Eye aperture varies far more between
+    -- individuals than between alert and drowsy states for one person, so a
+    -- fixed cut-off flags some students permanently and never flags others.
+    ADD COLUMN IF NOT EXISTS adaptive_ear           BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Degrees below a student's own calibrated upright pitch that count as
+    -- head-down. Same rationale as adaptive_ear: resting posture varies far
+    -- more between people (and between chairs — a reclining seat shifts the
+    -- whole baseline) than an alert/drowsy state does for one person, so a
+    -- single global delta was too tight for some rooms and too loose for
+    -- others. headpose_pitch_deg above is the fallback used ONLY while this
+    -- is off; while it's on (the default), that field has no effect, which
+    -- the admin UI states explicitly next to its slider.
+    ADD COLUMN IF NOT EXISTS headpose_delta_deg     FLOAT
+        CHECK (headpose_delta_deg IS NULL OR headpose_delta_deg BETWEEN 2 AND 60),
+    ADD COLUMN IF NOT EXISTS adaptive_headpose      BOOLEAN NOT NULL DEFAULT TRUE;
+
 
 -- ------------------------------------------------------------
 -- 16. ATTENDANCE_THRESHOLD_CONFIG  (U34 global reminder trigger)
@@ -362,13 +414,35 @@ CREATE TABLE IF NOT EXISTS ATTENDANCE_THRESHOLD_CONFIG (
     -- U03: default gap between detection windows during a scan (20 minutes).
     detection_interval_seconds  INTEGER     NOT NULL DEFAULT 1200
                                             CHECK (detection_interval_seconds BETWEEN 3 AND 86400),
+    -- Within-session presence ratio: fraction (0-100) of a student's own
+    -- applicable snapshot count (counted from their first detection onward,
+    -- so a late arrival isn't penalised for snapshots taken before they
+    -- showed up) they must be detected in, or the session is 'absent'
+    -- outright rather than 'early_left'. Floor-rounded when applied.
+    minimum_presence_ratio       FLOAT       NOT NULL DEFAULT 50.0
+                                            CHECK (minimum_presence_ratio BETWEEN 0 AND 100),
+    -- Fraction (0-100) of the session's final snapshots (floor-rounded,
+    -- minimum 1) that must ALL be misses for a student to be marked
+    -- 'early_left' rather than 'present'/'late'. Adaptive to snapshot count
+    -- rather than a fixed wall-clock cutoff, so it isn't thrown off by
+    -- session length or by scanning a pre-recorded video.
+    tail_ratio                   FLOAT       NOT NULL DEFAULT 20.0
+                                            CHECK (tail_ratio BETWEEN 0 AND 100),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by                  INTEGER     REFERENCES USER_ACCOUNT(AccountID)
 );
 
--- Idempotent add for databases created before this column existed.
+-- Idempotent adds for databases created before these columns existed —
+-- ADD COLUMN ... NOT NULL DEFAULT backfills the existing single config row
+-- with the default automatically, so it is never left NULL.
 ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
     ADD COLUMN IF NOT EXISTS detection_interval_seconds INTEGER NOT NULL DEFAULT 1200;
+ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
+    ADD COLUMN IF NOT EXISTS minimum_presence_ratio FLOAT NOT NULL DEFAULT 50.0
+        CHECK (minimum_presence_ratio BETWEEN 0 AND 100);
+ALTER TABLE ATTENDANCE_THRESHOLD_CONFIG
+    ADD COLUMN IF NOT EXISTS tail_ratio FLOAT NOT NULL DEFAULT 20.0
+        CHECK (tail_ratio BETWEEN 0 AND 100);
 
 INSERT INTO ATTENDANCE_THRESHOLD_CONFIG (ConfigID) VALUES (1)
 ON CONFLICT DO NOTHING;

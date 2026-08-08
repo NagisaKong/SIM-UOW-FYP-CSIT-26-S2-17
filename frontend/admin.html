@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=8">
+  <script>if (!localStorage.getItem("token")) location.replace("index.html");</script>
 </head>
 
 <body>
@@ -39,6 +40,9 @@
           <h2>All Users</h2>
           <button type="button" id="show-user-form">+ Register User</button>
         </div>
+        <input type="search" id="users-search" class="users-search"
+          placeholder="Search by name, student/staff number, email, or role…" autocomplete="off">
+        <p id="users-search-status" class="muted small" style="margin:.35rem 0 0"></p>
         <table>
           <thead>
             <tr>
@@ -216,8 +220,7 @@
                 <th>Teacher</th>
                 <th>Status</th>
                 <th>Active Sessions</th>
-                <th>Status Action</th>
-                <th>Delete</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="courses-body"></tbody>
@@ -240,6 +243,30 @@
           </form>
           <p id="course-msg" class="error"></p>
         </div>
+
+        <!-- Edit Course view -->
+        <div id="courses-edit-view" hidden>
+          <button type="button" class="secondary back-btn" id="back-courses-edit">← Back to Courses</button>
+          <h3 style="margin-top:1rem">Edit Course</h3>
+          <p class="muted small" id="course-edit-subject" style="margin:0 0 1rem"></p>
+          <form id="course-edit-form" class="row form-stacked">
+            <label>Course code<input name="course_code" required></label>
+            <label>Course name<input name="course_name" required></label>
+            <label>Assigned teacher
+              <select name="teacher_id" id="course-edit-teacher-select">
+                <option value="">— No teacher —</option>
+              </select>
+            </label>
+            <label>Status
+              <select name="status" id="course-edit-status">
+                <option value="active">active</option>
+                <option value="inactive">inactive</option>
+              </select>
+            </label>
+            <button type="submit">Save Changes</button>
+          </form>
+          <p id="course-edit-msg" class="error"></p>
+        </div>
       </div>
 
       <!-- Sub-page: Assign Students -->
@@ -249,6 +276,9 @@
         <form id="enrollment-form" class="row">
           <label>Course
             <select name="course_id" id="enroll-course-select" required></select>
+          </label>
+          <label>Find student
+            <input type="search" id="enroll-student-search" placeholder="Search name or student ID…" autocomplete="off">
           </label>
           <label>Student
             <select name="account_id" id="enroll-student-select" required></select>
@@ -427,6 +457,14 @@
                 At</span>
               <span id="detail-reviewed-at" style="color: #24292e; font-weight: 500;">-</span>
             </div>
+            <div style="border-bottom: 1px solid #f0f2f5; padding-bottom: 10px;">
+              <span
+                style="display: block; font-size: 0.85rem; color: #586069; text-transform: uppercase; margin-bottom: 4px;">Reviewed
+                By</span>
+              <span id="detail-reviewed-by" style="color: #24292e; font-weight: 500;">-</span>
+              <span id="detail-reviewer-meta" class="muted"
+                style="display: block; font-size: 0.8rem; margin-top: 2px;"></span>
+            </div>
           </div>
 
           <div style="padding: 0 24px 24px 24px;">
@@ -436,6 +474,15 @@
             <div id="detail-reason"
               style="background: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 16px; color: #24292e; line-height: 1.6; min-height: 60px; white-space: pre-wrap;">
               -</div>
+          </div>
+
+          <div id="adm-appeal-doc-section" style="display:none;margin-top:16px">
+            <h3 style="margin:0 0 .5rem">Supporting Document</h3>
+            <p id="adm-appeal-doc-msg" class="small muted" style="margin:0 0 .5rem"></p>
+            <img id="adm-appeal-doc-image" alt="Supporting document submitted by the student"
+              style="display:none;max-width:100%;max-height:420px;border:1px solid #e1e4e8;border-radius:6px">
+            <a id="adm-appeal-doc-link" target="_blank" rel="noopener" style="display:none">Open
+              document in a new tab</a>
           </div>
         </div>
       </div>
@@ -459,6 +506,14 @@
         </label>
         <label>Absence reminder threshold (sessions)
           <input type="number" name="consecutive_threshold" min="1" max="100" required>
+        </label>
+        <label>Minimum in-session presence (%)
+          <input type="number" name="minimum_presence_ratio" min="0" max="100" step="0.1" required>
+          <span class="muted small">Floor-rounded share of a student's own applicable snapshots they must be detected in, or the session counts as absent outright.</span>
+        </label>
+        <label>Early-left tail window (%)
+          <input type="number" name="tail_ratio" min="0" max="100" step="0.1" required>
+          <span class="muted small">Floor-rounded share of the session's final snapshots (at least 1) that must ALL be misses to flag early_left.</span>
         </label>
         <button type="submit">Save</button>
         <p id="att-config-msg" class="small"></p>
@@ -541,24 +596,75 @@
       <h2>Classroom Behaviour Analysis Settings</h2>
       <p class="muted small">Per-course toggle for in-class behaviour analysis. When enabled, the
         system may flag drowsiness / phone use and build an activity heatmap for that course's sessions.</p>
-      <form id="behaviour-form" class="row">
-        <label>Course
+      <form id="behaviour-form" class="beh-form">
+        <label class="beh-course">Course
           <select id="behaviour-course"></select>
         </label>
-        <label><input type="checkbox" name="enable" id="behaviour-enable"> Enable behaviour analysis</label>
-        <label><input type="checkbox" name="drowsiness" id="behaviour-drowsiness" checked> Drowsiness detection</label>
-        <label><input type="checkbox" name="phone_usage" id="behaviour-phone" checked> Phone-use detection</label>
-        <label><input type="checkbox" name="heatmap" id="behaviour-heatmap" checked> Activity heatmap</label>
-        <button type="submit">Save Settings</button>
+
+        <!-- Feature switches: one row per capability, directly under the
+             course they apply to. -->
+        <div class="beh-switches">
+          <label><input type="checkbox" name="enable" id="behaviour-enable">
+            <span>Enable behaviour analysis</span></label>
+          <label><input type="checkbox" name="drowsiness" id="behaviour-drowsiness" checked>
+            <span>Drowsiness detection</span></label>
+          <label><input type="checkbox" name="phone_usage" id="behaviour-phone" checked>
+            <span>Phone-use detection</span></label>
+          <label><input type="checkbox" name="heatmap" id="behaviour-heatmap" checked>
+            <span>Activity heatmap</span></label>
+        </div>
+
+        <fieldset class="beh-sensitivity">
+          <legend>Detection sensitivity</legend>
+          <p class="muted small" style="margin:0 0 1rem">
+            Rooms differ in lighting and camera distance, so one global setting cannot suit
+            every class. Each slider starts at the server default; move it and the effect on
+            the model is explained underneath.
+          </p>
+
+          <div class="beh-adaptive">
+            <label>
+              <input type="checkbox" id="behaviour-adaptive" checked>
+              <span>Calibrate each student's eyes individually</span>
+            </label>
+            <p class="muted small">
+              Recommended — compares a student against their own open-eye measurement instead
+              of a fixed value, which varies far more between people than between alert and
+              drowsy for one person.
+            </p>
+          </div>
+
+          <div class="beh-adaptive">
+            <label>
+              <input type="checkbox" id="behaviour-adaptive-headpose" checked>
+              <span>Calibrate each student's resting head angle individually</span>
+            </label>
+            <p class="muted small">
+              Recommended — compares a student against their OWN resting pitch instead of a
+              fixed angle. Resting posture varies with the student and the chair (a reclining
+              seat shifts the whole baseline), so a fixed angle either misses genuine head-down
+              or flags normal posture shifts as inattentive.
+            </p>
+          </div>
+
+          <!-- Sliders are rendered from BEHAVIOUR_TUNING_FIELDS in admin.js so
+               the range, default and guidance text live in one place. -->
+          <div id="behaviour-sliders"></div>
+        </fieldset>
+
+        <button type="submit" class="beh-save">Save Settings</button>
       </form>
       <p id="behaviour-msg" class="small"></p>
     </section>
 
   </main>
 
+  <!-- Filled in by renderBrowserNotice() in app.js; the role selects the text. -->
+  <div class="browser-notice" data-role="admin"></div>
+
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=6"></script>
-  <script src="admin.js?v=9"></script>
+  <script src="app.js?v=15"></script>
+  <script src="admin.js?v=15"></script>
 </body>
 
 </html>

@@ -23,7 +23,15 @@ from typing import Any
 import cv2
 import numpy as np
 import psycopg2
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel
 
 from core.userInformation import CurrentUser, require_role
@@ -35,6 +43,8 @@ _DEFAULT_MIN_RATE = 70.0
 _DEFAULT_ABSENCE_THRESHOLD = 3
 _DEFAULT_LATE_GRACE = 600
 _DEFAULT_DETECTION_INTERVAL = 1200  # 20 min between detection windows (U03)
+_DEFAULT_MINIMUM_PRESENCE_RATIO = 50.0  # within-session presence floor
+_DEFAULT_TAIL_RATIO = 20.0  # fraction of final snapshots checked for early_left
 
 
 def load_threshold_config(database_url: str) -> dict[str, Any]:
@@ -47,7 +57,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
         with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT minimum_attendance_rate, absence_threshold,
-                          late_grace_seconds, detection_interval_seconds
+                          late_grace_seconds, detection_interval_seconds,
+                          minimum_presence_ratio, tail_ratio
                    FROM attendance_threshold_config WHERE configid = 1"""
             )
             row = cur.fetchone()
@@ -57,6 +68,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
                     "absence_threshold": int(row[1]),
                     "late_grace_seconds": int(row[2]),
                     "detection_interval_seconds": int(row[3]),
+                    "minimum_presence_ratio": float(row[4]),
+                    "tail_ratio": float(row[5]),
                 }
     except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn,
             psycopg2.OperationalError):
@@ -68,6 +81,8 @@ def load_threshold_config(database_url: str) -> dict[str, Any]:
         "absence_threshold": _DEFAULT_ABSENCE_THRESHOLD,
         "late_grace_seconds": _DEFAULT_LATE_GRACE,
         "detection_interval_seconds": _DEFAULT_DETECTION_INTERVAL,
+        "minimum_presence_ratio": _DEFAULT_MINIMUM_PRESENCE_RATIO,
+        "tail_ratio": _DEFAULT_TAIL_RATIO,
     }
 
 
@@ -96,6 +111,44 @@ async def _bytes_to_cv2(file: UploadFile) -> np.ndarray:
     if img is None:
         raise HTTPException(status_code=400, detail="Unable to parse image file")
     return img
+
+
+# ── Match diagnostics ────────────────────────────────────────────────
+# The primary recogniser's runner-up scores. Surfacing them turns "Unknown"
+# from an opaque result into a debuggable one: a top score of 0.38 against a
+# 0.43 threshold is a threshold problem, whereas 0.45 vs 0.44 is the margin
+# rule correctly refusing to guess between two look-alikes.
+_PRIMARY_MODEL = "arcface"
+
+
+def _primary(prediction) -> dict[str, Any]:
+    per_model = getattr(prediction, "per_model", None) or {}
+    return per_model.get(_PRIMARY_MODEL) or next(iter(per_model.values()), {})
+
+
+def _primary_model_name(prediction) -> str | None:
+    """Which model the diagnostic candidates/threshold above actually came
+    from. Usually "arcface" — but ArcFace only gets a free embedding when
+    SCRFD supplied the anchor detection (see _group_anchors); if SCRFD missed
+    a face that MTCNN caught, ArcFace has to re-detect on a cropped/padded
+    region and can come back empty, silently leaving FaceNet — the weaker,
+    secondary model — as the only one that voted. Without surfacing which
+    model this was, "0.70 / 0.71 (need 0.55)" reads as ArcFace failing to
+    separate two people it actually separates cleanly; it is FaceNet's own,
+    less discriminative comparison standing in for ArcFace's absence.
+    """
+    per_model = getattr(prediction, "per_model", None) or {}
+    if _PRIMARY_MODEL in per_model:
+        return _PRIMARY_MODEL
+    return next(iter(per_model), None)
+
+
+def _match_candidates(prediction) -> list[dict[str, Any]]:
+    return _primary(prediction).get("candidates", [])
+
+
+def _match_threshold(prediction) -> float | None:
+    return _primary(prediction).get("threshold")
 
 
 class AttendanceRecord:
@@ -238,6 +291,9 @@ class AttendanceRecord:
                 "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
+                "candidates": _match_candidates(p),
+                "threshold": _match_threshold(p),
+                "diagnostic_model": _primary_model_name(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
 
@@ -272,6 +328,12 @@ class AttendanceRecord:
                 "account_id": p.account_id if p.recognised else None,
                 "label": label,
                 "score": round(float(p.score), 3),
+                # Runners-up, so an operator can see WHY a face came back
+                # Unknown (below threshold vs. too close to call) instead of
+                # guessing. Diagnostic only — never used for attendance.
+                "candidates": _match_candidates(p),
+                "threshold": _match_threshold(p),
+                "diagnostic_model": _primary_model_name(p),
             })
         frame_h, frame_w = (int(image.shape[0]), int(image.shape[1])) if image is not None else (0, 0)
         return {
@@ -539,6 +601,8 @@ class AttendanceRecord:
         minimum_rate: float | None = None,
         late_grace_seconds: int | None = None,
         detection_interval_seconds: int | None = None,
+        minimum_presence_ratio: float | None = None,
+        tail_ratio: float | None = None,
         updated_by: int | None = None,
     ) -> dict[str, Any]:
         """Persist threshold updates to attendance_threshold_config (U34)."""
@@ -554,6 +618,12 @@ class AttendanceRecord:
         if detection_interval_seconds is not None:
             if detection_interval_seconds < 3 or detection_interval_seconds > 86400:
                 raise HTTPException(400, "detection_interval_seconds must be between 3 and 86400")
+        if minimum_presence_ratio is not None:
+            if minimum_presence_ratio < 0 or minimum_presence_ratio > 100:
+                raise HTTPException(400, "minimum_presence_ratio must be between 0 and 100")
+        if tail_ratio is not None:
+            if tail_ratio < 0 or tail_ratio > 100:
+                raise HTTPException(400, "tail_ratio must be between 0 and 100")
 
         # Build a parameterised UPDATE so we only touch the supplied fields.
         sets, params = [], []
@@ -569,6 +639,12 @@ class AttendanceRecord:
         if detection_interval_seconds is not None:
             sets.append("detection_interval_seconds = %s")
             params.append(int(detection_interval_seconds))
+        if minimum_presence_ratio is not None:
+            sets.append("minimum_presence_ratio = %s")
+            params.append(float(minimum_presence_ratio))
+        if tail_ratio is not None:
+            sets.append("tail_ratio = %s")
+            params.append(float(tail_ratio))
         if updated_by is not None:
             sets.append("updated_by = %s")
             params.append(updated_by)
@@ -602,6 +678,8 @@ class AttendanceRecord:
             "minimum_attendance_rate": cfg["minimum_attendance_rate"],
             "late_grace_seconds": cfg["late_grace_seconds"],
             "detection_interval_seconds": cfg["detection_interval_seconds"],
+            "minimum_presence_ratio": cfg["minimum_presence_ratio"],
+            "tail_ratio": cfg["tail_ratio"],
         }
 
 
@@ -687,8 +765,17 @@ async def teacher_preview_detect(
 def teacher_live_roster(
     session_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    # Imported here rather than at module scope: attendanceSession already
+    # imports this module for load_threshold_config, so a top-level import
+    # would close the cycle.
+    from core.attendanceSession import expire_overdue_sessions
+
+    # The dashboard the teacher is watching should settle by itself the
+    # moment the class runs past its scheduled end.
+    expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
     return _svc(request).viewRealTimeAttendanceStatus(session_id)
 
 
@@ -745,6 +832,8 @@ class ThresholdBody(BaseModel):
     minimum_rate: float | None = None
     late_grace_seconds: int | None = None
     detection_interval_seconds: int | None = None
+    minimum_presence_ratio: float | None = None
+    tail_ratio: float | None = None
 
 
 @router.patch("/admin/config/absence-threshold")
@@ -756,6 +845,7 @@ def admin_configure_absence_threshold(
     return _svc(request).configureAbsenceThreshold(
         body.consecutive_threshold, body.minimum_rate,
         body.late_grace_seconds, body.detection_interval_seconds,
+        body.minimum_presence_ratio, body.tail_ratio,
         updated_by=user.account_id,
     )
 

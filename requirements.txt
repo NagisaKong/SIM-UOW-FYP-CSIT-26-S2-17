@@ -7,11 +7,24 @@ python-dotenv>=1.0.0
 
 # --- SCRFD + ArcFace (primary detection & recognition) ---------------
 insightface>=0.7.3
-# Pick one runtime:
-onnxruntime>=1.16.0          ; platform_system != "Linux" or python_version < "3.12"
-# onnxruntime-gpu>=1.16.0    # uncomment on GPU boxes; remove the CPU line above
+
+# This file installs the CPU runtimes, deliberately: it has to work on the
+# Railway host, in CI, and on machines without an NVIDIA card. GPU users
+# switch afterwards — see requirements-gpu.txt.
+#
+# Do NOT simply add onnxruntime-gpu below. Both distributions install into the
+# same `onnxruntime/` package directory, so with both present the CPU build
+# wins, CUDA silently disappears from the provider list, and pip still reports
+# onnxruntime-gpu as installed. The CPU one must be uninstalled first, which a
+# requirements file cannot express — hence the separate file and the checker.
+#
+#   python scripts/check_gpu.py            # tells you what is actually active
+onnxruntime>=1.16.0
 
 # --- MTCNN + FaceNet (ensemble) --------------------------------------
+# PyPI's default torch wheel is CPU-only on Windows and Linux alike. A CUDA
+# build has the same package name and comes from a separate index, so it is
+# also handled in requirements-gpu.txt rather than here.
 torch>=2.1.0
 torchvision>=0.16.0
 facenet-pytorch>=2.5.3
@@ -41,11 +54,13 @@ argon2-cffi>=23.1.0
 mediapipe>=0.10.14
 ultralytics>=8.2.0
 
-# --- Optional: GAN-based face restoration for low-light enhancement --
-# Uncomment to swap the CLAHE baseline for a real GAN. Both are heavy.
-# gfpgan>=1.3.8
-# realesrgan>=0.3.0
-# basicsr>=1.4.2
+# --- GAN-based face restoration (AI_ENHANCER) — moved out, see below ------
+# gfpgan / realesrgan / basicsr now live in requirements-enhancer.txt. They
+# cannot be installed on Python 3.13+ (basicsr 1.4.2 reads its own version via
+# exec() + locals(), which PEP 667 broke, so its build backend raises
+# KeyError: '__version__'), and having them here failed the whole install for
+# an optional component. build_enhancer() already falls back to CLAHE when
+# they are absent.
 
 
 # --- StyleGAN Synthetic Generation -----------------------------------

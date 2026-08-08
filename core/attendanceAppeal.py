@@ -17,11 +17,20 @@ import contextlib
 from typing import Any
 
 import psycopg2
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel
 
 from core.notification import send_review_outcome_email
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import CurrentUser, get_current_user, require_role
 
 
 @contextlib.contextmanager
@@ -73,7 +82,9 @@ class AttendanceAppeal:
     def listMyAppeals(self, applicant: int) -> dict[str, Any]:
         sql = """
             SELECT a.appealid, a.attendancerecordid, a.reason, a.status,
-                   a.created_at, a.reviewed_at
+                   a.created_at, a.reviewed_at,
+                   (a.supporting_doc IS NOT NULL) AS has_document,
+                   a.supporting_doc_name
             FROM attendance_appeal a
             WHERE a.accountid = %s
             ORDER BY a.created_at DESC
@@ -144,12 +155,27 @@ class AttendanceAppeal:
                    pi.full_name, pi.student_id,
                    c.course_code, c.course_name, s.start_time,
                    r.status AS record_status,
-                   a.reason, a.status, a.created_at, a.reviewed_at
+                   a.reason, a.status, a.created_at, a.reviewed_at,
+                   -- Presence only: the bytes themselves would bloat every
+                   -- row of the list, so they get their own endpoint.
+                   (a.supporting_doc IS NOT NULL) AS has_document,
+                   a.supporting_doc_name, a.supporting_doc_type,
+                   -- Who decided the appeal (U08 audit trail): reviewers are
+                   -- teachers or admins, so their name lives in personal_info
+                   -- under staff_id, and the role comes from user_profiles.
+                   a.reviewed_by,
+                   rpi.full_name AS reviewer_name,
+                   rpi.staff_id  AS reviewer_staff_id,
+                   rua.email     AS reviewer_email,
+                   rup.role      AS reviewer_role
             FROM attendance_appeal a
             JOIN attendance_record r ON r.attendancerecordid = a.attendancerecordid
             JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             LEFT JOIN personal_info pi ON pi.accountid = a.accountid
+            LEFT JOIN user_account  rua ON rua.accountid = a.reviewed_by
+            LEFT JOIN user_profiles rup ON rup.profileid = rua.profileid
+            LEFT JOIN personal_info rpi ON rpi.accountid = a.reviewed_by
             ORDER BY (a.status = 'pending') DESC, a.created_at DESC
         """
         with _db(self.database_url) as c, c.cursor() as cur:
@@ -194,12 +220,121 @@ class AttendanceAppeal:
             leave_id = cur.fetchone()[0]
         return {"success": True, "leave_application_id": leave_id}
 
+    # ── Supporting evidence (U08 appeals + U28 leave) ───────────────
+    # Both request types take the same kind of evidence — a photo of a
+    # medical certificate, a PDF letter — so they share one implementation
+    # rather than two that drift apart. The table/column names come from
+    # this fixed map, never from the request.
+    ALLOWED_DOC_TYPES = {
+        "image/png", "image/jpeg", "image/webp", "application/pdf",
+    }
+    MAX_DOC_BYTES = 5 * 1024 * 1024
+
+    DOC_TARGETS = {
+        "leave": {
+            "table": "leave_application",
+            "pk": "leaveapplicationid",
+            "label": "leave application",
+        },
+        "appeal": {
+            "table": "attendance_appeal",
+            "pk": "appealid",
+            "label": "appeal",
+        },
+    }
+
+    def _doc_target(self, kind: str) -> dict[str, str]:
+        target = self.DOC_TARGETS.get(kind)
+        if target is None:  # pragma: no cover — a coding error, not user input
+            raise ValueError(f"Unknown document target {kind!r}")
+        return target
+
+    def attachSupportingDocument(
+        self, kind: str, applicant: int, item_id: int,
+        filename: str | None, content_type: str | None, data: bytes,
+    ) -> dict[str, Any]:
+        t = self._doc_target(kind)
+        if content_type not in self.ALLOWED_DOC_TYPES:
+            raise HTTPException(
+                400,
+                "Supporting document must be a PNG, JPEG, WebP or PDF file "
+                f"(received {content_type or 'an unknown type'})",
+            )
+        if not data:
+            raise HTTPException(400, "The uploaded file is empty")
+        if len(data) > self.MAX_DOC_BYTES:
+            raise HTTPException(
+                400,
+                f"Supporting document must be {self.MAX_DOC_BYTES // (1024 * 1024)} MB "
+                f"or smaller (received {len(data) / (1024 * 1024):.1f} MB)",
+            )
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(
+                f"SELECT accountid, status FROM {t['table']} WHERE {t['pk']} = %s",
+                (item_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, f"No such {t['label']}")
+            owner, status = row
+            if owner != applicant:
+                raise HTTPException(403, f"This is not your {t['label']}")
+            # Once a decision is made the evidence it was based on is fixed.
+            if status != "pending":
+                raise HTTPException(
+                    409, f"This {t['label']} has already been reviewed",
+                )
+            cur.execute(
+                f"""UPDATE {t['table']}
+                       SET supporting_doc = %s, supporting_doc_name = %s,
+                           supporting_doc_type = %s, updated_at = NOW()
+                     WHERE {t['pk']} = %s""",
+                (psycopg2.Binary(data), filename, content_type, item_id),
+            )
+        return {
+            "success": True, "id": item_id,
+            "filename": filename, "content_type": content_type,
+            "bytes": len(data),
+        }
+
+    def getSupportingDocument(
+        self, kind: str, viewer: int, role: str, item_id: int,
+    ) -> tuple[bytes, str, str]:
+        """Return (data, content_type, filename) if the viewer may see it.
+
+        Visible to the student who submitted it, to any teacher (the review
+        authority for both U08 and U31) and to admins for oversight.
+        """
+        t = self._doc_target(kind)
+        with _db(self.database_url) as c, c.cursor() as cur:
+            cur.execute(
+                f"""SELECT accountid, supporting_doc,
+                           supporting_doc_type, supporting_doc_name
+                      FROM {t['table']} WHERE {t['pk']} = %s""",
+                (item_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, f"No such {t['label']}")
+        owner, data, content_type, filename = row
+        if role == "student" and owner != viewer:
+            raise HTTPException(403, f"This is not your {t['label']}")
+        if data is None:
+            raise HTTPException(404, "No supporting document was attached")
+        return (
+            bytes(data),
+            content_type or "application/octet-stream",
+            filename or f"{kind}_{item_id}",
+        )
+
     def listMyLeaveApplications(self, applicant: int) -> dict[str, Any]:
         sql = """
             SELECT la.leaveapplicationid, la.attendancesessionid,
                    c.course_code, c.course_name, s.start_time,
                    la.reason, la.status, la.created_at, la.reviewed_at,
-                   la.reviewer_comment
+                   la.reviewer_comment,
+                   (la.supporting_doc IS NOT NULL) AS has_document,
+                   la.supporting_doc_name
             FROM leave_application la
             JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
@@ -265,17 +400,37 @@ class AttendanceAppeal:
             send_review_outcome_email(payload)
         return {"success": True}
 
-    def listPendingLeaveApplications(self) -> dict[str, Any]:
+    def listLeaveApplicationsForReview(self) -> dict[str, Any]:
+        """Every leave application, newest first — not just the pending ones.
+
+        Mirrors the appeals list: the teacher opens one to read it in full and
+        decide, and can still go back to an already-reviewed application to
+        see what was decided and why (reviewer_comment only exists on those).
+        """
         sql = """
             SELECT la.leaveapplicationid, la.accountid,
                    pi.full_name, pi.student_id,
-                   c.course_code, c.course_name, s.start_time,
-                   la.reason, la.supporting_doc_url, la.status, la.created_at
+                   s.courseid, c.course_code, c.course_name, s.start_time,
+                   la.reason, la.status, la.created_at,
+                   la.reviewed_at, la.reviewer_comment,
+                   (la.supporting_doc IS NOT NULL) AS has_document,
+                   la.supporting_doc_name, la.supporting_doc_type,
+                   (SELECT COUNT(*)
+                      FROM attendance_record r2
+                      JOIN attendance_session s2
+                        ON s2.attendancesessionid = r2.attendancesessionid
+                     WHERE r2.accountid = la.accountid
+                       AND s2.courseid = s.courseid
+                       AND s2.status = 'ended'
+                       AND r2.status IN ('present', 'late')) AS attended,
+                   (SELECT COUNT(*)
+                      FROM attendance_session s3
+                     WHERE s3.courseid = s.courseid
+                       AND s3.status = 'ended')              AS sessions_completed
             FROM leave_application la
             JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             LEFT JOIN personal_info pi ON pi.accountid = la.accountid
-            WHERE la.status = 'pending'
             ORDER BY la.created_at DESC
         """
         with _db(self.database_url) as c, c.cursor() as cur:
@@ -364,12 +519,66 @@ def teacher_review_appeal(
     )
 
 
+# Supporting evidence for U08 appeals and U28 leave applications.
+def _document_response(data: bytes, content_type: str, filename: str) -> Response:
+    return Response(
+        content=data,
+        media_type=content_type,
+        # inline: the reviewer reads it in the page, not in a download folder.
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.post("/student/leave-applications/{leave_id}/document")
+async def student_attach_leave_document(
+    leave_id: int, request: Request,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_role("student")),
+):
+    data = await file.read()
+    return _svc(request).attachSupportingDocument(
+        "leave", user.account_id, leave_id, file.filename, file.content_type, data,
+    )
+
+
+@router.get("/leave-applications/{leave_id}/document")
+def get_leave_document(
+    leave_id: int, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _document_response(*_svc(request).getSupportingDocument(
+        "leave", user.account_id, user.role, leave_id,
+    ))
+
+
+@router.post("/student/appeals/{appeal_id}/document")
+async def student_attach_appeal_document(
+    appeal_id: int, request: Request,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_role("student")),
+):
+    data = await file.read()
+    return _svc(request).attachSupportingDocument(
+        "appeal", user.account_id, appeal_id, file.filename, file.content_type, data,
+    )
+
+
+@router.get("/appeals/{appeal_id}/document")
+def get_appeal_document(
+    appeal_id: int, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _document_response(*_svc(request).getSupportingDocument(
+        "appeal", user.account_id, user.role, appeal_id,
+    ))
+
+
 # Teacher: U31
 @router.get("/teacher/leave-applications")
 def teacher_list_leave(
     request: Request, user: CurrentUser = Depends(require_role("teacher"))
 ):
-    return _svc(request).listPendingLeaveApplications()
+    return _svc(request).listLeaveApplicationsForReview()
 
 
 @router.patch("/teacher/leave-applications/{leave_id}")

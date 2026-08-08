@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -118,7 +119,13 @@ def build_stub_pipeline(cfg=None):
     pipe._facenet = None
     pipe._weights = {ARCFACE_MODEL_NAME: 1.0}
 
-    def enrol_student(account_id: int, images: list, reject_multiple: bool = False):
+    def enrol_student(
+        account_id: int, images: list,
+        reject_multiple: bool = False, append: bool = False,
+    ):
+        # Signature and append semantics must mirror
+        # AttendancePipeline.enrol_student — otherwise the multi-angle
+        # gallery path is never exercised by the suite.
         if not images:
             return {}
         # Simulate one face per enrolment photo.
@@ -128,6 +135,7 @@ def build_stub_pipeline(cfg=None):
             vectors_by_model={ARCFACE_MODEL_NAME: [vec]},
             retention_days=cfg.embedding_retention_days,
             model_versions={ARCFACE_MODEL_NAME: "stub-test"},
+            deactivate_previous=not append,
         )
         # Keep StudentInfo in sync so scan/identify labels resolve.
         try:
@@ -144,7 +152,9 @@ def build_stub_pipeline(cfg=None):
                 student_id=row[0] if row else None,
                 full_name=row[1] if row else None,
             )
-            store.upsert(account_id, vec, info=info)
+            # enrol_account() already inserted the vector; only the label is
+            # missing. upsert() here would add a second copy in append mode.
+            store.set_info(account_id, info)
         except Exception:
             pass
         return written
@@ -518,3 +528,166 @@ def st_world(client, db_url: str, st_suffix: str, png_bytes) -> Iterator[SimpleN
             cur.execute("DELETE FROM personal_info WHERE accountid = ANY(%s)", (ids,))
             cur.execute("DELETE FROM user_account WHERE accountid = ANY(%s)", (ids,))
         conn.commit()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# System-test result reporting (Part E evidence)
+# ════════════════════════════════════════════════════════════════════════
+# The suite is written so every test maps 1:1 onto a case ID in the Final
+# Technical Documentation (ST-UF-07 ↔ U07, and so on). pytest's default dot
+# output loses that mapping, so filling in the "Pass?" column meant reading
+# the source. These hooks print the results grouped by case ID and write the
+# same table to docs/evidence/, which is what the document cites.
+
+_ST_DOMAINS = {
+    "BS": "Basic Settings",
+    "TK": "Task-driven",
+    "EX": "Exception",
+    "DB": "Database accuracy",
+    "UF": "User functional requirements",
+    "SEC": "Network security",
+    "ML": "ML algorithm accuracy",
+    "BH": "Behaviour analysis",
+}
+_ST_ORDER = ["BS", "TK", "EX", "DB", "UF", "SEC", "ML", "BH"]
+_ST_PATTERN = re.compile(r"_st_(bs|tk|ex|db|uf|sec|ml|bh)_(\d+)", re.IGNORECASE)
+
+# nodeid -> {"id", "domain", "outcome", "duration", "detail"}
+_st_results: dict[str, dict[str, Any]] = {}
+
+
+def _case_id(nodeid: str) -> tuple[str, str] | None:
+    """('UF', 'ST-UF-07') from a node id, or None for non-ST tests."""
+    match = _ST_PATTERN.search(nodeid)
+    if not match:
+        return None
+    domain = match.group(1).upper()
+    return domain, f"ST-{domain}-{match.group(2).zfill(2)}"
+
+
+def pytest_runtest_logreport(report) -> None:
+    identified = _case_id(report.nodeid)
+    if identified is None:
+        return
+    domain, case_id = identified
+
+    # A case counts as failed if ANY phase failed: a passing test body whose
+    # fixture teardown blew up has not really demonstrated the requirement.
+    entry = _st_results.setdefault(
+        report.nodeid,
+        {"id": case_id, "domain": domain, "outcome": "passed",
+         "duration": 0.0, "detail": ""},
+    )
+    entry["duration"] += report.duration
+    if report.failed:
+        entry["outcome"] = "failed"
+        text = str(report.longrepr or "").strip().splitlines()
+        detail = next(
+            (ln.strip() for ln in reversed(text) if ln.strip().startswith("E ")), "",
+        )
+        entry["detail"] = (detail[2:].strip() or "see traceback")[:160]
+    elif report.skipped and entry["outcome"] == "passed":
+        entry["outcome"] = "skipped"
+
+
+def _summary_rows() -> list[dict[str, Any]]:
+    """One row per case ID, in document order."""
+    by_case: dict[str, dict[str, Any]] = {}
+    for entry in _st_results.values():
+        current = by_case.get(entry["id"])
+        # Duplicate IDs would be a numbering mistake; surface the worst result.
+        if current is None or (current["outcome"] == "passed" != entry["outcome"]):
+            by_case[entry["id"]] = entry
+    def sort_key(e: dict[str, Any]) -> tuple[int, int]:
+        num = e["id"].rsplit("-", 1)[-1]
+        return (_ST_ORDER.index(e["domain"]), int(num) if num.isdigit() else 0)
+    return sorted(by_case.values(), key=sort_key)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    rows = _summary_rows()
+    if not rows:
+        return
+
+    tw = terminalreporter
+    tw.write_line("")
+    tw.write_sep("═", "SYSTEM TESTING RESULTS — FYP-26-S2-17", bold=True)
+
+    totals = {"passed": 0, "failed": 0, "skipped": 0}
+    for domain in _ST_ORDER:
+        cases = [r for r in rows if r["domain"] == domain]
+        if not cases:
+            continue
+        passed = sum(1 for c in cases if c["outcome"] == "passed")
+        failed = sum(1 for c in cases if c["outcome"] == "failed")
+        skipped = len(cases) - passed - failed
+        totals["passed"] += passed
+        totals["failed"] += failed
+        totals["skipped"] += skipped
+
+        pct = passed / len(cases)
+        bar = "█" * round(pct * 10) + "░" * (10 - round(pct * 10))
+        tw.write(f"  ST-{domain:<4}{_ST_DOMAINS[domain]:<32}")
+        tw.write(f"{passed:>3}/{len(cases):<4}", green=failed == 0, red=failed > 0)
+        tw.write_line(f" {bar} {pct:>4.0%}")
+
+        # Only failures are itemised — a green run stays short.
+        for case in cases:
+            if case["outcome"] == "failed":
+                tw.write_line(f"       ✗ {case['id']}  {case['detail']}", red=True)
+            elif case["outcome"] == "skipped":
+                tw.write_line(f"       – {case['id']}  skipped", yellow=True)
+
+    tw.write_sep("─")
+    tw.write(f"  {len(rows)} case(s): ")
+    tw.write(f"{totals['passed']} passed", green=True)
+    if totals["failed"]:
+        tw.write(f" · {totals['failed']} failed", red=True)
+    if totals["skipped"]:
+        tw.write(f" · {totals['skipped']} skipped", yellow=True)
+    tw.write_line("")
+
+    path = _write_evidence(rows, totals)
+    if path:
+        tw.write_line(f"  Evidence written to {path}", cyan=True)
+    tw.write_sep("═")
+
+
+def _write_evidence(rows: list[dict[str, Any]], totals: dict[str, int]) -> str | None:
+    """Persist the same table as markdown for the FTD's Pass? column."""
+    import datetime as _dt
+
+    try:
+        out_dir = _REPO_ROOT / "docs" / "evidence"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = _dt.datetime.now()
+        path = out_dir / f"system_test_{stamp:%Y%m%d_%H%M}.md"
+        lines = [
+            "# System Testing results — FYP-26-S2-17",
+            "",
+            f"Generated {stamp:%Y-%m-%d %H:%M} by `pytest tests/`.",
+            "Each row is produced by the automated suite; the ID matches the",
+            "case tables in the Final Technical Documentation, Part D §3.3.",
+            "",
+            "| ID | Domain | Result | Duration | Detail |",
+            "|---|---|---|---|---|",
+        ]
+        symbol = {"passed": "Y", "failed": "N", "skipped": "skipped"}
+        for row in rows:
+            lines.append(
+                f"| {row['id']} | {_ST_DOMAINS[row['domain']]} | "
+                f"{symbol[row['outcome']]} | {row['duration']:.2f}s | "
+                f"{row['detail'] or ''} |"
+            )
+        lines += [
+            "",
+            f"**Totals — planned {len(rows)} · passed {totals['passed']} · "
+            f"failed {totals['failed']} · skipped {totals['skipped']} · "
+            f"pass rate {totals['passed'] / len(rows):.0%}**",
+            "",
+        ]
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return str(path.relative_to(_REPO_ROOT))
+    except Exception as exc:  # noqa: BLE001 — reporting must never fail a run
+        print(f"[evidence] could not write summary: {exc}")
+        return None

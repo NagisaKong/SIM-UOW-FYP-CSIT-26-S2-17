@@ -32,6 +32,7 @@
   --shadow-lg: 0 20px 40px -10px rgba(15, 23, 42, .15), 0 8px 16px -8px rgba(15, 23, 42, .08);
 
   --transition: 150ms cubic-bezier(.4, 0, .2, 1);
+  --ease: cubic-bezier(.4, 0, .2, 1);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -533,6 +534,95 @@ main {
   }
 }
 
+/* ── Page transitions ──────────────────────────────────────────────
+   Logging in is a real navigation, so the transition is two halves: the
+   login card fades out (.is-leaving, below) and the dashboard chrome
+   fades in here. Deliberately a plain CSS animation rather than the View
+   Transitions API, so Chrome, Edge and Firefox render it identically.
+
+   This doubles as the fix for the flash of empty dashboard: the chrome
+   starts transparent, and requireAuth() — the first statement of every
+   page script — has redirected a signed-out visitor long before the
+   animation ends, so the empty shell is never seen.
+
+   Two things this rule must never do:
+
+   - Collapse to `body:not(.centered) > *`. .to-top and the calendar
+     modal backdrop are position:fixed children of <body>; an animated
+     ancestor with a transform would become their containing block and
+     break the fixed positioning.
+   - Grow an animation-fill-mode. `forwards` would hold translateY(0) as
+     a computed matrix forever, which is the same problem permanently.
+     Without a fill mode the animation also always ends at opacity 1 on
+     its own, so a JS error can never strand a blank page.
+
+   <main> is left out on purpose: its .panel children already animate
+   with panel-in, and stacking two fades makes the content arrive late
+   and dim. */
+body:not(.centered)>header.topbar,
+body:not(.centered)>.tabs,
+body:not(.centered)>.browser-notice,
+body:not(.centered)>.app-footer {
+  animation: page-enter .38s var(--ease);
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The other half: the login card drifts down and fades before the
+   redirect fires. `forwards` holds the faded-out state so the card
+   cannot flicker back during the navigation — index.html clears the
+   class on pageshow, which is what makes Back work. */
+.is-leaving {
+  animation: page-leave .2s var(--ease) forwards;
+  pointer-events: none;
+}
+
+@keyframes page-leave {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* Busy spinner for buttons. Buttons are already inline-flex with a gap,
+   so this needs no layout rules — only a size and the ring itself.
+   currentColor keeps it legible on primary, danger and secondary alike. */
+.spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+
+.is-busy .spinner {
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Respect users who prefer reduced motion. */
 @media (prefers-reduced-motion: reduce) {
 
@@ -541,8 +631,39 @@ main {
     animation: none;
   }
 
+  /* Not `animation: none` — the movement goes, the fade stays. That fade
+     is what keeps the signed-out shell off screen, and a cross-fade with
+     no motion is what reduced-motion actually asks for. */
+  body:not(.centered)>header.topbar,
+  body:not(.centered)>.tabs,
+  body:not(.centered)>.browser-notice,
+  body:not(.centered)>.app-footer {
+    animation: page-enter-flat .2s linear;
+  }
+
+  /* navigateWithFade() skips the leave animation outright for these
+     users; this keeps the class harmless if applied by other means. */
+  .is-leaving {
+    animation: none;
+    opacity: 0;
+  }
+
+  .spinner {
+    animation-duration: 1.2s;
+  }
+
   .submenu {
     transition: none;
+  }
+}
+
+@keyframes page-enter-flat {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -574,6 +695,29 @@ main {
 .row--compact {
   grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   max-width: 480px;
+}
+
+/* Session / course pickers. Their <option> labels carry an id, a course code
+   and a timestamp, which the 220px compact column clipped mid-time — the
+   teacher could not tell two sittings of the same course apart. Applied on
+   top of .row--compact, so the rest of that row's styling still holds.
+
+   340px is measured, not guessed: the longest label in use is the behaviour
+   tab's "#142 CSIT226 (8/3/2026, 1:30 PM) [active]" at ~312px, and a select
+   spends roughly another 28px on its dropdown arrow and padding.
+
+   Plain px on purpose — minmax(min(100%, 340px), …) inside repeat(auto-fit)
+   collapses the track to ~24px, because the percentage has no resolvable
+   basis at track-sizing time. Narrow viewports are handled below instead. */
+.row--wide-select {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 420px));
+  max-width: none;
+}
+
+@media (max-width: 420px) {
+  .row--wide-select {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Stacked single-column form (one field per row, typical sign-up layout) */
@@ -759,7 +903,8 @@ td button:disabled {
 .status-absent,
 .status-late,
 .status-early_left,
-.status-leave {
+.status-leave,
+.status-pending {
   display: inline-block;
   padding: 2px 9px;
   border-radius: 999px;
@@ -791,6 +936,13 @@ td button:disabled {
 .status-leave {
   color: var(--c-primary);
   background: var(--c-primary-soft);
+}
+
+/* Undecided: the session is still running and this student has no record
+   yet. Deliberately neutral — it must not read as a verdict either way. */
+.status-pending {
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
 }
 
 .badge {
@@ -983,6 +1135,7 @@ img.preview {
     flex-wrap: wrap;
     gap: .35rem .75rem;
   }
+
   header.topbar h1 {
     font-size: .98rem;
   }
@@ -991,6 +1144,7 @@ img.preview {
   .tabs {
     display: none;
   }
+
   .tabs-select {
     display: block;
     width: 100%;
@@ -1027,10 +1181,12 @@ img.preview {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+
   .panel table thead th,
   .panel table tbody td {
     white-space: nowrap;
   }
+
   /* Inline detail / slide-out rows should still wrap normally. */
   .panel table .detail-row td,
   .panel table .detail-content,
@@ -1050,9 +1206,11 @@ img.preview {
   header.topbar {
     padding: .6rem .8rem;
   }
+
   header.topbar h1 {
     font-size: .9rem;
   }
+
   /* The email/identity label eats width on tiny screens — hide it; the
      dashboard heading already says which role you're in. */
   header.topbar #who {
@@ -1062,20 +1220,301 @@ img.preview {
   main {
     padding: .85rem .6rem 2rem;
   }
+
   .panel {
     padding: .9rem;
     border-radius: var(--radius);
   }
+
   .panel h2 {
     font-size: 1.15rem;
   }
 
   /* Filter / control rows: stack their inputs full-width so nothing is
      squashed below a usable size. */
-  .att-filters > input,
-  .att-filters > select,
-  .att-filters > label {
+  .att-filters>input,
+  .att-filters>select,
+  .att-filters>label {
     flex: 1 1 100% !important;
     min-width: 0 !important;
   }
+}
+
+/* ── Behaviour Analysis Settings (admin) ─────────────────────────────
+   A vertical form: course, then the feature switches it applies to, then
+   the sensitivity sliders. Deliberately not .form-stacked — that caps at
+   420px, which is too narrow for a slider plus its guidance text. */
+.beh-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 780px;
+}
+
+.beh-course {
+  max-width: 380px;
+}
+
+.beh-switches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: .6rem 1.5rem;
+  padding: .9rem 1.1rem;
+  border: 1px solid var(--c-border-2, #e1e4e8);
+  border-radius: var(--radius, 8px);
+  background: var(--c-surface-2, #f8f9fa);
+}
+
+.beh-switches label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.beh-switches input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.beh-sensitivity {
+  border: 1px solid var(--c-border-2, #e1e4e8);
+  border-radius: var(--radius, 8px);
+  padding: 1rem 1.25rem 1.25rem;
+  margin: 0;
+}
+
+.beh-sensitivity legend {
+  padding: 0 .4rem;
+  font-weight: 600;
+  font-size: .9rem;
+}
+
+.beh-adaptive {
+  padding-bottom: .9rem;
+  margin-bottom: .4rem;
+  border-bottom: 1px solid var(--c-border-2, #eee);
+}
+
+.beh-adaptive label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.beh-adaptive p {
+  margin: .3rem 0 0 1.6rem;
+}
+
+/* One slider block: header (name + value + reset), track, effect note. */
+.beh-slider {
+  padding: .9rem 0;
+  border-bottom: 1px solid var(--c-border-2, #f0f2f5);
+}
+
+.beh-slider:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.beh-slider__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.beh-slider__name {
+  font-weight: 600;
+  font-size: .9rem;
+}
+
+.beh-slider__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--c-primary, #2a4b7f);
+}
+
+.beh-slider__value--default {
+  color: var(--c-text-2, #666);
+  font-weight: 400;
+}
+
+.beh-slider__reset {
+  font-size: .75rem;
+  padding: 2px 8px;
+}
+
+.beh-slider input[type="range"] {
+  width: 100%;
+  margin: .5rem 0 .35rem;
+  accent-color: var(--c-primary, #2a4b7f);
+}
+
+.beh-slider__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: .7rem;
+  color: var(--c-text-2, #777);
+  margin-top: -.25rem;
+}
+
+/* Live explanation of what the current position does to the model. */
+.beh-slider__effect {
+  font-size: .78rem;
+  line-height: 1.5;
+  margin: .4rem 0 0;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+  background: var(--c-surface-2, #f6f8fa);
+  border-left: 3px solid var(--c-border-2, #d0d7de);
+}
+
+.beh-slider__effect--sensitive {
+  background: #fff7ed;
+  border-left-color: #e3a008;
+}
+
+.beh-slider__effect--strict {
+  background: #eff6ff;
+  border-left-color: #2a4b7f;
+}
+
+.beh-save {
+  align-self: flex-start;
+  min-width: 160px;
+}
+
+/* ── Browser support notice (dashboard footer) ─────────────────────── */
+.browser-notice {
+  margin: 24px auto 32px;
+  padding: 12px 16px;
+  max-width: 1200px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-bg);
+  color: var(--c-text-2);
+}
+
+.browser-notice p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.browser-notice p+p {
+  margin-top: 6px;
+}
+
+.browser-notice strong {
+  color: var(--c-text);
+}
+
+/* Raised to a warning only when the page is on an insecure origin, where the
+   camera genuinely will not work — otherwise the notice stays informational. */
+.browser-notice-warn {
+  color: var(--c-danger);
+}
+
+.browser-notice-warn strong {
+  color: var(--c-danger);
+}
+
+/* Browser marks inside the notice: sit on the text baseline without
+   stretching the line, and never shrink when the line wraps. */
+.browser-chip {
+  white-space: nowrap;
+}
+
+.browser-mark {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  margin-right: 3px;
+  vertical-align: -3px;
+  flex: none;
+  object-fit: contain;
+  /* the vendor logos differ in aspect ratio */
+}
+
+/* ── Back to top ───────────────────────────────────────────────────── */
+.to-top {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 900;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--c-border);
+  border-radius: 50%;
+  background: var(--c-surface);
+  color: var(--c-primary);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .14);
+  cursor: pointer;
+
+  /* Hidden by default; `visibility` (not just opacity) keeps it out of the
+     tab order and away from clicks while it is faded out. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity .18s ease, transform .18s ease, visibility .18s;
+}
+
+.to-top.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.to-top:hover {
+  background: var(--c-primary-soft);
+  border-color: var(--c-primary);
+}
+
+.to-top svg {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 640px) {
+  .to-top {
+    right: 14px;
+    bottom: 14px;
+    width: 38px;
+    height: 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .to-top {
+    transition: none;
+  }
+}
+
+/* ── Admin: Users omni-search ─────────────────────────────────────── */
+.users-search {
+  width: 100%;
+  max-width: 480px;
+  margin-top: .5rem;
+}
+
+/* ── Copyright footer ──────────────────────────────────────────────── */
+.app-footer {
+  margin: 8px auto 24px;
+  padding: 14px 16px 0;
+  max-width: 1200px;
+  border-top: 1px solid var(--c-border);
+  text-align: center;
+}
+
+.app-footer p {
+  margin: 0;
+  color: var(--c-muted);
 }

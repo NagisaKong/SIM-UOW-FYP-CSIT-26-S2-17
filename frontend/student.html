@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Student — FRAS</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=8">
+  <script>if (!localStorage.getItem("token")) location.replace("index.html");</script>
   <style>
     /* ── Attendance view toggle ───────────────────────────────── */
     .att-view-toggle {
@@ -260,8 +261,8 @@
 
 <body>
   <header class="topbar">
-    <h1><img src="assets/logo/fras-logo-icon.svg" alt=""
-        style="height:26px;vertical-align:-6px;margin-right:8px">FRAS Student Dashboard</h1>
+    <h1><img src="assets/logo/fras-logo-icon.svg" alt="" style="height:26px;vertical-align:-6px;margin-right:8px">FRAS
+      Student Dashboard</h1>
     <div>
       <span id="who" class="muted"></span>
       <button class="danger" onclick="logout()">Logout</button>
@@ -319,7 +320,7 @@
 
     <section id="tab-analytics" class="panel" style="display:none">
       <h2>Attendance Analytics</h2>
-      <div class="row row--compact">
+      <div class="row row--compact row--wide-select">
         <label>Module
           <select id="sana-course">
             <option value="">All modules</option>
@@ -353,6 +354,7 @@
               <th>ID</th>
               <th>Record</th>
               <th>Reason</th>
+              <th>Document</th>
               <th>Status</th>
               <th>Created</th>
             </tr>
@@ -370,6 +372,11 @@
             <select name="record_id" id="appeal-record" required></select>
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
+          <label>Supporting document (optional)
+            <input type="file" name="supporting_doc" accept="image/png,image/jpeg,image/webp,application/pdf">
+            <span class="muted small">A photo or PDF of any evidence supporting your
+              appeal — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
+          </label>
           <button type="submit">Submit</button>
         </form>
         <p id="appeal-msg" class="error"></p>
@@ -389,6 +396,7 @@
               <th>Session</th>
               <th>Start</th>
               <th>Reason</th>
+              <th>Document</th>
               <th>Status</th>
               <th>Reviewer Comment</th>
             </tr>
@@ -408,8 +416,10 @@
             <select name="session_id" id="leave-session" required></select>
           </label>
           <label>Reason<textarea name="reason" rows="3" required></textarea></label>
-          <label>Supporting document URL (optional)
-            <input type="url" name="supporting_doc_url" placeholder="https://...">
+          <label>Supporting document (optional)
+            <input type="file" name="supporting_doc" accept="image/png,image/jpeg,image/webp,application/pdf">
+            <span class="muted small">A photo or PDF of your medical certificate or
+              other evidence — PNG, JPEG, WebP or PDF, up to 5 MB.</span>
           </label>
           <button type="submit">Submit Application</button>
         </form>
@@ -439,6 +449,9 @@
           <button type="button" id="face-cam-capture" disabled>Capture</button>
           <button type="button" id="face-cam-retake" class="secondary" style="display:none">Retake</button>
           <button type="button" id="face-cam-submit" disabled>Submit Photo</button>
+          <button type="button" id="face-cam-add" class="secondary" disabled
+            title="Keep your existing photos and store this one as an extra angle">Add as extra
+            angle</button>
         </div>
       </div>
 
@@ -448,14 +461,18 @@
         <button type="submit">Upload</button>
       </form>
 
-      <p id="face-msg" class="small" style="margin-top:1rem"></p>
+      <p id="face-gallery-count" class="small muted" style="margin-top:1rem"></p>
+      <p id="face-msg" class="small" style="margin-top:.25rem"></p>
     </section>
   </main>
 
+  <!-- Filled in by renderBrowserNotice() in app.js; the role selects the text. -->
+  <div class="browser-notice" data-role="student"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=6"></script>
-  <script src="student.js?v=3"></script>
+  <script src="app.js?v=15"></script>
+  <script src="student.js?v=6"></script>
 </body>
 
 </html>

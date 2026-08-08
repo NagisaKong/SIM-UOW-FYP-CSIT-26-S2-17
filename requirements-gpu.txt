@@ -1,0 +1,42 @@
+# GPU runtimes — apply AFTER requirements.txt, and only on a machine with an
+# NVIDIA card. Everything else (FastAPI, InsightFace, MediaPipe, …) comes from
+# requirements.txt and is unchanged.
+#
+# The order matters, so prefer letting the checker drive it:
+#
+#   python scripts/check_gpu.py --fix
+#
+# Manually, it is:
+#
+#   pip install -r requirements.txt
+#   pip uninstall onnxruntime -y
+#   pip install --force-reinstall --no-deps onnxruntime-gpu
+#   pip install -r requirements-gpu.txt
+#   python scripts/check_gpu.py
+#
+# Why the uninstall cannot be skipped: `onnxruntime` and `onnxruntime-gpu`
+# install into the same `onnxruntime/` package directory. With both present the
+# CPU build wins — CUDA vanishes from get_available_providers(), inference runs
+# roughly ten times slower, and nothing errors. pip will still list
+# onnxruntime-gpu as installed, so `pip list` is not evidence.
+#
+# Why that uninstall then needs --force-reinstall: removing the CPU
+# distribution also deletes files the GPU one shares, leaving
+# `import onnxruntime` broken ("module has no attribute '__version__'").
+# Reinstalling repairs it. That step is a plain pip command rather than a line
+# in this file because requirements files cannot express uninstall-then-install
+# ordering, nor accept --force-reinstall / --no-deps.
+
+# CUDA 12.6 wheels. cu126 matches the driver on the team's RTX rigs; adjust the
+# suffix if yours is older (cu121) and check https://pytorch.org for the pairing.
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# Ultralytics YOLO phone detection. Measured on an RTX 4060 Laptop:
+# yolov8s @1920 drops from 377 ms/frame to 32 ms.
+torch>=2.1.0
+torchvision>=0.16.0
+
+# InsightFace runtime (SCRFD, ArcFace, 3D-landmark head pose). Listed here for
+# completeness; install it with the --force-reinstall command above, since a
+# plain resolve will not repair a directory the CPU uninstall damaged.
+onnxruntime-gpu>=1.20.0
