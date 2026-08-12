@@ -11,7 +11,11 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       document.getElementById("tab-" + name).style.display =
         name === btn.dataset.tab ? "" : "none";
     });
-    if (btn.dataset.tab === "live") loadLiveSessions();
+    // U12 requires the live roster to update on its own as the camera
+    // identifies students. Polling only while the Live tab is actually the
+    // visible one keeps that from running behind every other tab.
+    if (btn.dataset.tab === "live") { loadLiveSessions(); startLivePolling(); }
+    else stopLivePolling();
     if (btn.dataset.tab === "roster") loadRoster();
     if (btn.dataset.tab === "analytics") loadAnalytics();
     if (btn.dataset.tab === "behaviour") loadBehaviourTab();
@@ -214,6 +218,31 @@ async function loadEarlyLeft(id) {
 }
 
 document.getElementById("live-session").addEventListener("change", refreshLive);
+
+// U12 auto-refresh. The scan page already calls refreshLive() after each
+// snapshot, but that only helps the teacher who is running the scan on this
+// same machine; a teacher just watching the Live tab saw a frozen roster.
+// 5s matches the cadence the early-left renderer was already written for
+// (see the flicker note in loadEarlyLeft).
+const LIVE_POLL_MS = 5000;
+let liveTimer = null;
+
+function startLivePolling() {
+  if (liveTimer) return;
+  liveTimer = setInterval(() => {
+    // Skip while a scan round is mid-flight: captureSnapshot() calls
+    // refreshLive() itself when it finishes, and a poll landing in between
+    // would show a half-written roster.
+    if (!scanBusy) refreshLive();
+  }, LIVE_POLL_MS);
+}
+
+function stopLivePolling() {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+
+// Leaving the page entirely (navigation, Back, tab close) must stop it too.
+window.addEventListener("pagehide", stopLivePolling);
 
 // ──────────────────────────────────────────────────────────────
 // U03 Classroom camera scan (teacher-activated detection windows)
@@ -897,8 +926,11 @@ async function loadAnalytics() {
   renderTrend(res.trend || []);
   renderBreakdown(res.breakdown || {});
   const b = res.breakdown || {};
-  document.getElementById("ana-summary").textContent =
-    `Total records ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · Late ${b.late || 0} · Absent ${b.absent || 0}`;
+  // U30 alt-flow: say "no data for this range" instead of showing a row of
+  // zeroes, which looks like a class that never attended.
+  document.getElementById("ana-summary").textContent = (b.total || 0) === 0
+    ? "No attendance data for the selected course and date range."
+    : `Total records ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · Late ${b.late || 0} · Absent ${b.absent || 0}`;
 }
 
 // Format a YYYY-MM-DD date string without timezone shifting (avoids the

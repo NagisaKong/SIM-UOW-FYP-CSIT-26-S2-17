@@ -20,7 +20,12 @@ from pydantic import BaseModel
 
 from core.attendanceRecord import load_threshold_config
 from core.notification import Notification, send_late_absent_emails
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import (
+    CurrentUser,
+    assert_teacher_course,
+    assert_teacher_session,
+    require_role,
+)
 
 
 @contextlib.contextmanager
@@ -455,6 +460,9 @@ def teacher_start_session(
     request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     return _svc(request).startSession(session_id)
 
 
@@ -465,6 +473,9 @@ def teacher_end_session(
     request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     return _svc(request).endSession(session_id, background_tasks)
 
 
@@ -473,6 +484,8 @@ def teacher_end_session(
 def teacher_list_courses(
     request: Request, user: CurrentUser = Depends(require_role("teacher"))
 ):
+    # Scoped to the courses this teacher is assigned to — a teacher's dashboard
+    # must not offer another teacher's class as something to open or scan.
     sql = """
         SELECT c.courseid, c.course_code, c.course_name,
                COALESCE(c.status,'active') AS status,
@@ -480,10 +493,11 @@ def teacher_list_courses(
                   WHERE e.courseid = c.courseid AND e.status='active') AS enrolled
         FROM course c
         WHERE COALESCE(c.status,'active') = 'active'
+          AND c.teacher_id = %s
         ORDER BY c.course_code
     """
     with _db(request.app.state.cfg.database_url) as c, c.cursor() as cur:
-        cur.execute(sql)
+        cur.execute(sql, (user.account_id,))
         return {"success": True, "courses": _dict_rows(cur)}
 
 
@@ -498,7 +512,8 @@ def teacher_list_sessions(
     # This feeds the teacher's "Active session" picker, so it is the place
     # where an overdue session must not still be on offer.
     expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
-    clauses, params = [], []
+    # Own courses only — this feeds the session picker on every teacher tab.
+    clauses, params = ["c.teacher_id = %s"], [user.account_id]
     if course_id is not None:
         clauses.append("s.courseid = %s")
         params.append(course_id)
@@ -528,6 +543,9 @@ def teacher_course_roster(
     request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_course(
+        request.app.state.cfg.database_url, user.account_id, course_id
+    )
     sql = """
         SELECT e.accountid, pi.full_name, pi.student_id, ua.email, e.status,
                -- Count attendance only within ENDED sessions so the ratio

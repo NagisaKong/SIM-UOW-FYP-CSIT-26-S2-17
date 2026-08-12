@@ -104,7 +104,8 @@ class AttendanceAppeal:
             cur.execute(
                 """SELECT a.attendancerecordid, a.status,
                           ua.email, pi.full_name,
-                          c.course_code, c.course_name, s.start_time
+                          c.course_code, c.course_name, s.start_time,
+                          c.teacher_id
                    FROM attendance_appeal a
                    JOIN attendance_record r ON r.attendancerecordid = a.attendancerecordid
                    JOIN attendance_session s ON s.attendancesessionid = r.attendancesessionid
@@ -117,7 +118,12 @@ class AttendanceAppeal:
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Appeal not found")
-            record_id, current, email, full_name, code, cname, start_time = row
+            (record_id, current, email, full_name, code, cname, start_time,
+             course_teacher) = row
+            # Only the teacher who owns the course may decide the appeal —
+            # approving it rewrites the student's attendance record.
+            if course_teacher != reviewer:
+                raise HTTPException(403, "You are not assigned to this appeal's course")
             if current != "pending":
                 raise HTTPException(409, f"This appeal has already been {current}")
             cur.execute(
@@ -148,8 +154,13 @@ class AttendanceAppeal:
             send_review_outcome_email(payload)
         return {"success": True, "appeal_id": appeal_id, "status": status}
 
-    def listAppealsForReview(self) -> dict[str, Any]:
-        """All appeals with course/session context, pending first."""
+    def listAppealsForReview(self, teacher_id: int | None = None) -> dict[str, Any]:
+        """Appeals with course/session context, pending first.
+
+        ``teacher_id`` restricts the list to courses assigned to that teacher
+        (the U08 review queue). Admins pass ``None`` for the oversight view,
+        which still returns every appeal.
+        """
         sql = """
             SELECT a.appealid, a.attendancerecordid, a.accountid,
                    pi.full_name, pi.student_id,
@@ -176,10 +187,13 @@ class AttendanceAppeal:
             LEFT JOIN user_account  rua ON rua.accountid = a.reviewed_by
             LEFT JOIN user_profiles rup ON rup.profileid = rua.profileid
             LEFT JOIN personal_info rpi ON rpi.accountid = a.reviewed_by
+            {where}
             ORDER BY (a.status = 'pending') DESC, a.created_at DESC
         """
+        where = "WHERE c.teacher_id = %s" if teacher_id is not None else ""
+        params = (teacher_id,) if teacher_id is not None else ()
         with _db(self.database_url) as c, c.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql.format(where=where), params)
             return {"success": True, "appeals": _dict_rows(cur)}
 
     # ── U28 makeLeaveApplication (future session) ───────────────────
@@ -357,7 +371,8 @@ class AttendanceAppeal:
             cur.execute(
                 """SELECT la.accountid, la.attendancesessionid,
                           ua.email, pi.full_name,
-                          c.course_code, c.course_name, s.start_time
+                          c.course_code, c.course_name, s.start_time,
+                          c.teacher_id
                    FROM leave_application la
                    JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
                    JOIN course c ON c.courseid = s.courseid
@@ -369,7 +384,14 @@ class AttendanceAppeal:
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Leave application not found")
-            student_id, session_id, email, full_name, code, cname, start_time = row
+            (student_id, session_id, email, full_name, code, cname, start_time,
+             course_teacher) = row
+            # Approving writes a 'leave' attendance record, so the decision
+            # belongs to the teacher who owns the course.
+            if course_teacher != reviewer:
+                raise HTTPException(
+                    403, "You are not assigned to this application's course",
+                )
             cur.execute(
                 """UPDATE leave_application
                    SET status = %s, reviewed_by = %s, reviewed_at = NOW(),
@@ -400,8 +422,12 @@ class AttendanceAppeal:
             send_review_outcome_email(payload)
         return {"success": True}
 
-    def listLeaveApplicationsForReview(self) -> dict[str, Any]:
+    def listLeaveApplicationsForReview(
+        self, teacher_id: int | None = None,
+    ) -> dict[str, Any]:
         """Every leave application, newest first — not just the pending ones.
+
+        ``teacher_id`` restricts the list to that teacher's own courses.
 
         Mirrors the appeals list: the teacher opens one to read it in full and
         decide, and can still go back to an already-reviewed application to
@@ -431,10 +457,13 @@ class AttendanceAppeal:
             JOIN attendance_session s ON s.attendancesessionid = la.attendancesessionid
             JOIN course c ON c.courseid = s.courseid
             LEFT JOIN personal_info pi ON pi.accountid = la.accountid
+            {where}
             ORDER BY la.created_at DESC
         """
+        where = "WHERE c.teacher_id = %s" if teacher_id is not None else ""
+        params = (teacher_id,) if teacher_id is not None else ()
         with _db(self.database_url) as c, c.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql.format(where=where), params)
             return {"success": True, "applications": _dict_rows(cur)}
 
 
@@ -505,7 +534,7 @@ def student_list_leave(
 def teacher_list_appeals(
     request: Request, user: CurrentUser = Depends(require_role("teacher"))
 ):
-    return _svc(request).listAppealsForReview()
+    return _svc(request).listAppealsForReview(teacher_id=user.account_id)
 
 
 @router.patch("/teacher/appeals/{appeal_id}")
@@ -578,7 +607,7 @@ def get_appeal_document(
 def teacher_list_leave(
     request: Request, user: CurrentUser = Depends(require_role("teacher"))
 ):
-    return _svc(request).listLeaveApplicationsForReview()
+    return _svc(request).listLeaveApplicationsForReview(teacher_id=user.account_id)
 
 
 @router.patch("/teacher/leave-applications/{leave_id}")

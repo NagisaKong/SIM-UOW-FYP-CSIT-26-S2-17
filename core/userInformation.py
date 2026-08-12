@@ -11,6 +11,13 @@ helpers are now private to this module.
 logout is intentionally NOT exposed as a server endpoint — the
 frontend simply discards the bearer token (PTD U02/U11/U18 are
 boundary-only flows).
+
+Also holds the shared authorisation helpers the other business classes
+depend on: require_role() for the coarse role gate, and the
+assert_teacher_* / teacher_course_ids helpers for course ownership.
+They live here because this is the authorisation module and because it
+imports nothing else from core/, so any module can depend on it without
+creating a cycle.
 """
 
 from __future__ import annotations
@@ -126,6 +133,60 @@ def require_role(*roles: str):
     return _dep
 
 
+# ── Course-ownership authorisation (teacher endpoints) ───────────────
+# require_role("teacher") only proves the caller IS a teacher — not that the
+# course, session or student they are asking about is theirs. Without a second
+# check any teacher could read (and, for start/end/scan/review, write) another
+# teacher's class data. These helpers supply that second check.
+#
+# The rule is deliberately strict and singular: a teacher owns a course when
+# COURSE.teacher_id equals their account id. A course with no teacher assigned
+# therefore belongs to nobody and is invisible to every teacher — admins still
+# reach it through the /admin/* endpoints.
+def teacher_course_ids(database_url: str, teacher_id: int) -> list[int]:
+    """Every course this teacher is assigned to (possibly empty)."""
+    with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT courseid FROM course WHERE teacher_id = %s ORDER BY courseid",
+            (teacher_id,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def assert_teacher_course(database_url: str, teacher_id: int, course_id: int) -> None:
+    """403 unless `course_id` is assigned to `teacher_id`. 404 if it is gone."""
+    with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT teacher_id FROM course WHERE courseid = %s", (course_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(404, "Course not found")
+    if row[0] != teacher_id:
+        raise HTTPException(403, "You are not assigned to this course")
+
+
+def assert_teacher_session(database_url: str, teacher_id: int, session_id: int) -> int:
+    """403 unless the session's course is assigned to `teacher_id`.
+
+    Returns the session's course id, so callers that need it afterwards do not
+    have to look it up a second time.
+    """
+    with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT s.courseid, c.teacher_id
+               FROM attendance_session s
+               JOIN course c ON c.courseid = s.courseid
+               WHERE s.attendancesessionid = %s""",
+            (session_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(404, "Session not found")
+    course_id, owner = row
+    if owner != teacher_id:
+        raise HTTPException(403, "You are not assigned to this session's course")
+    return course_id
+
+
 # ── Class ────────────────────────────────────────────────────────────
 class UserInformation:
     """Business entity for user accounts and credentials."""
@@ -235,9 +296,24 @@ class UserInformation:
             raise HTTPException(403, "Administrator privileges required")
 
     def _list_users(self) -> list[dict[str, Any]]:
+        # `active_sessions` backs the U20 alternative flow: deactivating an
+        # account that is tied to a class currently in progress needs to warn
+        # the administrator first. Counted from both sides of the relationship
+        # — a student through their enrolments, a teacher through the courses
+        # assigned to them — so the warning fires for either role.
         sql = """
             SELECT ua.accountid, ua.email, up.role, ua.status,
-                   pi.full_name, pi.student_id, pi.staff_id, ua.created_at
+                   pi.full_name, pi.student_id, pi.staff_id, ua.created_at,
+                   (SELECT COUNT(*)
+                      FROM attendance_session s
+                      JOIN course c ON c.courseid = s.courseid
+                     WHERE s.status = 'active'
+                       AND (c.teacher_id = ua.accountid
+                            OR EXISTS (SELECT 1 FROM course_enrollment e
+                                        WHERE e.courseid = c.courseid
+                                          AND e.accountid = ua.accountid
+                                          AND e.status = 'active'))
+                   ) AS active_sessions
             FROM user_account ua
             JOIN user_profiles up ON up.profileid = ua.profileid
             LEFT JOIN personal_info pi ON pi.accountid = ua.accountid

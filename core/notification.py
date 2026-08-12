@@ -21,10 +21,10 @@ from email.message import EmailMessage
 from typing import Any, Iterable
 
 import psycopg2
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from core.attendanceRecord import load_threshold_config
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import CurrentUser, assert_teacher_session, require_role
 
 
 # ── SMTP (private; absorbed from api/notifications.py) ───────────────
@@ -311,13 +311,11 @@ def teacher_resend_notifications(
     user: CurrentUser = Depends(require_role("teacher")),
 ):
     """U05 manual resend: re-email every late/absent student for this session."""
-    with psycopg2.connect(request.app.state.cfg.database_url) as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT 1 FROM attendance_session WHERE attendancesessionid = %s",
-            (session_id,),
-        )
-        if not cur.fetchone():
-            raise HTTPException(404, "Session not found")
+    # Existence and ownership in one check — a teacher may only re-notify
+    # students of a session belonging to a course assigned to them.
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     svc = _svc(request)
     recipients = svc._fetch_late_absent_recipients(session_id)
     background_tasks.add_task(_send_batch, recipients)
