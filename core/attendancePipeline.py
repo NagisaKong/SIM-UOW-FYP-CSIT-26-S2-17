@@ -293,17 +293,15 @@ class AIConfig:
     headpose_delta_deg: float = field(
         default_factory=lambda: _env_float("AI_HEADPOSE_DELTA_DEG", 10.0)
     )
-    # YOLO confidence for a detection to count as a phone. Measured against
-    # labelled clips at 0.50: yolov8n and yolov8m both reach recall 1.00 with
-    # zero false alarms, at either 1280 or 1920.
+    # YOLO confidence for a detection to count as a phone. At 0.50 both
+    # yolov8n and yolov8m reach recall 1.00 with zero false alarms on the
+    # labelled clips.
     #
-    # Do NOT raise this to compensate for a noisy model. The 44% false-alarm
-    # rate originally observed came from yolov8s specifically — it scores a
-    # wall-mounted switch panel as a phone at up to 0.59, which neither
-    # yolov8n nor yolov8m does at any input size. Raising the floor to 0.80
-    # masks that for yolov8s but costs yolov8n three quarters of its recall
-    # (1.00 -> 0.25), because a genuine phone does not always score high.
-    # Pick a clean model instead; see phone_model.
+    # Do NOT raise this to compensate for a noisy model: the 44% false-alarm
+    # rate originally seen was specific to yolov8s (it scores a wall switch
+    # panel up to 0.59). Raising the floor to 0.80 masks that but costs
+    # yolov8n three quarters of its recall. Pick a clean model — see
+    # phone_model.
     phone_conf: float = field(
         default_factory=lambda: _env_float("AI_PHONE_CONF", 0.50)
     )

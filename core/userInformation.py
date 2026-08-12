@@ -134,15 +134,13 @@ def require_role(*roles: str):
 
 
 # ── Course-ownership authorisation (teacher endpoints) ───────────────
-# require_role("teacher") only proves the caller IS a teacher — not that the
-# course, session or student they are asking about is theirs. Without a second
-# check any teacher could read (and, for start/end/scan/review, write) another
-# teacher's class data. These helpers supply that second check.
+# require_role("teacher") only proves the caller IS a teacher, not that the
+# course they are asking about is theirs; without this second check any teacher
+# could read and write another's class data.
 #
-# The rule is deliberately strict and singular: a teacher owns a course when
-# COURSE.teacher_id equals their account id. A course with no teacher assigned
-# therefore belongs to nobody and is invisible to every teacher — admins still
-# reach it through the /admin/* endpoints.
+# The rule is strict and singular: a teacher owns a course when
+# COURSE.teacher_id is their account id. An unassigned course belongs to nobody
+# and is invisible to every teacher — admins still reach it via /admin/*.
 def teacher_course_ids(database_url: str, teacher_id: int) -> list[int]:
     """Every course this teacher is assigned to (possibly empty)."""
     with psycopg2.connect(database_url) as conn, conn.cursor() as cur:

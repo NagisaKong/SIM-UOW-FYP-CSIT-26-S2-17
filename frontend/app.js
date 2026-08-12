@@ -6,13 +6,10 @@
 //   2. localStorage "apiBase" — a previously saved override. This is how the
 //      hosted UI is pointed at a local GPU machine for behaviour analysis.
 //   3. Local development: a page opened from localhost / 127.0.0.1 / file://
-//      always talks to a backend on the SAME machine. config.js is skipped on
-//      purpose — the deployed backend's ALLOWED_ORIGINS does not include
-//      localhost, so pointing there would only produce CORS failures.
-//   4. window.API_BASE from config.js — the deployment default for the hosted
-//      site. Edit that one file; do not hard-code URLs anywhere else.
-//   5. Fallback: same protocol + hostname as the page, on window.API_PORT
-//      (default 8000).
+//      always talks to a backend on the same machine. config.js is skipped
+//      deliberately — the deployed backend does not allow localhost origins.
+//   4. window.API_BASE from config.js — the hosted deployment default.
+//   5. Fallback: the page's own protocol + hostname on window.API_PORT (8000).
 const API_BASE = (() => {
   const strip = (u) => String(u).trim().replace(/\/+$/, "");
 
@@ -71,12 +68,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
-// Guards a dashboard page: redirects to the login page unless a valid
-// session for `expectedRole` is present. `alertOnMismatch` controls whether a
-// role mismatch pops an alert — suppressed on the bfcache re-check below,
-// since that fires mid-navigation (e.g. while the browser is restoring a
-// cached page for Back) and an alert there reads as a random interruption
-// rather than feedback on something the user just did.
+// Guards a dashboard page: redirects to login unless a valid session for
+// `expectedRole` is present. The alert is suppressed on the bfcache re-check
+// below — it fires mid-navigation, where it reads as a random interruption.
 function _checkAuth(expectedRole, alertOnMismatch) {
   const token = localStorage.getItem("token");
   const user = JSON.parse(localStorage.getItem("user") || "null");
@@ -92,19 +86,10 @@ function _checkAuth(expectedRole, alertOnMismatch) {
 }
 
 function requireAuth(expectedRole) {
-  // Browsers restore a page from the back-forward cache (bfcache) on Back /
-  // Forward without re-running this script, so the check below only runs
-  // once, at the initial load. That is exactly what breaks logout: the
-  // dashboard is still sitting in bfcache with its last-rendered DOM, and
-  // clicking Back after logout would show it as-is even though localStorage
-  // no longer holds a session.
-  //
-  // `pageshow` fires on both a normal load AND a bfcache restore, and only
-  // the latter sets `event.persisted`, so re-running the same check there
-  // catches exactly the case that needs it. The listener is attached once,
-  // during this normal call, and — because it lives on an object bfcache
-  // keeps alive rather than in the script body — survives to fire again when
-  // the page is restored, even though the script itself does not re-execute.
+  // Back/Forward restores a page from the bfcache without re-running this
+  // script, so after logout the dashboard would reappear with its last-rendered
+  // DOM even though localStorage no longer holds a session. `pageshow` fires on
+  // bfcache restores too (with `persisted` set), so re-checking there covers it.
   window.addEventListener("pageshow", (e) => {
     if (e.persisted) _checkAuth(expectedRole, false);
   });
@@ -114,10 +99,8 @@ function requireAuth(expectedRole) {
 function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
-  // replace(), not href=, so the dashboard is dropped from history instead
-  // of sitting one Forward-click away from a page pageshow will immediately
-  // bounce out of anyway — no functional difference, just avoids a redirect
-  // the user would visibly see happen if they went Forward.
+  // replace(), not href=, so the dashboard leaves the history stack instead of
+  // sitting one Forward-click away from a bounce the user would see happen.
   location.replace("index.html");
 }
 
@@ -126,14 +109,10 @@ function fmt(ts) {
   return new Date(ts).toLocaleString("en-US");
 }
 
-// Compact form for <option> labels: no seconds, two-digit year.
-// A <select> shows its selected label inside a fixed-width control, and on a
-// narrow window that box can fall below 300px — at which point the full
-// fmt() string ("8/3/2026, 1:30:00 PM") gets cut off mid-time and two
-// sittings of the same course become indistinguishable. Every character
-// counts there, so this trims the ~5 that make the difference.
-// Tables and reports keep using fmt(): they have the room, and the seconds
-// are occasionally useful.
+// Compact form for <option> labels: no seconds, two-digit year. On a narrow
+// window a <select> can fall below 300px, where the full fmt() string gets cut
+// off mid-time and two sittings of the same course look identical. Tables and
+// reports keep using fmt() — they have the room.
 function fmtShort(ts) {
   if (!ts) return "-";
   return new Date(ts).toLocaleString("en-US", {
@@ -142,10 +121,9 @@ function fmtShort(ts) {
   });
 }
 
-// Mirror the selected option's text into the control's tooltip, and keep it
-// in sync. Shortening the labels buys enough room down to roughly a 330px
-// window; below that a <select> still truncates its closed state and there
-// is no CSS for it, so hovering has to be able to reveal the rest.
+// Mirror the selected option's text into the control's tooltip. Shortened
+// labels fit down to ~330px; below that a <select> still truncates its closed
+// state and no CSS fixes it, so hovering has to reveal the rest.
 function syncSelectTitle(sel) {
   if (!sel) return;
   const apply = () => {
@@ -163,11 +141,9 @@ function syncSelectTitle(sel) {
 // into a detail panel. Used by both the teacher and admin consoles, which
 // show the same evidence in the same shape.
 //
-// The document endpoints require the bearer token, so the bytes cannot be
-// pointed at from an <img src> — they are fetched and handed over as an
-// object URL (the same approach as the CSV report export). That URL is
-// returned so the caller can revoke it when the panel closes; object URLs
-// live until revoked, and leaking one per opened record adds up.
+// The endpoints require the bearer token, so the bytes cannot be reached from
+// an <img src>; they are fetched and wrapped in an object URL. That URL is
+// returned so the caller can revoke it on close — they leak until revoked.
 async function renderSupportingDocument({ url, hasDocument, name, type, ids }) {
   const section = document.getElementById(ids.section);
   const img = document.getElementById(ids.image);
@@ -191,9 +167,8 @@ async function renderSupportingDocument({ url, hasDocument, name, type, ids }) {
     const objectUrl = URL.createObjectURL(blob);
     const label = name || "document";
     const isImage = (type || blob.type || "").startsWith("image/");
-    // Images additionally get an inline preview, but the link is shown for
-    // every type: a preview alone left the reviewer with no way to open the
-    // evidence full-size or keep a copy for the record.
+    // Images also get an inline preview, but every type keeps the link — a
+    // preview alone gave the reviewer no way to open it full-size or save it.
     if (isImage) {
       img.src = objectUrl;
       img.style.display = "";
@@ -258,15 +233,13 @@ function setupMobileTabs() {
 // Browser support notice, rendered into `<div class="browser-notice"
 // data-role="…">` at the foot of each dashboard.
 //
-// The requirement differs by role, so the text does too rather than repeating
-// one generic warning everywhere: the admin console touches no camera at all,
-// student face registration opens one, and the teacher's classroom scan opens
-// several concurrently — which is the case browsers differ most on.
-// The marks next to each name are each vendor's own published logo (Google
-// Chrome, Microsoft Edge, Mozilla Firefox), vendored under assets/browser/ so
-// the pages keep working offline. They are used whole and unrecoloured, which
-// is what the vendors' brand guidelines ask for — earlier revisions of this
-// file approximated the shapes by hand and read as the wrong browser at 15px.
+// The text differs by role because the requirement does: admin uses no camera,
+// student registration opens one, and the teacher's scan opens several at once
+// — the case browsers differ most on.
+// The marks are each vendor's own published logo, vendored under
+// assets/browser/ so the pages work offline. Used whole and unrecoloured per
+// the vendors' brand guidelines; hand-drawn approximations read as the wrong
+// browser at 15px.
 const _BROWSER_MARKS = {
   chrome: "assets/browser/chrome.svg",
   edge: "assets/browser/edge.svg",
