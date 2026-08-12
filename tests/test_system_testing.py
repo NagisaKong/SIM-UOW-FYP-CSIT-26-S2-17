@@ -207,7 +207,12 @@ class TestST02_TaskDriven:
 
 @requires_db
 class TestST03_Exception:
-    """ST-EX-01 / ST-EX-02"""
+    """ST-EX-01 … ST-EX-07 — dedicated failure / exception paths.
+
+    These cases assert that the system *rejects* invalid input or unauthorised
+    actions (expected HTTP 4xx). They are the negative counterparts to the
+    ST-BS / ST-TK happy-path baseline.
+    """
 
     def test_01_st_ex_01_bad_login(self, client, st_world):
         r = client.post(
@@ -249,6 +254,117 @@ class TestST03_Exception:
             json={"record_id": record_id},
         )
         assert r.status_code == 422
+
+    def test_03_st_ex_03_student_forbidden_on_staff_apis(self, client, st_world):
+        # Student JWT must not reach teacher / admin surfaces.
+        r = client.get("/teacher/sessions", headers=st_world.auth("s1"))
+        assert r.status_code == 403, r.text
+
+        r = client.get("/admin/users", headers=st_world.auth("s1"))
+        assert r.status_code == 403, r.text
+
+        r = client.post(
+            f"/teacher/sessions/{st_world.session_id}/start",
+            headers=st_world.auth("s2"),
+        )
+        assert r.status_code == 403, r.text
+
+    def test_04_st_ex_04_scan_when_session_not_active(self, client, st_world):
+        # After ST-TK-03 the shared session is ended; a scheduled-only session
+        # also rejects scan. Either way the failure mode is 409.
+        r = client.post(
+            f"/teacher/sessions/{st_world.session_id}/scan",
+            headers=st_world.auth("teacher"),
+            files=_multipart_png(st_world.student_png),
+        )
+        assert r.status_code == 409, r.text
+
+        missing = client.post(
+            "/teacher/sessions/99999999/scan",
+            headers=st_world.auth("teacher"),
+            files=_multipart_png(st_world.student_png),
+        )
+        assert missing.status_code == 404, missing.text
+
+    def test_05_st_ex_05_blank_leave_reason(self, client, st_world, db_url):
+        import psycopg2
+
+        # Need a future scheduled session (ended sessions refuse leave entirely).
+        r = client.post(
+            "/admin/sessions",
+            headers=st_world.auth("admin"),
+            json={
+                "course_id": st_world.course_id,
+                "start_time": "2030-06-01T09:00:00+08:00",
+                "end_time": "2030-06-01T11:00:00+08:00",
+                "status": "scheduled",
+            },
+        )
+        assert r.status_code == 200, r.text
+        sid = r.json()["session_id"]
+        try:
+            r = client.post(
+                "/student/leave-applications",
+                headers=st_world.auth("s1"),
+                json={"session_id": sid, "reason": "   "},
+            )
+            assert r.status_code == 400, r.text
+
+            r = client.post(
+                "/student/leave-applications",
+                headers=st_world.auth("s1"),
+                json={"session_id": sid},
+            )
+            assert r.status_code == 422
+        finally:
+            with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM leave_application WHERE attendancesessionid = %s",
+                    (sid,),
+                )
+                cur.execute(
+                    "DELETE FROM attendance_session WHERE attendancesessionid = %s",
+                    (sid,),
+                )
+                conn.commit()
+
+    def test_06_st_ex_06_duplicate_course_code(self, client, st_world):
+        r = client.post(
+            "/admin/courses",
+            headers=st_world.auth("admin"),
+            json={
+                "course_code": st_world.course_code,
+                "course_name": "ST-EX-06 duplicate must fail",
+            },
+        )
+        assert r.status_code == 409, r.text
+
+    def test_07_st_ex_07_appeal_another_students_record(
+        self, client, st_world, db_url
+    ):
+        import psycopg2
+
+        # s1's attendance row must not be appealable by s2.
+        with psycopg2.connect(db_url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT attendancerecordid FROM attendance_record
+                   WHERE accountid = %s LIMIT 1""",
+                (st_world.account_ids["s1"],),
+            )
+            row = cur.fetchone()
+        if not row:
+            pytest.skip("no attendance_record for s1 — run task suite first")
+        record_id = row[0]
+
+        r = client.post(
+            "/student/appeals",
+            headers=st_world.auth("s2"),
+            json={
+                "record_id": record_id,
+                "reason": "ST-EX-07 cross-user appeal must be rejected",
+            },
+        )
+        assert r.status_code == 403, r.text
 
 
 # ═══════════════════════════════════════════════════════════════════════
