@@ -53,4 +53,6 @@ docs/FTD_change_list.md
 docs/evidence/behaviour_st_analysis.md
 docs/evidence/behaviour_st_*.md
 docs/evidence/ml_st_*.md
-docs/evidence/system_test_2026080*.md
+docs/evidence/system_test_2026*.md
+# …except the run designated as the FTD's cited evidence.
+!docs/evidence/system_test_20260812_2110.md

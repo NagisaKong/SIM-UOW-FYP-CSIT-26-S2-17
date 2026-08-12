@@ -1165,16 +1165,11 @@ class BehaviourAnalysisService:
                 too_small = min(crop.shape[:2]) < self.cfg.behaviour_min_face_px
                 obs = None if too_small else self._drowsy.observe(crop)
 
-                # Head pose is taken from the detector that already found this
-                # face, and is therefore still available on exactly the frames
-                # the landmarker gives up on — which are the head-down frames
-                # this signal exists to catch.
-                #
-                # The two sources disagree on sign: the detector reports pitch
-                # negative-downward, while the landmarker's normalised
-                # solvePnP estimate grows with any departure from frontal.
-                # Both are converted to "degrees downward" so _HeadPoseModel
-                # sees one convention.
+                # Head pose comes from the detector that already found this
+                # face, so it survives exactly the head-down frames the
+                # landmarker gives up on — the ones this signal exists to catch.
+                # The two sources disagree on sign, so both are converted to
+                # "degrees downward" for _HeadPoseModel.
                 if p.head_pitch is not None:
                     down_deg = -p.head_pitch
                 elif obs is not None and obs["pitch"] is not None:
