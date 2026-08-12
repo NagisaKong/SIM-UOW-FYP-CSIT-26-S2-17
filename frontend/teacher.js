@@ -486,13 +486,11 @@ async function snapshotOneCamera(cam, sessionId) {
 const BEH_STATE_TTL_MS = 8000;
 const behLive = {drowsy: new Set(), phone: new Set(), ts: 0};
 
-// The live overlay reports a single state — "Not paying attention" — rather
-// than naming sleeping or phone use over a student's head in front of the
-// class. The distinction is still recorded: behaviour_event stores the
-// specific type, and the teacher's Behaviour report breaks it down per
-// student (U32). Merging only the public-facing label keeps the accusation
-// low-stakes while the underlying data stays precise, which matters given
-// these detections are assistive indicators rather than proof.
+// The live overlay shows one merged state — "Not paying attention" — instead
+// of naming sleeping or phone use over a student's head in front of the class.
+// Only the public label is merged; the specific type is still stored and broken
+// down per student in the Behaviour report (U32). These detections are
+// assistive indicators, not proof.
 // `snapshot` defaults to the live, currently-mutating state for callers
 // outside a scan round (there are none today, but it keeps this usable on
 // its own). Callers INSIDE a round pass a frozen copy — see captureSnapshot.
@@ -565,18 +563,13 @@ function drawScanBoxes(cam, res, behSnapshot) {
   }
 }
 
-// "≈ zhang jiqian 0.38 / DOMINIC 0.31 (need 0.43)" — the top-2 gallery
-// scores plus the active threshold, so the reason for a rejection is
-// readable straight off the video.
+// "≈ zhang jiqian 0.38 / DOMINIC 0.31 (need 0.43)" — top-2 gallery scores plus
+// the active threshold, so a rejection is readable straight off the video.
 //
-// The scores/threshold shown are ArcFace's UNLESS ArcFace never got to vote
-// for this particular face — which happens when SCRFD missed it and the
-// fallback re-detect (needed to hand MTCNN's box to ArcFace) also came up
-// empty, leaving only the weaker FaceNet model to compare. That case is
-// flagged explicitly rather than silently showing FaceNet's threshold (0.55
-// by default) as if it were ArcFace's (0.40) — a close call from the weaker
-// model can otherwise read as "the system can't tell us apart" when the
-// primary model was never asked.
+// Scores are ArcFace's unless ArcFace never voted for this face (SCRFD missed
+// it and the fallback re-detect came up empty), leaving only the weaker
+// FaceNet. That case is labelled, so FaceNet's threshold (0.55) is not mistaken
+// for ArcFace's (0.40).
 function describeCandidates(box) {
   const top = (box.candidates || []).slice(0, 2).map(c => {
     const who = c.full_name || c.student_id || `acc#${c.account_id}`;
@@ -632,18 +625,11 @@ async function captureSnapshot() {
   scanProgressEl.classList.add("is-scanning");
   let ok = 0, fail = 0;
   const detected = new Map(); // account_id -> display name (union across cameras)
-  // Frozen once, before the per-camera loop starts. Cameras are scanned
-  // sequentially and each round-trip involves the full detection + ensemble
-  // pipeline, so a multi-camera round can take several seconds — long enough
-  // for the independent ~1 fps behaviourTick() to move behLive forward
-  // mid-round. Reading behLive fresh per-camera meant a box painted early in
-  // the round could be green (as of ITS capture time) while the end-of-round
-  // summary — read later, after behLive had already advanced — flagged that
-  // same student red: two renders of the same signal at two different
-  // instants, shown together as if they agreed. Freezing it once here makes
-  // every box and the summary consistent with each other for this round,
-  // even if a newer behaviourTick result lands before the round finishes;
-  // the next round (or the independent live badge below) picks it up.
+  // Frozen once, before the per-camera loop. A multi-camera round can take
+  // several seconds, long enough for the independent ~1 fps behaviourTick() to
+  // move behLive forward mid-round — which used to let a box painted early read
+  // green while the end-of-round summary flagged the same student red. One
+  // snapshot keeps every box and the summary consistent for this round.
   const behSnapshot = {
     drowsy: new Set(behLive.drowsy), phone: new Set(behLive.phone), ts: behLive.ts,
   };
@@ -790,13 +776,9 @@ function startAutoSnapshots() {
   const secs = Math.max(3, Number(scanInterval.value) || 15);
   scanCountdown = secs;
   updateCountdownDisplay();
-  // Ticks every 1s, but never starts a new cycle while the previous
-  // capture is still in flight: if the countdown would hit 0 before that
-  // round has actually finished, the display just holds at 0
-  // ("Capturing…") instead of quietly restarting a fresh count — that
-  // mismatch used to make the boxes look like they refreshed several
-  // seconds "late" compared to what the countdown showed, when really the
-  // countdown had just kept ticking on its own during a slow round.
+  // Ticks every 1s but never starts a cycle while the previous capture is in
+  // flight; the display holds at 0 ("Capturing…") instead of restarting a fresh
+  // count, which used to make the boxes look seconds late against the countdown.
   scanTimer = setInterval(() => {
     if (scanBusy) {
       scanCountdown = 0;

@@ -32,15 +32,11 @@ from core.attendancePipeline import AIConfig, AttendancePipeline
 from core.attendanceSession import expire_overdue_sessions, purge_expired_recordings
 
 # ── Connection timezone patch ─────────────────────────────────────────
-# Supabase's connection pooler (Supavisor) ignores database/role-level
-# `ALTER ... SET timezone` and startup `options`, so pooled sessions always
-# come up as UTC. That makes timestamps render in UTC everywhere they are
-# stringified directly (notification emails, CSV report export, …).
-#
-# A per-session `SET TIME ZONE` is honoured by the pooler, so we wrap
-# psycopg2.connect once here to apply it to every connection the app opens
-# (every module calls psycopg2.connect directly). Configurable via
-# APP_TIMEZONE; defaults to the demo/deployment locale.
+# Supabase's pooler (Supavisor) ignores database-level `SET timezone` and
+# startup options, so pooled sessions come up as UTC and every directly
+# stringified timestamp (emails, CSV export) renders in UTC. A per-session
+# `SET TIME ZONE` is honoured, so psycopg2.connect is wrapped once here to
+# apply it to every connection the app opens.
 _APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Singapore")
 _orig_pg_connect = psycopg2.connect
 
