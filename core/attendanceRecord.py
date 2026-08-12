@@ -34,7 +34,13 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import (
+    CurrentUser,
+    assert_teacher_course,
+    assert_teacher_session,
+    require_role,
+    teacher_course_ids,
+)
 
 # Default fall-back values used when the attendance_threshold_config
 # table is empty or unreachable (these mirror the row inserted by
@@ -395,6 +401,11 @@ class AttendanceRecord:
                    COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
+                   -- early_left / leave are real statuses that land in the
+                   -- same total; counting them keeps the parts summing to the
+                   -- whole instead of silently vanishing from the breakdown.
+                   COUNT(*) FILTER (WHERE r.status='early_left') AS early_left,
+                   COUNT(*) FILTER (WHERE r.status='leave')      AS "leave",
                    COUNT(r.attendancerecordid) AS total
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
@@ -405,6 +416,11 @@ class AttendanceRecord:
             SELECT COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
+                   -- early_left / leave are real statuses that land in the
+                   -- same total; counting them keeps the parts summing to the
+                   -- whole instead of silently vanishing from the breakdown.
+                   COUNT(*) FILTER (WHERE r.status='early_left') AS early_left,
+                   COUNT(*) FILTER (WHERE r.status='leave')      AS "leave",
                    COUNT(r.attendancerecordid) AS total
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
@@ -447,6 +463,11 @@ class AttendanceRecord:
                    COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
+                   -- early_left / leave are real statuses that land in the
+                   -- same total; counting them keeps the parts summing to the
+                   -- whole instead of silently vanishing from the breakdown.
+                   COUNT(*) FILTER (WHERE r.status='early_left') AS early_left,
+                   COUNT(*) FILTER (WHERE r.status='leave')      AS "leave",
                    COUNT(r.attendancerecordid) AS total
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
@@ -457,6 +478,11 @@ class AttendanceRecord:
             SELECT COUNT(*) FILTER (WHERE r.status='present') AS present,
                    COUNT(*) FILTER (WHERE r.status='late')    AS late,
                    COUNT(*) FILTER (WHERE r.status='absent')  AS absent,
+                   -- early_left / leave are real statuses that land in the
+                   -- same total; counting them keeps the parts summing to the
+                   -- whole instead of silently vanishing from the breakdown.
+                   COUNT(*) FILTER (WHERE r.status='early_left') AS early_left,
+                   COUNT(*) FILTER (WHERE r.status='leave')      AS "leave",
                    COUNT(r.attendancerecordid) AS total
             FROM attendance_session s
             LEFT JOIN attendance_record r ON r.attendancesessionid = s.attendancesessionid
@@ -516,12 +542,24 @@ class AttendanceRecord:
     # ── U13 viewAttendanceHistoryAcrossAllSession ────────────────────
     def viewAttendanceHistoryAcrossAllSession(
         self, account_id: int, course_id: int | None = None,
+        course_scope: list[int] | None = None,
     ) -> dict[str, Any]:
+        """History for one student.
+
+        ``course_scope`` restricts the result to a set of courses — the caller
+        passes the requesting teacher's own courses so the summary and rate
+        describe that teacher's classes rather than the student's institution-
+        wide record. An empty list is a real answer (this teacher has no
+        courses), not "no filter", so it must still be applied.
+        """
         clauses = ["r.accountid = %s"]
         params: list[Any] = [account_id]
         if course_id is not None:
             clauses.append("s.courseid = %s")
             params.append(course_id)
+        elif course_scope is not None:
+            clauses.append("s.courseid = ANY(%s)")
+            params.append(list(course_scope))
         where = " AND ".join(clauses)
         sql = f"""
             SELECT r.attendancerecordid AS record_id,
@@ -557,9 +595,20 @@ class AttendanceRecord:
 
     # ── U16 viewEarlyLeftSummary ─────────────────────────────────────
     def viewEarlyLeftSummary(self, session_id: int) -> dict[str, Any]:
-        """Students whose check-in exists but were missing from the
-        periodic in-class scan (status='early_left' in attendance_record,
-        OR a presence_check row marking them absent after check-in)."""
+        """Students whose finalised status is 'early_left' for this session.
+
+        This is a post-session view: the status is assigned by
+        AttendanceSession._aggregate_presence when the teacher ends the scan,
+        using the tail-window rule (detected earlier, then absent from every
+        one of the last `tail_ratio`% of snapshots).
+
+        An earlier version also listed any student still marked 'present' who
+        had ever missed a single snapshot. That is a far looser test than the
+        one that actually assigns early_left, so the panel routinely flagged
+        students who were present the whole class and merely went undetected
+        once — contradicting the finalised record shown right next to it.
+        `last_seen` is still the timestamp of their final positive detection.
+        """
         sql = """
             SELECT r.accountid, pi.full_name, pi.student_id,
                    r.status AS attendance_status, r.marked_at,
@@ -571,13 +620,7 @@ class AttendanceRecord:
              AND pc.accountid = r.accountid
              AND pc.detected = TRUE
             WHERE r.attendancesessionid = %s
-              AND (r.status = 'early_left'
-                   OR (r.status = 'present' AND EXISTS (
-                       SELECT 1 FROM presence_check pc2
-                       WHERE pc2.attendancesessionid = r.attendancesessionid
-                         AND pc2.accountid = r.accountid
-                         AND pc2.detected = FALSE
-                   )))
+              AND r.status = 'early_left'
             GROUP BY r.accountid, pi.full_name, pi.student_id,
                      r.status, r.marked_at
             ORDER BY pi.full_name NULLS LAST
@@ -744,6 +787,9 @@ async def teacher_scan_snapshot(
     camera_id: str | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     img = await _bytes_to_cv2(file)
     return _svc(request).recordDetectionSnapshot(session_id, img, camera_id)
 
@@ -773,6 +819,9 @@ def teacher_live_roster(
     # would close the cycle.
     from core.attendanceSession import expire_overdue_sessions
 
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     # The dashboard the teacher is watching should settle by itself the
     # moment the class runs past its scheduled end.
     expire_overdue_sessions(request.app.state.cfg.database_url, background_tasks)
@@ -787,7 +836,17 @@ def teacher_student_history(
     course_id: int | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
-    return _svc(request).viewAttendanceHistoryAcrossAllSession(account_id, course_id)
+    database_url = request.app.state.cfg.database_url
+    # A teacher sees a student's history *in their own classes*, not the
+    # student's record across the whole institution.
+    if course_id is not None:
+        assert_teacher_course(database_url, user.account_id, course_id)
+        scope = None
+    else:
+        scope = teacher_course_ids(database_url, user.account_id)
+    return _svc(request).viewAttendanceHistoryAcrossAllSession(
+        account_id, course_id, course_scope=scope
+    )
 
 
 # Teacher: U16 — early-left summary
@@ -797,6 +856,9 @@ def teacher_early_left(
     request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     return _svc(request).viewEarlyLeftSummary(session_id)
 
 
@@ -810,6 +872,9 @@ def teacher_class_analytics(
     account_id: int | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_course(
+        request.app.state.cfg.database_url, user.account_id, course_id
+    )
     return _svc(request).viewTeacherGraphicalReport(
         course_id, date_from, date_to, account_id
     )

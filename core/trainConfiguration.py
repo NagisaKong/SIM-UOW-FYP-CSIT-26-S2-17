@@ -386,6 +386,16 @@ class TrainConfiguration:
                     pipeline._weights[name] = 1.0 if weighting == "equal" else base.get(name, 1.0)
 
         is_ensemble = len(active) >= 2
+        if not is_ensemble:
+            # U24 alt-flow: majority voting needs a panel. We still save the
+            # single-model configuration (it is a legitimate deployment — the
+            # CPU cloud instance runs ArcFace alone), but the administrator is
+            # told plainly that no voting is taking place.
+            warnings.append(
+                f"Ensemble voting requires at least two trained models; only "
+                f"'{active[0]}' is available, so recognition runs single-model "
+                "with no majority vote."
+            )
         _active_config["singleOrMultimodel"] = is_ensemble
         _active_config["ensemble"] = {"models": active, "weighting": weighting}
         return {

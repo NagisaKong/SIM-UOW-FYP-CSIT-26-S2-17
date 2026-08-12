@@ -213,13 +213,31 @@ class FacialImage:
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def _soft_delete_face(self, face_id: int) -> dict[str, Any]:
+        remaining = None
         with psycopg2.connect(self.database_url) as conn:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
+                        "SELECT accountid FROM face_embedding WHERE faceid = %s",
+                        (face_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise HTTPException(404, "Face record not found")
+                    account_id = row[0]
+                    cur.execute(
                         "UPDATE face_embedding SET is_active = FALSE WHERE faceid = %s",
                         (face_id,),
                     )
+                    # U21 alt-flow 2: removing a student's last remaining photo
+                    # makes them unrecognisable to the attendance scan. Counted
+                    # after the update so the answer reflects the new state.
+                    cur.execute(
+                        """SELECT COUNT(*) FROM face_embedding
+                           WHERE accountid = %s AND is_active = TRUE""",
+                        (account_id,),
+                    )
+                    remaining = cur.fetchone()[0]
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -228,7 +246,18 @@ class FacialImage:
             self.pipeline.store_manager.reload()
         except Exception:
             pass
-        return {"success": True}
+        result: dict[str, Any] = {
+            "success": True,
+            "account_id": account_id,
+            "remaining_active": remaining,
+        }
+        if not remaining:
+            result["warning"] = (
+                "That was this student's last registered image — they can no "
+                "longer be recognised by the attendance scan until a new photo "
+                "is uploaded."
+            )
+        return result
 
 
 # ════════════════════════════════════════════════════════════════════════

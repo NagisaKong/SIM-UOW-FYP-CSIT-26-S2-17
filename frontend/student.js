@@ -492,9 +492,12 @@ async function loadStudentAnalytics() {
     const res = await api("/student/analytics?" + params.toString());
     const b = res.breakdown || {};
     summaryEl.style.color = "";
-    summaryEl.textContent =
-      `Total ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · ` +
-      `Late ${b.late || 0} · Absent ${b.absent || 0}`;
+    // U27 alt-flow: with nothing recorded yet the charts render as empty axes,
+    // which reads as "your attendance is zero" rather than "there is no data".
+    summaryEl.textContent = (b.total || 0) === 0
+      ? "Not enough session data to render charts yet — check back after your first recorded session."
+      : `Total ${b.total || 0} · Rate ${b.rate || 0}% · Present ${b.present || 0} · ` +
+        `Late ${b.late || 0} · Absent ${b.absent || 0}`;
     renderStudentTrend(res.trend || []);
     renderStudentBreakdown(b);
   } catch (e) {

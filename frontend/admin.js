@@ -206,6 +206,17 @@ document.getElementById("user-edit-form").addEventListener("submit", async (e) =
 document.getElementById("edit-deactivate-btn").addEventListener("click", async () => {
   if (!currentUser) return;
   const target = currentUser.status === "active" ? "inactive" : "active";
+  // U20 alt-flow: deactivating someone tied to a class that is running right
+  // now cuts them out of it mid-session, so confirm first. Same pattern as
+  // the course-deactivation warning below.
+  const live = Number(currentUser.active_sessions) || 0;
+  if (target === "inactive" && live > 0) {
+    const who = currentUser.full_name || currentUser.email;
+    if (!confirm(
+      `${who} is linked to ${live} attendance session(s) currently in progress. ` +
+      `Deactivating now will block their access immediately. Continue?`
+    )) return;
+  }
   try {
     await api(`/admin/users/${currentUser.accountid}/status`, {
       method: "PATCH",
@@ -966,8 +977,20 @@ async function loadFaces() {
       el("td", {}, f.is_active ? el("button", {
         class: "danger",
         onclick: async () => {
-          if (!confirm(`Deactivate faceid ${f.faceid}?`)) return;
-          await api(`/admin/faces/${f.faceid}`, {method: "DELETE"});
+          // U21 alt-flow 2: warn when this is the student's only remaining
+          // photo — after this they cannot be recognised at all. The list is
+          // already in hand, so the check costs no extra round-trip.
+          const others = res.faces.filter(
+            o => o.accountid === f.accountid && o.is_active && o.faceid !== f.faceid
+          ).length;
+          const who = f.full_name || f.student_id || `account ${f.accountid}`;
+          const warn = others === 0
+            ? `\n\nWARNING: this is the ONLY registered image for ${who}. ` +
+              `They will no longer be recognised by the attendance scan.`
+            : "";
+          if (!confirm(`Deactivate faceid ${f.faceid} (${who})?${warn}`)) return;
+          const out = await api(`/admin/faces/${f.faceid}`, {method: "DELETE"});
+          if (out && out.warning) alert(out.warning);
           loadFaces();
         }
       }, "Delete") : null),

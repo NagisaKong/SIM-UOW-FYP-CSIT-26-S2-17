@@ -45,7 +45,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from psycopg2.extras import Json
 from pydantic import BaseModel
 
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import CurrentUser, assert_teacher_session, require_role
 
 if TYPE_CHECKING:  # avoid importing the heavy pipeline module at runtime
     from core.attendancePipeline import AIConfig, AttendancePipeline, Prediction
@@ -324,8 +324,6 @@ class InClassBehaviour:
         that distinction is what lets an administrator undo a bad setting
         without knowing what the global value is.
         """
-
-        """  if not tuning:
         if not tuning:
             return
         columns = [k for k in (*_TUNING_KEYS, *_TUNING_BOOL_KEYS) if k in tuning]
@@ -346,7 +344,6 @@ class InClassBehaviour:
                 503,
                 "Detection thresholds need the latest schema — run "
                 "database/schema.sql, then save again.",
-            )"""
             )
 
     def _upsert_config(
@@ -1358,6 +1355,9 @@ def teacher_view_behaviour(
     session_id: int, request: Request,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     return _svc(request).viewBehaviourReport(session_id)
 
 
@@ -1367,6 +1367,9 @@ def teacher_view_heatmap(
     time_from: str | None = None, time_to: str | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
+    assert_teacher_session(
+        request.app.state.cfg.database_url, user.account_id, session_id
+    )
     return _svc(request).viewHeatmap(session_id, time_from, time_to)
 
 
@@ -1381,15 +1384,16 @@ async def teacher_behaviour_scan(
     user: CurrentUser = Depends(require_role("teacher")),
 ):
     database_url = request.app.state.cfg.database_url
+    course_id = assert_teacher_session(database_url, user.account_id, session_id)
     with psycopg2.connect(database_url) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT courseid, status FROM attendance_session WHERE attendancesessionid = %s",
+            "SELECT status FROM attendance_session WHERE attendancesessionid = %s",
             (session_id,),
         )
         row = cur.fetchone()
     if not row:
         raise HTTPException(404, "Session not found")
-    course_id, status = row
+    status = row[0]
     if status != "active":
         raise HTTPException(409, "Behaviour analysis only runs while the session is active")
 

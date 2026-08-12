@@ -14,7 +14,13 @@ import psycopg2
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from core.userInformation import CurrentUser, require_role
+from core.userInformation import (
+    CurrentUser,
+    assert_teacher_course,
+    assert_teacher_session,
+    require_role,
+    teacher_course_ids,
+)
 
 
 @contextlib.contextmanager
@@ -48,8 +54,16 @@ class Report:
         date_from: str | None = None,
         date_to: str | None = None,
         session_id: int | None = None,
+        course_scope: list[int] | None = None,
     ) -> bytes:
+        # ``course_scope`` is the requesting teacher's own courses. It is
+        # applied on top of any explicit filter so an unfiltered export can
+        # never spill another teacher's class into the CSV. An empty list is
+        # a real answer (no assigned courses) and still gets applied.
         clauses, params = [], []
+        if course_scope is not None:
+            clauses.append("s.courseid = ANY(%s)")
+            params.append(list(course_scope))
         if session_id is not None:
             clauses.append("s.attendancesessionid = %s")
             params.append(session_id)
@@ -117,9 +131,15 @@ def teacher_export_report(
     session_id: int | None = None,
     user: CurrentUser = Depends(require_role("teacher")),
 ):
-    """U14: stream CSV attendance report."""
+    """U14: stream CSV attendance report for the teacher's own classes."""
+    database_url = request.app.state.cfg.database_url
+    if course_id is not None:
+        assert_teacher_course(database_url, user.account_id, course_id)
+    if session_id is not None:
+        assert_teacher_session(database_url, user.account_id, session_id)
+    scope = teacher_course_ids(database_url, user.account_id)
     csv_bytes = _svc(request).exportAllMyClassReport(
-        course_id, date_from, date_to, session_id
+        course_id, date_from, date_to, session_id, course_scope=scope
     )
     fname = "attendance_report.csv"
     return StreamingResponse(
